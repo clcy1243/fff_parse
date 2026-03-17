@@ -282,14 +282,14 @@ fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32
     const DEEP_PCT: f64 = 0.005; // deep shadow = 0.5th percentile
 
     // Build per-channel histograms in parallel by row
+    // Use Vec to avoid stack overflow on rayon worker threads (3×4096×4 = 48KB per thread)
     let row_len = width * 3;
     let num_rows = height;
 
-    // Each thread accumulates its own per-channel histogram
     let (hist_r, hist_g, hist_b, total) = (0..num_rows)
         .into_par_iter()
         .fold(
-            || ([0u32; BINS], [0u32; BINS], [0u32; BINS], 0u64),
+            || (vec![0u32; BINS], vec![0u32; BINS], vec![0u32; BINS], 0u64),
             |mut acc, y| {
                 let start = y * row_len;
                 for x in 0..width {
@@ -309,7 +309,7 @@ fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32
             },
         )
         .reduce(
-            || ([0u32; BINS], [0u32; BINS], [0u32; BINS], 0u64),
+            || (vec![0u32; BINS], vec![0u32; BINS], vec![0u32; BINS], 0u64),
             |mut a, b| {
                 for i in 0..BINS {
                     a.0[i] += b.0[i];
@@ -325,7 +325,7 @@ fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32
         return ([0.0; 3], [65535.0; 3]);
     }
 
-    let find_pct = |hist: &[u32; BINS], pct: f64| -> f32 {
+    let find_pct = |hist: &[u32], pct: f64| -> f32 {
         let target = (total as f64 * pct) as u64;
         let mut count = 0u64;
         for i in 0..BINS {
