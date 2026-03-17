@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Brightness</key>
+	<integer>0</integer>
+	<key>Contrast</key>
+	<integer>10</integer>
+	<key>Gamma</key>
+	<real>2.2000000000000002</real>
+	<key>Lightness</key>
+	<integer>0</integer>
+</dict>
+</plist>

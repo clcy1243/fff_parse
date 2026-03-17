@@ -1,0 +1,342 @@
+/// Localization support for FFF Viewer
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Language {
+    English,
+    Chinese,
+}
+
+impl Language {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::Chinese => "简体中文",
+        }
+    }
+}
+
+/// All translatable UI strings
+pub struct Strings {
+    // Toolbar
+    pub open_folder: &'static str,
+    pub grid: &'static str,
+    pub loupe: &'static str,
+    pub info: &'static str,
+    pub metadata: &'static str,
+    pub history: &'static str,
+    pub tags: &'static str,
+    pub language: &'static str,
+
+    // Directory tree
+    pub folders: &'static str,
+
+    // Panel headings
+    pub metadata_heading: &'static str,
+    pub edit_history_heading: &'static str,
+    pub all_tags_heading: &'static str,
+
+    // Status / empty states
+    pub app_title: &'static str,
+    pub app_subtitle: &'static str,
+    pub no_fff_files: &'static str,
+    pub select_folder_hint: &'static str,
+    pub drag_drop_hint: &'static str,
+    pub select_file_metadata: &'static str,
+    pub select_file_history: &'static str,
+    pub select_file_tags: &'static str,
+    pub no_edit_history: &'static str,
+    pub no_preview: &'static str,
+    pub select_image: &'static str,
+    pub failed_to_open: &'static str,
+
+    // Filter
+    pub filter: &'static str,
+
+    // Edit history
+    pub settings_count: &'static str, // "{} setting(s), current: #{}"
+    pub created: &'static str,
+    pub modified: &'static str,
+
+    // Correction detail sections
+    pub image_adjustments: &'static str,
+    pub film_settings: &'static str,
+    pub sharpening_usm: &'static str,
+    pub processing_flags: &'static str,
+    pub lens_other: &'static str,
+    pub gradation_curves: &'static str,
+
+    // Correction parameters
+    pub gamma: &'static str,
+    pub ev: &'static str,
+    pub contrast: &'static str,
+    pub brightness: &'static str,
+    pub lightness: &'static str,
+    pub saturation: &'static str,
+    pub color_temp: &'static str,
+    pub tint: &'static str,
+    pub film_curve: &'static str,
+    pub film_type: &'static str,
+    pub color_model: &'static str,
+    pub enabled: &'static str,
+    pub amount: &'static str,
+    pub radius: &'static str,
+    pub dark_limit: &'static str,
+    pub threshold: &'static str,
+    pub apply_sliders: &'static str,
+    pub apply_curves: &'static str,
+    pub apply_histogram: &'static str,
+    pub apply_cc: &'static str,
+    pub noise_filter: &'static str,
+    pub dust_removal: &'static str,
+    pub embed_profile: &'static str,
+    pub enhanced_shadow: &'static str,
+    pub rm_cast_highlight: &'static str,
+    pub rm_cast_shadow: &'static str,
+    pub lens_correction: &'static str,
+    pub vignette_amount: &'static str,
+    pub dust_level: &'static str,
+    pub noise_radius: &'static str,
+    pub auto_highlight: &'static str,
+    pub auto_shadow: &'static str,
+    pub yes: &'static str,
+    pub no: &'static str,
+
+    // Export
+    pub export_current: &'static str,
+    pub export_all: &'static str,
+    pub exporting: &'static str,
+    pub export_done: &'static str,
+
+    // Color management
+    pub color_profile: &'static str,
+    pub input_profile: &'static str,
+    pub settings_preset: &'static str,
+    pub use_embedded_icc: &'static str,
+    pub apply_profile: &'static str,
+    pub reset_profile: &'static str,
+    pub no_embedded_icc: &'static str,
+    pub profile_applied: &'static str,
+    pub profile_error: &'static str,
+    pub category_all: &'static str,
+
+    // Table headers
+    pub ifd_header: &'static str,
+    pub tag_header: &'static str,
+    pub name_header: &'static str,
+    pub value_header: &'static str,
+
+    // Status bar
+    pub files_count: &'static str,
+    pub loading_thumbnails: &'static str,
+}
+
+static EN: Strings = Strings {
+    open_folder: "📂 Open Folder…",
+    grid: "▦ Grid",
+    loupe: "🔍 Loupe",
+    info: "ℹ Info",
+    metadata: "📋 Metadata",
+    history: "📝 History",
+    tags: "🏷 Tags",
+    language: "🌐",
+
+    folders: "📁 Folders",
+
+    metadata_heading: "Metadata",
+    edit_history_heading: "FlexColor Edit History",
+    all_tags_heading: "All Tags",
+
+    app_title: "FFF Viewer",
+    app_subtitle: "Flextight X5 Scanner File Viewer",
+    no_fff_files: "No .fff files found in this directory",
+    select_folder_hint: "Select a folder from the tree, or open one:",
+    drag_drop_hint: "You can also drag & drop a folder or .fff file",
+    select_file_metadata: "Select a file to view metadata",
+    select_file_history: "Select a file to view edit history",
+    select_file_tags: "Select a file to view tags",
+    no_edit_history: "No edit history found in this file",
+    no_preview: "No preview available",
+    select_image: "Select an image",
+    failed_to_open: "Failed to open",
+
+    filter: "Filter:",
+
+    settings_count: "setting(s), current:",
+    created: "Created",
+    modified: "Modified",
+
+    image_adjustments: "🎨 Image Adjustments",
+    film_settings: "🎞 Film Settings",
+    sharpening_usm: "🔍 Sharpening (USM)",
+    processing_flags: "⚙ Processing Flags",
+    lens_other: "📐 Lens & Other",
+    gradation_curves: "📈 Gradation Curves",
+
+    gamma: "Gamma",
+    ev: "EV",
+    contrast: "Contrast",
+    brightness: "Brightness",
+    lightness: "Lightness",
+    saturation: "Saturation",
+    color_temp: "Color Temp",
+    tint: "Tint",
+    film_curve: "Film Curve",
+    film_type: "Film Type",
+    color_model: "Color Model",
+    enabled: "Enabled",
+    amount: "Amount",
+    radius: "Radius",
+    dark_limit: "Dark Limit",
+    threshold: "Threshold",
+    apply_sliders: "Apply Sliders",
+    apply_curves: "Apply Curves",
+    apply_histogram: "Apply Histogram",
+    apply_cc: "Apply CC",
+    noise_filter: "Noise Filter",
+    dust_removal: "Dust Removal",
+    embed_profile: "Embed Profile",
+    enhanced_shadow: "Enhanced Shadow",
+    rm_cast_highlight: "Rm Cast Highlight",
+    rm_cast_shadow: "Rm Cast Shadow",
+    lens_correction: "Lens Correction",
+    vignette_amount: "Vignette Amount",
+    dust_level: "Dust Level",
+    noise_radius: "Noise Radius",
+    auto_highlight: "Auto Highlight",
+    auto_shadow: "Auto Shadow",
+    yes: "Yes",
+    no: "No",
+
+    export_current: "📤 Export",
+    export_all: "📤 Export All",
+    exporting: "Exporting…",
+    export_done: "Exported",
+
+    color_profile: "🎨 Color",
+    input_profile: "Input Profile",
+    settings_preset: "Settings Preset",
+    use_embedded_icc: "Use Embedded ICC",
+    apply_profile: "Apply",
+    reset_profile: "Reset",
+    no_embedded_icc: "No embedded ICC in this file",
+    profile_applied: "Profile applied",
+    profile_error: "Profile error",
+    category_all: "All",
+
+    ifd_header: "IFD",
+    tag_header: "Tag",
+    name_header: "Name",
+    value_header: "Value",
+
+    files_count: "files",
+    loading_thumbnails: "Loading thumbnails",
+};
+
+static ZH: Strings = Strings {
+    open_folder: "📂 打开文件夹…",
+    grid: "▦ 网格",
+    loupe: "🔍 放大",
+    info: "ℹ 信息",
+    metadata: "📋 元数据",
+    history: "📝 历史",
+    tags: "🏷 标签",
+    language: "🌐",
+
+    folders: "📁 文件夹",
+
+    metadata_heading: "元数据",
+    edit_history_heading: "FlexColor 编辑历史",
+    all_tags_heading: "全部标签",
+
+    app_title: "FFF 查看器",
+    app_subtitle: "Flextight X5 扫描仪文件查看器",
+    no_fff_files: "此目录中没有 .fff 文件",
+    select_folder_hint: "从左侧目录树选择文件夹，或点击打开：",
+    drag_drop_hint: "也可以拖放文件夹或 .fff 文件到此处",
+    select_file_metadata: "选择文件以查看元数据",
+    select_file_history: "选择文件以查看编辑历史",
+    select_file_tags: "选择文件以查看标签",
+    no_edit_history: "此文件中未找到编辑历史",
+    no_preview: "无法预览",
+    select_image: "选择一张图片",
+    failed_to_open: "打开失败",
+
+    filter: "筛选：",
+
+    settings_count: "个设置，当前：",
+    created: "创建时间",
+    modified: "修改时间",
+
+    image_adjustments: "🎨 图像调整",
+    film_settings: "🎞 胶片设置",
+    sharpening_usm: "🔍 锐化 (USM)",
+    processing_flags: "⚙ 处理标志",
+    lens_other: "📐 镜头与其他",
+    gradation_curves: "📈 渐变曲线",
+
+    gamma: "伽马",
+    ev: "曝光补偿",
+    contrast: "对比度",
+    brightness: "亮度",
+    lightness: "明度",
+    saturation: "饱和度",
+    color_temp: "色温",
+    tint: "色调偏移",
+    film_curve: "胶片曲线",
+    film_type: "胶片类型",
+    color_model: "色彩模型",
+    enabled: "启用",
+    amount: "强度",
+    radius: "半径",
+    dark_limit: "暗部限制",
+    threshold: "阈值",
+    apply_sliders: "应用滑块",
+    apply_curves: "应用曲线",
+    apply_histogram: "应用直方图",
+    apply_cc: "应用色彩校正",
+    noise_filter: "降噪滤镜",
+    dust_removal: "除尘",
+    embed_profile: "嵌入配置文件",
+    enhanced_shadow: "增强暗部",
+    rm_cast_highlight: "去除高光偏色",
+    rm_cast_shadow: "去除暗部偏色",
+    lens_correction: "镜头校正",
+    vignette_amount: "暗角强度",
+    dust_level: "除尘等级",
+    noise_radius: "降噪半径",
+    auto_highlight: "自动高光",
+    auto_shadow: "自动暗部",
+    yes: "是",
+    no: "否",
+
+    export_current: "📤 导出",
+    export_all: "📤 全部导出",
+    exporting: "正在导出…",
+    export_done: "已导出",
+
+    color_profile: "🎨 色彩",
+    input_profile: "输入配置文件",
+    settings_preset: "设置预设",
+    use_embedded_icc: "使用内嵌 ICC",
+    apply_profile: "应用",
+    reset_profile: "重置",
+    no_embedded_icc: "此文件中没有内嵌 ICC",
+    profile_applied: "配置已应用",
+    profile_error: "配置错误",
+    category_all: "全部",
+
+    ifd_header: "IFD",
+    tag_header: "标签",
+    name_header: "名称",
+    value_header: "值",
+
+    files_count: "个文件",
+    loading_thumbnails: "加载缩略图",
+};
+
+pub fn strings(lang: Language) -> &'static Strings {
+    match lang {
+        Language::English => &EN,
+        Language::Chinese => &ZH,
+    }
+}

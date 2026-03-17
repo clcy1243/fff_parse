@@ -1,0 +1,23 @@
+[package]
+name = "fff_viewer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "fff_viewer"
+path = "src/main.rs"
+
+[[bin]]
+name = "parse_test"
+path = "src/parse_test.rs"
+
+[dependencies]
+eframe = "0.31"
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff"] }
+lcms2 = "6"
+rayon = "1"
+rfd = "0.15"
+log = "0.4"
+env_logger = "0.11"

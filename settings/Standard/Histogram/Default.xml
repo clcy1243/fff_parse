@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Default</key>
+	<integer>1</integer>
+	<key>DotColor</key>
+	<array>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>255</integer>
+		<integer>255</integer>
+		<integer>255</integer>
+		<integer>255</integer>
+		<integer>255</integer>
+		<integer>255</integer>
+		<integer>255</integer>
+	</array>
+	<key>Gamma</key>
+	<integer>2</integer>
+	<key>Gray</key>
+	<array>
+		<integer>128</integer>
+		<integer>128</integer>
+		<integer>128</integer>
+		<integer>128</integer>
+	</array>
+	<key>Highlight</key>
+	<array>
+		<integer>16320</integer>
+		<integer>16320</integer>
+		<integer>16320</integer>
+		<integer>16320</integer>
+	</array>
+	<key>Shadow</key>
+	<array>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>0</integer>
+		<integer>0</integer>
+	</array>
+</dict>
+</plist>
