@@ -2,10 +2,11 @@ mod viewer;
 
 use std::io::Write;
 
+use fff_viewer::config;
+
 fn setup_logging() {
-    let log_dir = dirs_home()
-        .map(|h| h.join("Library/Logs"))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let log_dir = config::logs_dir();
+    config::ensure_dirs();
 
     // Create timestamped log file: fff_viewer_20260318_041200.log
     let now = chrono::Local::now();
@@ -85,10 +86,6 @@ fn cleanup_old_logs(dir: &std::path::Path, days: u64) {
     }
 }
 
-fn dirs_home() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(std::path::PathBuf::from)
-}
-
 fn load_app_icon() -> Option<egui::IconData> {
     let png_bytes = include_bytes!("../icons/icon_256.png");
     let img = image::load_from_memory(png_bytes).ok()?.into_rgba8();
@@ -105,6 +102,22 @@ fn main() {
 
     let initial_file = std::env::args().nth(1).map(std::path::PathBuf::from);
     log::info!("Initial file: {:?}", initial_file);
+    log::info!("Data dir: {}", config::app_data_dir().display());
+
+    // Load global configuration (creates default on first launch)
+    let app_config = config::load_or_create();
+    log::info!(
+        "Config: gpu={}, device={:?}, threads={}, lang={}",
+        app_config.gpu_enabled,
+        app_config.gpu_device,
+        app_config.render_threads,
+        app_config.language
+    );
+
+    // Configure rayon global thread pool
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(app_config.render_threads)
+        .build_global();
 
     let icon = load_app_icon();
 
@@ -115,15 +128,23 @@ fn main() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
     }
 
+    let hardware_accel = if app_config.gpu_enabled {
+        eframe::HardwareAcceleration::Preferred
+    } else {
+        eframe::HardwareAcceleration::Off
+    };
+
     let native_options = eframe::NativeOptions {
         viewport,
+        hardware_acceleration: hardware_accel,
         ..Default::default()
     };
 
+    let config_clone = app_config.clone();
     if let Err(e) = eframe::run_native(
         "FFF Viewer — Flextight X5",
         native_options,
-        Box::new(move |cc| Ok(Box::new(viewer::FffViewerApp::new(cc, initial_file)))),
+        Box::new(move |cc| Ok(Box::new(viewer::FffViewerApp::new(cc, initial_file, config_clone)))),
     ) {
         log::error!("eframe exited with error: {}", e);
     }

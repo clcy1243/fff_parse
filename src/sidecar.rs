@@ -1,10 +1,15 @@
 //! Sidecar XML file: persists color settings and split regions per source file.
 //!
-//! For `image.fff`, the sidecar is `image.xml` in the same directory.
+//! For each source file, the sidecar is stored at
+//! `~/fff_parse/sidecar/{sha256_of_absolute_path}.xml`.
 //! The sidecar is never written back into the source file.
 
+use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+
+use crate::config;
 
 /// All per-file settings that should persist across sessions.
 #[derive(Debug, Clone)]
@@ -32,9 +37,15 @@ pub struct SidecarRegion {
     pub angle: f32,
 }
 
-/// Compute the sidecar path: same directory, same stem, `.xml` extension.
+/// Compute the sidecar path: `~/fff_parse/sidecar/{hash}.xml`
+/// where hash is derived from the source file's absolute path.
 pub fn sidecar_path(source: &Path) -> PathBuf {
-    source.with_extension("xml")
+    let abs = std::fs::canonicalize(source)
+        .unwrap_or_else(|_| source.to_path_buf());
+    let mut hasher = DefaultHasher::new();
+    abs.to_string_lossy().as_ref().hash(&mut hasher);
+    let hash = hasher.finish();
+    config::sidecar_dir().join(format!("{:016x}.xml", hash))
 }
 
 /// Load a sidecar config from disk. Returns `None` if file doesn't exist or is invalid.
@@ -44,8 +55,9 @@ pub fn load(source: &Path) -> Option<SidecarConfig> {
     parse_xml(&xml)
 }
 
-/// Save a sidecar config to disk alongside the source file.
+/// Save a sidecar config to disk in the sidecar directory.
 pub fn save(source: &Path, config: &SidecarConfig) -> Result<(), String> {
+    crate::config::ensure_dirs();
     let path = sidecar_path(source);
     let xml = to_xml(config);
     std::fs::write(&path, xml.as_bytes()).map_err(|e| format!("{}: {}", path.display(), e))

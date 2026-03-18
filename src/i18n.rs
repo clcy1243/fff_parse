@@ -13,6 +13,17 @@ impl Language {
             Self::Chinese => "简体中文",
         }
     }
+
+    pub fn from_config(s: &str) -> Self {
+        if s.starts_with("zh") { Self::Chinese } else { Self::English }
+    }
+
+    pub fn to_config(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Chinese => "zh",
+        }
+    }
 }
 
 /// All translatable UI strings
@@ -148,6 +159,18 @@ pub struct Strings {
     pub no_regions: &'static str,
     pub split_exported: &'static str,
     pub cannot_overwrite_source: &'static str,
+
+    // Settings panel
+    pub settings: &'static str,
+    pub settings_heading: &'static str,
+    pub gpu_acceleration: &'static str,
+    pub gpu_device_label: &'static str,
+    pub gpu_auto_select: &'static str,
+    pub render_threads: &'static str,
+    pub render_threads_hint: &'static str,
+    pub ui_language: &'static str,
+    pub settings_saved: &'static str,
+    pub restart_required: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -269,6 +292,18 @@ static EN: Strings = Strings {
     no_regions: "No split regions. Click \"Add Region\" to start.",
     split_exported: "Exported",
     cannot_overwrite_source: "Cannot overwrite source file",
+
+    // Settings panel
+    settings: "⚙ Settings",
+    settings_heading: "Application Settings",
+    gpu_acceleration: "GPU Acceleration",
+    gpu_device_label: "GPU Device",
+    gpu_auto_select: "(Auto)",
+    render_threads: "Processing Threads",
+    render_threads_hint: "Number of threads for image processing (default: CPU cores / 4)",
+    ui_language: "Language",
+    settings_saved: "Settings saved",
+    restart_required: "⚠ Restart required for GPU/thread changes to take effect",
 };
 
 static ZH: Strings = Strings {
@@ -390,6 +425,18 @@ static ZH: Strings = Strings {
     no_regions: "暂无分割区域，点击「添加区域」开始。",
     split_exported: "已导出",
     cannot_overwrite_source: "不能覆盖源文件",
+
+    // Settings panel
+    settings: "⚙ 设置",
+    settings_heading: "应用设置",
+    gpu_acceleration: "GPU 加速渲染",
+    gpu_device_label: "GPU 设备",
+    gpu_auto_select: "（自动选择）",
+    render_threads: "处理线程数",
+    render_threads_hint: "图像处理线程数（默认：CPU 核心数 / 4）",
+    ui_language: "界面语言",
+    settings_saved: "设置已保存",
+    restart_required: "⚠ GPU / 线程数变更需要重启应用生效",
 };
 
 pub fn strings(lang: Language) -> &'static Strings {

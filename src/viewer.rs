@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use fff_viewer::color::{self, IccProfileInfo, SettingsPreset, TargetColorSpace};
+use fff_viewer::config::{self, AppConfig};
 use fff_viewer::flexcolor::{self, EditHistory, ImageCorrection};
 use fff_viewer::i18n::{self, Language, Strings};
 use fff_viewer::sidecar::{self, SidecarConfig, SidecarRegion as SidecarRegionData};
@@ -30,6 +31,7 @@ enum InfoPanel {
     AllTags,
     ColorProfile,
     Split,
+    Settings,
 }
 
 // ─── Film split & export ────────────────────────────────────────────────────
@@ -368,6 +370,10 @@ pub struct FffViewerApp {
 
     // Language
     language: Language,
+
+    // App config (for settings panel)
+    app_config: AppConfig,
+    settings_needs_restart: bool,
 }
 
 // ─── Font loading ───────────────────────────────────────────────────────────
@@ -416,9 +422,11 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
 // ─── App impl ───────────────────────────────────────────────────────────────
 
 impl FffViewerApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>, app_config: AppConfig) -> Self {
         log::info!("Initializing FffViewerApp");
         setup_cjk_fonts(&cc.egui_ctx);
+
+        let language = Language::from_config(&app_config.language);
 
         // Scan for bundled ICC profiles and settings presets
         let exe_dir = std::env::current_exe()
@@ -472,7 +480,9 @@ impl FffViewerApp {
             loading_status: LoadingStatus::Idle,
             error_msg: None,
             show_info_panel: true,
-            language: Language::Chinese,
+            language,
+            app_config,
+            settings_needs_restart: false,
         };
 
         if let Some(path) = initial_file {
@@ -773,6 +783,8 @@ impl eframe::App for FffViewerApp {
                     ui.selectable_value(&mut self.info_panel, InfoPanel::AllTags, s.tags);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::ColorProfile, s.color_profile);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::Split, s.split_export);
+                    ui.separator();
+                    ui.selectable_value(&mut self.info_panel, InfoPanel::Settings, s.settings);
                 }
 
                 ui.separator();
@@ -790,6 +802,7 @@ impl eframe::App for FffViewerApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Language selector
+                    let old_lang = self.language;
                     egui::ComboBox::from_id_salt("lang_selector")
                         .selected_text(format!("{} {}", s.language, self.language.label()))
                         .width(100.0)
@@ -805,6 +818,10 @@ impl eframe::App for FffViewerApp {
                                 Language::Chinese.label(),
                             );
                         });
+                    if self.language != old_lang {
+                        self.app_config.language = self.language.to_config().to_string();
+                        let _ = config::save(&self.app_config);
+                    }
 
                     ui.separator();
 
@@ -894,6 +911,7 @@ impl eframe::App for FffViewerApp {
                     InfoPanel::AllTags => self.render_all_tags_panel(ui),
                     InfoPanel::ColorProfile => self.render_color_profile_panel(ui, ctx),
                     InfoPanel::Split => self.render_split_panel(ui, ctx),
+                    InfoPanel::Settings => self.render_settings_panel(ui),
                 });
         }
 
@@ -2307,6 +2325,105 @@ impl FffViewerApp {
 
         log::info!("export: saved {}", dst.display());
         Ok(())
+    }
+
+    // ── Settings ──────────────────────────────────────────────────────
+
+    fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
+        let s = self.s();
+        ui.heading(s.settings_heading);
+        ui.separator();
+        ui.add_space(8.0);
+
+        // ── GPU Acceleration ──
+        ui.strong(s.gpu_acceleration);
+        ui.add_space(2.0);
+        let old_gpu = self.app_config.gpu_enabled;
+        ui.checkbox(&mut self.app_config.gpu_enabled, s.gpu_acceleration);
+
+        ui.add_space(4.0);
+        ui.strong(s.gpu_device_label);
+        ui.add_space(2.0);
+        let old_device = self.app_config.gpu_device.clone();
+        ui.text_edit_singleline(&mut self.app_config.gpu_device);
+        ui.label(
+            egui::RichText::new(s.gpu_auto_select)
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // ── Render Threads ──
+        ui.strong(s.render_threads);
+        ui.add_space(2.0);
+        let max_cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(16);
+        let old_threads = self.app_config.render_threads;
+        let mut threads = self.app_config.render_threads as u32;
+        ui.add(egui::Slider::new(&mut threads, 1..=(max_cpus as u32)).suffix(" threads"));
+        self.app_config.render_threads = threads as usize;
+        ui.label(
+            egui::RichText::new(s.render_threads_hint)
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // ── Language ──
+        ui.strong(s.ui_language);
+        ui.add_space(2.0);
+        let old_lang = self.language;
+        egui::ComboBox::from_id_salt("settings_lang_selector")
+            .selected_text(self.language.label())
+            .width(ui.available_width() - 16.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.language, Language::English, Language::English.label());
+                ui.selectable_value(&mut self.language, Language::Chinese, Language::Chinese.label());
+            });
+
+        // Detect changes and save
+        let gpu_changed = self.app_config.gpu_enabled != old_gpu
+            || self.app_config.gpu_device != old_device;
+        let threads_changed = self.app_config.render_threads != old_threads;
+        let lang_changed = self.language != old_lang;
+
+        if gpu_changed || threads_changed || lang_changed {
+            if lang_changed {
+                self.app_config.language = self.language.to_config().to_string();
+            }
+            let _ = config::save(&self.app_config);
+
+            if gpu_changed || threads_changed {
+                self.settings_needs_restart = true;
+            }
+        }
+
+        // Restart hint
+        if self.settings_needs_restart {
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(s.restart_required)
+                    .color(egui::Color32::from_rgb(255, 180, 0)),
+            );
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Data directory info
+        ui.label(
+            egui::RichText::new(format!("📁 {}", config::app_data_dir().display()))
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
     }
 
     // ── Split & Export ────────────────────────────────────────────────
