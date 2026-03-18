@@ -412,7 +412,6 @@ use crate::flexcolor::ImageCorrection;
 ///
 /// Returns per-channel (shadow, highlight) in 16-bit scale for the INVERTED
 /// (positive) data space.
-#[allow(dead_code)]
 fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32; 3], [f32; 3]) {
     use rayon::prelude::*;
 
@@ -523,6 +522,8 @@ pub fn apply_film_processing(
 
     let film_type = correction.film_type;
     let is_negative = film_type == 1 || film_type == 2;
+    let auto_cast = is_negative
+        && (correction.remove_cast_shadow || correction.remove_cast_highlight);
 
     let shadow = correction.shadow;
     let highlight = correction.highlight;
@@ -536,20 +537,43 @@ pub fn apply_film_processing(
 
             let src = rgb16.as_raw();
 
+            // For negative film with auto-cast-removal: compute per-channel
+            // shadow/highlight from the actual image histogram.
+            // FlexColor does NOT save auto-computed per-channel levels in the
+            // preset — it stores identical default values across all channels
+            // and computes the auto levels dynamically at display time.
+            let (auto_shadow, auto_highlight) = if auto_cast {
+                compute_neg_auto_levels_16(src, w as usize, h as usize)
+            } else {
+                ([0.0f32; 3], [0.0f32; 3])
+            };
+
             // Precompute per-channel level params
-            // Always use the preset Shadow/Highlight/Gray values directly.
-            // When RemoveCastShadow/Highlight is enabled, FlexColor already bakes
-            // the auto-computed per-channel levels into the saved preset values,
-            // so we do NOT need to recompute them from the image histogram.
             let mut ch_s = [0.0f32; 4];
             let mut ch_range = [1.0f32; 4];
             let mut ch_gamma = [1.0f32; 4];
 
-            for i in 0..4 {
-                ch_s[i] = (shadow[i] as f32 * SCALE).clamp(0.0, MAX_VAL);
-                let h_val = (highlight[i] as f32 * SCALE).clamp(1.0, MAX_VAL);
-                ch_range[i] = (h_val - ch_s[i]).max(1.0);
-                ch_gamma[i] = 1.0 / (gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+            if auto_cast {
+                // Auto: use histogram-derived per-channel shadow/highlight
+                // Master channel (index 0): use preset values
+                ch_s[0] = (shadow[0] as f32 * SCALE).clamp(0.0, MAX_VAL);
+                let h0 = (highlight[0] as f32 * SCALE).clamp(1.0, MAX_VAL);
+                ch_range[0] = (h0 - ch_s[0]).max(1.0);
+                ch_gamma[0] = 1.0 / (gray[0] as f32 / 128.0).clamp(0.01, 10.0);
+
+                // Per-channel: use auto-computed values with preset gamma
+                for ch in 0..3 {
+                    ch_s[ch + 1] = auto_shadow[ch];
+                    ch_range[ch + 1] = (auto_highlight[ch] - auto_shadow[ch]).max(1.0);
+                    ch_gamma[ch + 1] = 1.0 / (gray[ch + 1] as f32 / 128.0).clamp(0.01, 10.0);
+                }
+            } else {
+                for i in 0..4 {
+                    ch_s[i] = (shadow[i] as f32 * SCALE).clamp(0.0, MAX_VAL);
+                    let h_val = (highlight[i] as f32 * SCALE).clamp(1.0, MAX_VAL);
+                    ch_range[i] = (h_val - ch_s[i]).max(1.0);
+                    ch_gamma[i] = 1.0 / (gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+                }
             }
 
             let apply_master = (ch_s[0] > 4.0)
@@ -608,9 +632,20 @@ pub fn apply_film_processing(
             image::DynamicImage::ImageRgb16(buf)
         }
         _ => {
-            // 8-bit fallback
+            // 8-bit fallback: convert to 16-bit, process, convert back
             let rgb8 = img.to_rgb8();
             let (w, h) = (rgb8.width(), rgb8.height());
+
+            if auto_cast {
+                // Upscale to 16-bit for auto-levels analysis
+                let src8 = rgb8.as_raw();
+                let src16: Vec<u16> = src8.iter().map(|&v| (v as u16) << 8).collect();
+                let img16 = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(w, h, src16)
+                    .expect("8→16 upscale failed");
+                let dyn16 = image::DynamicImage::ImageRgb16(img16);
+                let result16 = apply_film_processing(&dyn16, correction);
+                return image::DynamicImage::ImageRgb8(result16.to_rgb8());
+            }
 
             const SCALE8: f32 = 64.0;
 
