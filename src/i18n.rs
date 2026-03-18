@@ -174,16 +174,16 @@ pub struct Strings {
 }
 
 static EN: Strings = Strings {
-    open_folder: "📂 Open Folder…",
-    grid: "▦ Grid",
-    loupe: "🔍 Loupe",
-    info: "ℹ Info",
-    metadata: "📋 Metadata",
-    history: "📝 History",
-    tags: "🏷 Tags",
-    language: "🌐",
+    open_folder: "Open Folder…",
+    grid: "Grid",
+    loupe: "Loupe",
+    info: "Info",
+    metadata: "Metadata",
+    history: "History",
+    tags: "Tags",
+    language: "Lang",
 
-    folders: "📁 Folders",
+    folders: "Folders",
 
     metadata_heading: "Metadata",
     edit_history_heading: "FlexColor Edit History",
@@ -208,12 +208,12 @@ static EN: Strings = Strings {
     created: "Created",
     modified: "Modified",
 
-    image_adjustments: "🎨 Image Adjustments",
-    film_settings: "🎞 Film Settings",
-    sharpening_usm: "🔍 Sharpening (USM)",
-    processing_flags: "⚙ Processing Flags",
-    lens_other: "📐 Lens & Other",
-    gradation_curves: "📈 Gradation Curves",
+    image_adjustments: "Image Adjustments",
+    film_settings: "Film Settings",
+    sharpening_usm: "Sharpening (USM)",
+    processing_flags: "Processing Flags",
+    lens_other: "Lens & Other",
+    gradation_curves: "Gradation Curves",
 
     gamma: "Gamma",
     ev: "EV",
@@ -250,12 +250,12 @@ static EN: Strings = Strings {
     yes: "Yes",
     no: "No",
 
-    export_current: "📤 Export",
-    export_all: "📤 Export All",
+    export_current: "Export",
+    export_all: "Export All",
     exporting: "Exporting…",
     export_done: "Exported",
 
-    color_profile: "🎨 Color",
+    color_profile: "Color",
     input_profile: "Input Profile",
     settings_preset: "Settings Preset",
     target_color_space: "Target Color Space",
@@ -278,12 +278,12 @@ static EN: Strings = Strings {
     loading_thumbnails: "Loading thumbnails",
     loading_file: "Loading",
 
-    split_export: "✂ Split",
+    split_export: "Split",
     film_format: "Film Format",
-    add_region: "➕ Add Region",
-    remove_selected: "🗑 Remove",
+    add_region: "+ Add Region",
+    remove_selected: "Remove",
     clear_all: "Clear All",
-    export_splits: "📤 Export Splits",
+    export_splits: "Export Splits",
     naming_pattern: "Naming Pattern",
     orientation_label: "Orientation",
     landscape_label: "Landscape",
@@ -294,7 +294,7 @@ static EN: Strings = Strings {
     cannot_overwrite_source: "Cannot overwrite source file",
 
     // Settings panel
-    settings: "⚙ Settings",
+    settings: "Settings",
     settings_heading: "Application Settings",
     gpu_acceleration: "GPU Acceleration",
     gpu_device_label: "GPU Device",
@@ -307,16 +307,16 @@ static EN: Strings = Strings {
 };
 
 static ZH: Strings = Strings {
-    open_folder: "📂 打开文件夹…",
-    grid: "▦ 网格",
-    loupe: "🔍 放大",
-    info: "ℹ 信息",
-    metadata: "📋 元数据",
-    history: "📝 历史",
-    tags: "🏷 标签",
-    language: "🌐",
+    open_folder: "打开文件夹…",
+    grid: "网格",
+    loupe: "放大",
+    info: "信息",
+    metadata: "元数据",
+    history: "历史",
+    tags: "标签",
+    language: "语言",
 
-    folders: "📁 文件夹",
+    folders: "文件夹",
 
     metadata_heading: "元数据",
     edit_history_heading: "FlexColor 编辑历史",
@@ -341,12 +341,12 @@ static ZH: Strings = Strings {
     created: "创建时间",
     modified: "修改时间",
 
-    image_adjustments: "🎨 图像调整",
-    film_settings: "🎞 胶片设置",
-    sharpening_usm: "🔍 锐化 (USM)",
-    processing_flags: "⚙ 处理标志",
-    lens_other: "📐 镜头与其他",
-    gradation_curves: "📈 渐变曲线",
+    image_adjustments: "图像调整",
+    film_settings: "胶片设置",
+    sharpening_usm: "锐化 (USM)",
+    processing_flags: "处理标志",
+    lens_other: "镜头与其他",
+    gradation_curves: "渐变曲线",
 
     gamma: "伽马",
     ev: "曝光补偿",
@@ -383,12 +383,12 @@ static ZH: Strings = Strings {
     yes: "是",
     no: "否",
 
-    export_current: "📤 导出",
-    export_all: "📤 全部导出",
+    export_current: "导出",
+    export_all: "全部导出",
     exporting: "正在导出…",
     export_done: "已导出",
 
-    color_profile: "🎨 色彩",
+    color_profile: "色彩",
     input_profile: "输入配置文件",
     settings_preset: "设置预设",
     target_color_space: "目标色彩空间",
@@ -411,12 +411,12 @@ static ZH: Strings = Strings {
     loading_thumbnails: "加载缩略图",
     loading_file: "正在加载",
 
-    split_export: "✂ 分割",
+    split_export: "分割",
     film_format: "胶片画幅",
-    add_region: "➕ 添加区域",
-    remove_selected: "🗑 删除",
+    add_region: "+ 添加区域",
+    remove_selected: "删除",
     clear_all: "全部清除",
-    export_splits: "📤 导出分割",
+    export_splits: "导出分割",
     naming_pattern: "命名规则",
     orientation_label: "方向",
     landscape_label: "横向",
@@ -427,7 +427,7 @@ static ZH: Strings = Strings {
     cannot_overwrite_source: "不能覆盖源文件",
 
     // Settings panel
-    settings: "⚙ 设置",
+    settings: "设置",
     settings_heading: "应用设置",
     gpu_acceleration: "GPU 加速渲染",
     gpu_device_label: "GPU 设备",
