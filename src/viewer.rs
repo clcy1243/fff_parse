@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-use fff_viewer::color::{self, IccProfileInfo, SettingsPreset};
+use fff_viewer::color::{self, IccProfileInfo, SettingsPreset, TargetColorSpace};
 use fff_viewer::flexcolor::{self, EditHistory, ImageCorrection};
 use fff_viewer::i18n::{self, Language, Strings};
 use fff_viewer::tiff::TiffFile;
@@ -156,6 +156,7 @@ pub struct FffViewerApp {
     use_embedded_correction: bool,
     preset_category_filter: String,
     color_status: Option<String>,
+    target_color_space: TargetColorSpace,
 
     // Loading progress
     loading_status: LoadingStatus,
@@ -267,6 +268,7 @@ impl FffViewerApp {
             use_embedded_correction: false,
             preset_category_filter: String::new(),
             color_status: None,
+            target_color_space: TargetColorSpace::default(),
             loading_status: LoadingStatus::Idle,
             error_msg: None,
             show_info_panel: true,
@@ -1444,6 +1446,29 @@ impl FffViewerApp {
         ui.separator();
         ui.add_space(4.0);
 
+        // ── Target Color Space ──
+        ui.strong(s.target_color_space);
+        ui.add_space(2.0);
+
+        let current_target_label = self.target_color_space.label();
+        egui::ComboBox::from_id_salt("target_colorspace_combo")
+            .selected_text(current_target_label)
+            .width(ui.available_width() - 16.0)
+            .show_ui(ui, |ui| {
+                for &space in TargetColorSpace::ALL {
+                    if ui
+                        .selectable_value(&mut self.target_color_space, space, space.label())
+                        .clicked()
+                    {
+                        self.color_status = None;
+                    }
+                }
+            });
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(4.0);
+
         // ── Settings Preset ──
         ui.strong(s.settings_preset);
         ui.add_space(2.0);
@@ -1752,7 +1777,7 @@ impl FffViewerApp {
                 result.width(),
                 result.height()
             );
-            match color::apply_icc_transform(&result, icc_data, None) {
+            match color::apply_icc_transform(&result, icc_data, self.target_color_space) {
                 Ok(transformed) => {
                     result = transformed;
                 }
