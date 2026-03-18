@@ -90,36 +90,68 @@ impl FilmFormat {
 
 #[derive(Clone)]
 struct SplitRegion {
-    /// Normalized coordinates (0.0–1.0) relative to image dimensions
-    x: f32,
-    y: f32,
+    /// Center coordinates (normalized 0.0–1.0 relative to image dimensions)
+    cx: f32,
+    cy: f32,
+    /// Half-extents (normalized)
     w: f32,
     h: f32,
+    /// Rotation angle in radians (clockwise)
+    angle: f32,
 }
 
 impl SplitRegion {
-    fn to_screen_rect(&self, image_rect: egui::Rect) -> egui::Rect {
-        let min = egui::pos2(
-            image_rect.min.x + self.x * image_rect.width(),
-            image_rect.min.y + self.y * image_rect.height(),
-        );
-        let size = egui::vec2(
-            self.w * image_rect.width(),
-            self.h * image_rect.height(),
-        );
-        egui::Rect::from_min_size(min, size)
+    /// Get the 4 corners in screen coordinates [TL, TR, BR, BL]
+    fn corners_screen(&self, image_rect: egui::Rect) -> [egui::Pos2; 4] {
+        let cx_s = image_rect.min.x + self.cx * image_rect.width();
+        let cy_s = image_rect.min.y + self.cy * image_rect.height();
+        let hw = self.w * image_rect.width() / 2.0;
+        let hh = self.h * image_rect.height() / 2.0;
+        let (sin_a, cos_a) = self.angle.sin_cos();
+        [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)].map(|(dx, dy)| {
+            egui::pos2(
+                cx_s + dx * cos_a - dy * sin_a,
+                cy_s + dx * sin_a + dy * cos_a,
+            )
+        })
+    }
+
+    /// Rotation handle position: circle above top-center edge
+    fn rotation_handle_screen(&self, image_rect: egui::Rect) -> egui::Pos2 {
+        let cx_s = image_rect.min.x + self.cx * image_rect.width();
+        let cy_s = image_rect.min.y + self.cy * image_rect.height();
+        let hh = self.h * image_rect.height() / 2.0;
+        let dist = hh + 22.0;
+        let (sin_a, cos_a) = self.angle.sin_cos();
+        // (0, -dist) rotated by angle
+        egui::pos2(cx_s + dist * sin_a, cy_s - dist * cos_a)
+    }
+
+    /// Check if a screen-space point is inside the rotated region
+    fn contains_screen_point(&self, point: egui::Pos2, image_rect: egui::Rect) -> bool {
+        let cx_s = image_rect.min.x + self.cx * image_rect.width();
+        let cy_s = image_rect.min.y + self.cy * image_rect.height();
+        let dx = point.x - cx_s;
+        let dy = point.y - cy_s;
+        let (sin_a, cos_a) = self.angle.sin_cos();
+        let local_x = dx * cos_a + dy * sin_a;
+        let local_y = -dx * sin_a + dy * cos_a;
+        let hw = self.w * image_rect.width() / 2.0;
+        let hh = self.h * image_rect.height() / 2.0;
+        local_x.abs() <= hw && local_y.abs() <= hh
     }
 
     fn clamp_to_image(&mut self) {
-        // Clamp size first to valid range
         self.w = self.w.clamp(0.01, 1.0);
         self.h = self.h.clamp(0.01, 1.0);
-        // Then clamp position so region stays within image
-        self.x = self.x.clamp(0.0, (1.0 - self.w).max(0.0));
-        self.y = self.y.clamp(0.0, (1.0 - self.h).max(0.0));
-        // Re-clamp size to fit within remaining space
-        self.w = self.w.min(1.0 - self.x);
-        self.h = self.h.min(1.0 - self.y);
+        // Compute axis-aligned bounding box of rotated region
+        let (sin_a, cos_a) = self.angle.sin_cos();
+        let hw = self.w / 2.0;
+        let hh = self.h / 2.0;
+        let aabb_hw = hw * cos_a.abs() + hh * sin_a.abs();
+        let aabb_hh = hw * sin_a.abs() + hh * cos_a.abs();
+        self.cx = self.cx.clamp(aabb_hw, (1.0 - aabb_hw).max(aabb_hw));
+        self.cy = self.cy.clamp(aabb_hh, (1.0 - aabb_hh).max(aabb_hh));
     }
 }
 
@@ -130,6 +162,7 @@ enum DragKind {
     ResizeTopRight,
     ResizeBottomLeft,
     ResizeBottomRight,
+    Rotate,
 }
 
 const REGION_COLORS: &[egui::Color32] = &[
@@ -1166,7 +1199,7 @@ impl FffViewerApp {
 
                 // Draw split overlays and handle interactions
                 if self.info_panel == InfoPanel::Split {
-                    self.handle_split_interactions(&response, image_rect);
+                    self.handle_split_interactions(&response, image_rect, ctx);
                     let painter = ui.painter_at(full_rect);
                     draw_split_overlays(
                         &painter,
@@ -2233,16 +2266,18 @@ impl FffViewerApp {
                         self.split_state.selected = Some(i);
                     }
 
-                    // Show dimensions in percentage
+                    // Show dimensions and angle
                     let r = &self.split_state.regions[i];
+                    let angle_deg = r.angle.to_degrees();
+                    let info = if angle_deg.abs() > 0.1 {
+                        format!("{:.0}%×{:.0}% ∠{:.1}°", r.w * 100.0, r.h * 100.0, angle_deg)
+                    } else {
+                        format!("{:.0}%×{:.0}%", r.w * 100.0, r.h * 100.0)
+                    };
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{:.0}%×{:.0}%",
-                            r.w * 100.0,
-                            r.h * 100.0
-                        ))
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
+                        egui::RichText::new(info)
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
                     );
 
                     if ui.small_button("🗑").clicked() {
@@ -2334,11 +2369,8 @@ impl FffViewerApp {
         });
 
         // Default region: centered, ~30% of image height
-        let h = 0.3_f32;
+        let h = 0.3_f32.min(1.0);
         let w = if let Some(ratio) = effective_ratio {
-            // Aspect ratio = w/h in image-normalized space
-            // We need to account for the actual image aspect ratio
-            // since our coordinates are normalized to image w/h
             let img_aspect = self.detail.as_ref()
                 .and_then(|d| d.texture.as_ref())
                 .map(|t| t.size_vec2().x / t.size_vec2().y)
@@ -2349,13 +2381,13 @@ impl FffViewerApp {
         };
 
         let n = self.split_state.regions.len();
-        // Stack regions vertically, offset each one
         let y_offset = (n as f32 * 0.05) % 0.5;
         let mut region = SplitRegion {
-            x: (0.5 - w / 2.0).max(0.0),
-            y: (0.1 + y_offset).max(0.0),
+            cx: 0.5,
+            cy: (0.1 + y_offset + h / 2.0).min(1.0 - h / 2.0),
             w: w.min(1.0),
             h: h.min(1.0),
+            angle: 0.0,
         };
         region.clamp_to_image();
         let new_idx = self.split_state.regions.len();
@@ -2363,37 +2395,79 @@ impl FffViewerApp {
         self.split_state.regions.push(region);
     }
 
-    fn handle_split_interactions(&mut self, response: &egui::Response, image_rect: egui::Rect) {
-        let handle_size = 10.0_f32;
+    fn handle_split_interactions(&mut self, response: &egui::Response, image_rect: egui::Rect, ctx: &egui::Context) {
+        let handle_radius = 10.0_f32;
+        let rot_handle_radius = 8.0_f32;
 
-        if response.drag_started() {
-            if let Some(mouse_pos) = response.interact_pointer_pos() {
-                // Check if clicking on a handle of any existing region
-                let mut found = None;
-                for (i, region) in self.split_state.regions.iter().enumerate().rev() {
-                    let sr = region.to_screen_rect(image_rect);
-                    let corners = [
-                        (sr.left_top(), DragKind::ResizeTopLeft),
-                        (sr.right_top(), DragKind::ResizeTopRight),
-                        (sr.left_bottom(), DragKind::ResizeBottomLeft),
-                        (sr.right_bottom(), DragKind::ResizeBottomRight),
-                    ];
+        // --- Hover cursor ---
+        if response.hovered() && self.split_state.dragging.is_none() {
+            if let Some(mouse_pos) = response.hover_pos() {
+                let mut cursor = None;
+                'outer: for (_i, region) in self.split_state.regions.iter().enumerate().rev() {
+                    let corners = region.corners_screen(image_rect);
 
-                    for (corner_pos, kind) in &corners {
-                        let handle_rect = egui::Rect::from_center_size(
-                            *corner_pos,
-                            egui::vec2(handle_size * 2.0, handle_size * 2.0),
-                        );
-                        if handle_rect.contains(mouse_pos) {
-                            found = Some((i, *kind));
-                            break;
-                        }
-                    }
-                    if found.is_some() {
+                    // Check rotation handle
+                    let rot_pos = region.rotation_handle_screen(image_rect);
+                    if mouse_pos.distance(rot_pos) <= rot_handle_radius + 4.0 {
+                        cursor = Some(egui::CursorIcon::Crosshair);
                         break;
                     }
 
-                    if sr.contains(mouse_pos) {
+                    // Check corner handles [TL, TR, BR, BL]
+                    for (ci, corner) in corners.iter().enumerate() {
+                        if mouse_pos.distance(*corner) <= handle_radius + 2.0 {
+                            cursor = Some(resize_cursor_for_corner(ci, region.angle));
+                            break 'outer;
+                        }
+                    }
+
+                    // Check body
+                    if region.contains_screen_point(mouse_pos, image_rect) {
+                        cursor = Some(egui::CursorIcon::Grab);
+                        break;
+                    }
+                }
+                if let Some(c) = cursor {
+                    ctx.set_cursor_icon(c);
+                }
+            }
+        }
+
+        // --- Drag start ---
+        if response.drag_started() {
+            if let Some(mouse_pos) = response.interact_pointer_pos() {
+                let mut found = None;
+                for (i, region) in self.split_state.regions.iter().enumerate().rev() {
+                    let corners = region.corners_screen(image_rect);
+
+                    // Rotation handle
+                    let rot_pos = region.rotation_handle_screen(image_rect);
+                    if mouse_pos.distance(rot_pos) <= rot_handle_radius + 4.0 {
+                        found = Some((i, DragKind::Rotate));
+                        break;
+                    }
+
+                    // Corner handles [TL, TR, BR, BL]
+                    let corner_kinds = [
+                        DragKind::ResizeTopLeft,
+                        DragKind::ResizeTopRight,
+                        DragKind::ResizeBottomRight,
+                        DragKind::ResizeBottomLeft,
+                    ];
+                    let mut hit_corner = false;
+                    for (ci, corner) in corners.iter().enumerate() {
+                        if mouse_pos.distance(*corner) <= handle_radius + 2.0 {
+                            found = Some((i, corner_kinds[ci]));
+                            hit_corner = true;
+                            break;
+                        }
+                    }
+                    if hit_corner {
+                        break;
+                    }
+
+                    // Body
+                    if region.contains_screen_point(mouse_pos, image_rect) {
                         found = Some((i, DragKind::Move));
                         break;
                     }
@@ -2403,34 +2477,49 @@ impl FffViewerApp {
             }
         }
 
+        // --- Dragging ---
         if response.dragged() {
-            let delta = response.drag_delta();
             if let Some((idx, kind)) = self.split_state.dragging {
                 if idx < self.split_state.regions.len() {
                     let iw = image_rect.width();
                     let ih = image_rect.height();
                     if iw > 0.0 && ih > 0.0 {
-                        let dx = delta.x / iw;
-                        let dy = delta.y / ih;
-                        let region = &mut self.split_state.regions[idx];
-
                         match kind {
                             DragKind::Move => {
-                                region.x += dx;
-                                region.y += dy;
+                                let delta = response.drag_delta();
+                                let dx = delta.x / iw;
+                                let dy = delta.y / ih;
+                                let region = &mut self.split_state.regions[idx];
+                                region.cx += dx;
+                                region.cy += dy;
                                 region.clamp_to_image();
+                                ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
                             }
-                            DragKind::ResizeTopLeft => {
-                                self.resize_region(idx, dx, dy, true, true, image_rect);
+                            DragKind::Rotate => {
+                                if let Some(mouse_pos) = response.interact_pointer_pos() {
+                                    let cx_s = image_rect.min.x + self.split_state.regions[idx].cx * iw;
+                                    let cy_s = image_rect.min.y + self.split_state.regions[idx].cy * ih;
+                                    let angle = (mouse_pos.x - cx_s).atan2(-(mouse_pos.y - cy_s));
+                                    self.split_state.regions[idx].angle = angle;
+                                    self.split_state.regions[idx].clamp_to_image();
+                                    ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                                }
                             }
-                            DragKind::ResizeTopRight => {
-                                self.resize_region(idx, dx, dy, false, true, image_rect);
-                            }
-                            DragKind::ResizeBottomLeft => {
-                                self.resize_region(idx, dx, dy, true, false, image_rect);
-                            }
-                            DragKind::ResizeBottomRight => {
-                                self.resize_region(idx, dx, dy, false, false, image_rect);
+                            resize_kind => {
+                                let delta = response.drag_delta();
+                                let dx = delta.x / iw;
+                                let dy = delta.y / ih;
+                                let from_left = matches!(resize_kind, DragKind::ResizeTopLeft | DragKind::ResizeBottomLeft);
+                                let from_top = matches!(resize_kind, DragKind::ResizeTopLeft | DragKind::ResizeTopRight);
+                                self.resize_region(idx, dx, dy, from_left, from_top, image_rect);
+                                let ci = match resize_kind {
+                                    DragKind::ResizeTopLeft => 0,
+                                    DragKind::ResizeTopRight => 1,
+                                    DragKind::ResizeBottomRight => 2,
+                                    DragKind::ResizeBottomLeft => 3,
+                                    _ => 0,
+                                };
+                                ctx.set_cursor_icon(resize_cursor_for_corner(ci, self.split_state.regions[idx].angle));
                             }
                         }
                     }
@@ -2459,32 +2548,42 @@ impl FffViewerApp {
 
         let region = &mut self.split_state.regions[idx];
 
-        if from_left {
-            let new_x = (region.x + dx).clamp(0.0, region.x + region.w - 0.01);
-            let dw = region.x - new_x;
-            region.x = new_x;
-            region.w += dw;
-        } else {
-            region.w = (region.w + dx).max(0.01);
-        }
+        // Transform the screen-space delta into the region's local (rotated) space
+        let (sin_a, cos_a) = region.angle.sin_cos();
+        let local_dx = dx * cos_a + dy * sin_a;
+        let local_dy = -dx * sin_a + dy * cos_a;
+
+        // Determine sign: left/top edges move opposite to right/bottom
+        let sx = if from_left { -1.0 } else { 1.0 };
+        let dw = sx * local_dx;
+
+        let new_w = (region.w + dw).max(0.01);
+        let actual_dw = new_w - region.w;
+
+        // Shift center: when resizing from one side, center moves by half the delta
+        // in the region's local coordinate system, then rotated back
+        let shift_local_x = actual_dw / 2.0 * sx;
+        region.w = new_w;
 
         if let Some(ratio) = effective_ratio {
-            let old_bottom = region.y + region.h;
-            // Constrain aspect ratio: w_pixels / h_pixels = ratio
-            // h_norm = w_norm * img_aspect / ratio
-            region.h = region.w * img_aspect / ratio;
-            if from_top {
-                region.y = old_bottom - region.h;
-            }
+            // Constrain aspect ratio: h = w * img_aspect / ratio
+            let new_h = region.w * img_aspect / ratio;
+            let actual_dh = new_h - region.h;
+            let sy = if from_top { -1.0 } else { 1.0 };
+            let shift_local_y = actual_dh / 2.0 * sy;
+            region.h = new_h;
+            // Rotate shift back to image coordinate system
+            region.cx += shift_local_x * cos_a - shift_local_y * sin_a;
+            region.cy += shift_local_x * sin_a + shift_local_y * cos_a;
         } else {
-            if from_top {
-                let new_y = (region.y + dy).clamp(0.0, region.y + region.h - 0.01);
-                let dh = region.y - new_y;
-                region.y = new_y;
-                region.h += dh;
-            } else {
-                region.h = (region.h + dy).max(0.01);
-            }
+            let sy = if from_top { -1.0 } else { 1.0 };
+            let dh_local = sy * local_dy;
+            let new_h = (region.h + dh_local).max(0.01);
+            let actual_dh = new_h - region.h;
+            let shift_local_y = actual_dh / 2.0 * sy;
+            region.h = new_h;
+            region.cx += shift_local_x * cos_a - shift_local_y * sin_a;
+            region.cy += shift_local_x * sin_a + shift_local_y * cos_a;
         }
 
         region.clamp_to_image();
@@ -2523,18 +2622,6 @@ impl FffViewerApp {
         let mut exported = 0;
 
         for (i, region) in self.split_state.regions.iter().enumerate() {
-            // Map normalized coords to pixel coords
-            let px = (region.x * img_w as f32) as u32;
-            let py = (region.y * img_h as f32) as u32;
-            let pw = ((region.w * img_w as f32) as u32).min(img_w - px);
-            let ph = ((region.h * img_h as f32) as u32).min(img_h - py);
-
-            if pw == 0 || ph == 0 {
-                continue;
-            }
-
-            let cropped = img.crop_imm(px, py, pw, ph);
-
             let name = self.split_state.naming_pattern
                 .replace("{name}", &stem)
                 .replace("{n}", &(i + 1).to_string());
@@ -2548,9 +2635,13 @@ impl FffViewerApp {
                 }
             }
 
+            let cropped = crop_rotated_region(&img, region, img_w, img_h);
+
             match cropped.save(&out_path) {
                 Ok(()) => {
-                    log::info!("Split export: {} ({}x{})", out_path.display(), pw, ph);
+                    let cw = cropped.width();
+                    let ch = cropped.height();
+                    log::info!("Split export: {} ({}x{})", out_path.display(), cw, ch);
                     exported += 1;
                 }
                 Err(e) => {
@@ -2800,22 +2891,31 @@ fn draw_split_overlays(
     selected_idx: Option<usize>,
 ) {
     let handle_size = 8.0_f32;
+    let rot_handle_radius = 6.0_f32;
 
     for (i, region) in regions.iter().enumerate() {
-        let sr = region.to_screen_rect(image_rect);
+        let corners = region.corners_screen(image_rect);
         let color = REGION_COLORS[i % REGION_COLORS.len()];
         let is_selected = selected_idx == Some(i);
         let stroke_width = if is_selected { 3.0 } else { 2.0 };
 
-        // Semi-transparent fill
+        // Semi-transparent fill (rotated quad)
         let fill = egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 20);
-        painter.rect_filled(sr, 0.0, fill);
+        let mut quad_mesh = egui::Mesh::default();
+        for c in &corners {
+            quad_mesh.colored_vertex(*c, fill);
+        }
+        quad_mesh.add_triangle(0, 1, 2);
+        quad_mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(quad_mesh));
 
-        // Border
-        painter.rect_stroke(sr, 0.0, egui::Stroke::new(stroke_width, color), egui::StrokeKind::Outside);
+        // Border (4 line segments)
+        let stroke = egui::Stroke::new(stroke_width, color);
+        for j in 0..4 {
+            painter.line_segment([corners[j], corners[(j + 1) % 4]], stroke);
+        }
 
         // Corner handles
-        let corners = [sr.left_top(), sr.right_top(), sr.left_bottom(), sr.right_bottom()];
         for corner in &corners {
             let handle_rect =
                 egui::Rect::from_center_size(*corner, egui::vec2(handle_size, handle_size));
@@ -2828,14 +2928,39 @@ fn draw_split_overlays(
             );
         }
 
-        // Region number label
-        let label_pos = egui::pos2(sr.min.x + 4.0, sr.min.y + 2.0);
+        // Rotation handle (circle above top edge)
+        let rot_pos = region.rotation_handle_screen(image_rect);
+        // Line from top-center to rotation handle
+        let top_center = egui::pos2(
+            (corners[0].x + corners[1].x) / 2.0,
+            (corners[0].y + corners[1].y) / 2.0,
+        );
+        painter.line_segment(
+            [top_center, rot_pos],
+            egui::Stroke::new(1.5, color),
+        );
+        painter.circle_filled(rot_pos, rot_handle_radius, color);
+        painter.circle_stroke(
+            rot_pos,
+            rot_handle_radius,
+            egui::Stroke::new(1.0, egui::Color32::WHITE),
+        );
+        // Rotation icon: small arc arrow
+        painter.text(
+            rot_pos,
+            egui::Align2::CENTER_CENTER,
+            "↻",
+            egui::FontId::proportional(10.0),
+            egui::Color32::WHITE,
+        );
+
+        // Region number label (at first corner)
+        let label_pos = egui::pos2(corners[0].x + 4.0, corners[0].y + 2.0);
         let galley = painter.layout_no_wrap(
             format!("#{}", i + 1),
             egui::FontId::proportional(14.0),
             egui::Color32::WHITE,
         );
-        // Background for label
         let label_rect = egui::Rect::from_min_size(
             label_pos,
             galley.size() + egui::vec2(6.0, 2.0),
@@ -2847,6 +2972,151 @@ fn draw_split_overlays(
         );
         painter.galley(label_pos + egui::vec2(3.0, 1.0), galley, egui::Color32::WHITE);
     }
+}
+
+/// Choose resize cursor based on the corner index and region rotation angle
+fn resize_cursor_for_corner(corner_idx: usize, angle: f32) -> egui::CursorIcon {
+    // Base diagonal angles for corners [TL, TR, BR, BL]
+    let base_deg = [-135.0_f32, -45.0, 45.0, 135.0];
+    let total = base_deg[corner_idx] + angle.to_degrees();
+    // Normalize to [0, 180)
+    let norm = ((total % 180.0) + 180.0) % 180.0;
+    if norm < 22.5 || norm >= 157.5 {
+        egui::CursorIcon::ResizeHorizontal
+    } else if norm < 67.5 {
+        egui::CursorIcon::ResizeNeSw
+    } else if norm < 112.5 {
+        egui::CursorIcon::ResizeVertical
+    } else {
+        egui::CursorIcon::ResizeNwSe
+    }
+}
+
+/// Crop a rotated region from the source image using bilinear interpolation
+fn crop_rotated_region(
+    img: &image::DynamicImage,
+    region: &SplitRegion,
+    img_w: u32,
+    img_h: u32,
+) -> image::DynamicImage {
+    let out_w = (region.w * img_w as f32).round() as u32;
+    let out_h = (region.h * img_h as f32).round() as u32;
+    let out_w = out_w.max(1);
+    let out_h = out_h.max(1);
+
+    let cx_px = region.cx * img_w as f32;
+    let cy_px = region.cy * img_h as f32;
+    let (sin_a, cos_a) = region.angle.sin_cos();
+
+    // For angle ≈ 0, use fast axis-aligned crop
+    if region.angle.abs() < 0.001 {
+        let px = ((cx_px - out_w as f32 / 2.0).round() as u32).min(img_w.saturating_sub(out_w));
+        let py = ((cy_px - out_h as f32 / 2.0).round() as u32).min(img_h.saturating_sub(out_h));
+        return img.crop_imm(px, py, out_w.min(img_w - px), out_h.min(img_h - py));
+    }
+
+    // Use 16-bit path if source is 16-bit
+    match img {
+        image::DynamicImage::ImageRgb16(src) => {
+            let mut out = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::new(out_w, out_h);
+            let hw = out_w as f32 / 2.0;
+            let hh = out_h as f32 / 2.0;
+            for oy in 0..out_h {
+                for ox in 0..out_w {
+                    let lx = ox as f32 - hw + 0.5;
+                    let ly = oy as f32 - hh + 0.5;
+                    let sx = cx_px + lx * cos_a - ly * sin_a;
+                    let sy = cy_px + lx * sin_a + ly * cos_a;
+                    let pixel = bilinear_sample_rgb16(src, sx, sy);
+                    out.put_pixel(ox, oy, pixel);
+                }
+            }
+            image::DynamicImage::ImageRgb16(out)
+        }
+        _ => {
+            let src = img.to_rgb8();
+            let mut out = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::new(out_w, out_h);
+            let hw = out_w as f32 / 2.0;
+            let hh = out_h as f32 / 2.0;
+            for oy in 0..out_h {
+                for ox in 0..out_w {
+                    let lx = ox as f32 - hw + 0.5;
+                    let ly = oy as f32 - hh + 0.5;
+                    let sx = cx_px + lx * cos_a - ly * sin_a;
+                    let sy = cy_px + lx * sin_a + ly * cos_a;
+                    let pixel = bilinear_sample_rgb8(&src, sx, sy);
+                    out.put_pixel(ox, oy, pixel);
+                }
+            }
+            image::DynamicImage::ImageRgb8(out)
+        }
+    }
+}
+
+fn bilinear_sample_rgb16(
+    img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    x: f32,
+    y: f32,
+) -> image::Rgb<u16> {
+    let w = img.width() as f32;
+    let h = img.height() as f32;
+    if x < 0.0 || y < 0.0 || x >= w || y >= h {
+        return image::Rgb([0, 0, 0]);
+    }
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(img.width() - 1);
+    let y1 = (y0 + 1).min(img.height() - 1);
+    let fx = x - x.floor();
+    let fy = y - y.floor();
+
+    let p00 = img.get_pixel(x0, y0).0;
+    let p10 = img.get_pixel(x1, y0).0;
+    let p01 = img.get_pixel(x0, y1).0;
+    let p11 = img.get_pixel(x1, y1).0;
+
+    let mut out = [0u16; 3];
+    for c in 0..3 {
+        let v = p00[c] as f32 * (1.0 - fx) * (1.0 - fy)
+            + p10[c] as f32 * fx * (1.0 - fy)
+            + p01[c] as f32 * (1.0 - fx) * fy
+            + p11[c] as f32 * fx * fy;
+        out[c] = v.round().clamp(0.0, 65535.0) as u16;
+    }
+    image::Rgb(out)
+}
+
+fn bilinear_sample_rgb8(
+    img: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>,
+    x: f32,
+    y: f32,
+) -> image::Rgb<u8> {
+    let w = img.width() as f32;
+    let h = img.height() as f32;
+    if x < 0.0 || y < 0.0 || x >= w || y >= h {
+        return image::Rgb([0, 0, 0]);
+    }
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(img.width() - 1);
+    let y1 = (y0 + 1).min(img.height() - 1);
+    let fx = x - x.floor();
+    let fy = y - y.floor();
+
+    let p00 = img.get_pixel(x0, y0).0;
+    let p10 = img.get_pixel(x1, y0).0;
+    let p01 = img.get_pixel(x0, y1).0;
+    let p11 = img.get_pixel(x1, y1).0;
+
+    let mut out = [0u8; 3];
+    for c in 0..3 {
+        let v = p00[c] as f32 * (1.0 - fx) * (1.0 - fy)
+            + p10[c] as f32 * fx * (1.0 - fy)
+            + p01[c] as f32 * (1.0 - fx) * fy
+            + p11[c] as f32 * fx * fy;
+        out[c] = v.round().clamp(0.0, 255.0) as u8;
+    }
+    image::Rgb(out)
 }
 
 // ─── Utility functions ──────────────────────────────────────────────────────
