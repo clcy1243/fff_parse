@@ -572,17 +572,25 @@ pub fn apply_film_processing(
 /// Extract embedded ICC profile data from FFF tag 0xC51A.
 pub fn extract_embedded_icc(tiff_data: &[u8], tags: &[(String, String, String, String)]) -> Option<Vec<u8>> {
     // Look for tag 0xC51A (ImaconProfileData)
-    for (_, tag_hex, _, value) in tags {
+    for (_, tag_hex, _, _value) in tags {
         if tag_hex == "0xC51A" {
-            // The value string shows byte count; we need to find raw data
-            if let Some(size_str) = value.strip_prefix('[').and_then(|s| s.strip_suffix(" bytes]")) {
-                let _size: usize = size_str.parse().ok()?;
+            // Extract raw tag data
+            let data = extract_tag_data(tiff_data, 0xC51A)?;
+
+            // Validate: a real ICC profile has "acsp" signature at offset 36
+            if data.len() > 40 && &data[36..40] == b"acsp" {
+                log::info!("Embedded ICC profile found: {} bytes, valid ICC", data.len());
+                return Some(data);
+            } else {
+                log::info!(
+                    "Tag 0xC51A contains Imacon proprietary data ({} bytes), not a standard ICC profile",
+                    data.len()
+                );
+                return None;
             }
         }
     }
-
-    // Direct scan: find tag 0xC51A in IFD entries and read its data
-    extract_tag_data(tiff_data, 0xC51A)
+    None
 }
 
 /// Read raw bytes for a given TIFF tag from the file data.
