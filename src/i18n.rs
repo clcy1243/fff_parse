@@ -40,6 +40,10 @@ pub struct Strings {
 
     // Directory tree
     pub folders: &'static str,
+    pub favorites: &'static str,
+    pub add_favorite: &'static str,
+    pub remove_favorite: &'static str,
+    pub no_favorites: &'static str,
 
     // Panel headings
     pub metadata_heading: &'static str,
@@ -184,6 +188,10 @@ static EN: Strings = Strings {
     language: "🌐",
 
     folders: "📁 Folders",
+    favorites: "⭐ Favorites",
+    add_favorite: "Add to Favorites",
+    remove_favorite: "Remove from Favorites",
+    no_favorites: "No favorites yet",
 
     metadata_heading: "Metadata",
     edit_history_heading: "FlexColor Edit History",
@@ -317,6 +325,10 @@ static ZH: Strings = Strings {
     language: "🌐",
 
     folders: "📁 文件夹",
+    favorites: "⭐ 收藏",
+    add_favorite: "加入收藏",
+    remove_favorite: "移出收藏",
+    no_favorites: "暂无收藏",
 
     metadata_heading: "元数据",
     edit_history_heading: "FlexColor 编辑历史",

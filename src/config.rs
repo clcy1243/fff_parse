@@ -57,6 +57,8 @@ pub struct AppConfig {
     pub render_threads: usize,
     /// UI language: "en" or "zh"
     pub language: String,
+    /// Favorited directory paths (absolute paths, |-separated in XML)
+    pub favorites: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -66,6 +68,7 @@ impl Default for AppConfig {
             gpu_device: String::new(),
             render_threads: default_thread_count(),
             language: detect_system_language(),
+            favorites: Vec::new(),
         }
     }
 }
@@ -150,6 +153,8 @@ fn to_xml(c: &AppConfig) -> String {
     let _ = writeln!(s, "  <gpu_device>{}</gpu_device>", xml_escape(&c.gpu_device));
     let _ = writeln!(s, "  <render_threads>{}</render_threads>", c.render_threads);
     let _ = writeln!(s, "  <language>{}</language>", xml_escape(&c.language));
+    let favorites_str = c.favorites.iter().map(|f| xml_escape(f)).collect::<Vec<_>>().join("|");
+    let _ = writeln!(s, "  <favorites>{}</favorites>", favorites_str);
     s.push_str("</fff_viewer_config>\n");
     s
 }
@@ -173,6 +178,11 @@ fn parse_xml(xml: &str) -> Option<AppConfig> {
     }
     if let Some(v) = tag_content(xml, "language") {
         config.language = xml_unescape(&v);
+    }
+    if let Some(v) = tag_content(xml, "favorites") {
+        if !v.is_empty() {
+            config.favorites = v.split('|').map(|s| xml_unescape(s.trim())).filter(|s| !s.is_empty()).collect();
+        }
     }
     Some(config)
 }
@@ -210,6 +220,7 @@ mod tests {
             gpu_device: "AMD Radeon Pro 5500M".to_string(),
             render_threads: 4,
             language: "zh".to_string(),
+            favorites: vec!["/Users/test/Photos".to_string(), "/Volumes/SD".to_string()],
         };
         let xml = to_xml(&config);
         let parsed = parse_xml(&xml).unwrap();
@@ -217,6 +228,7 @@ mod tests {
         assert_eq!(parsed.gpu_device, "AMD Radeon Pro 5500M");
         assert_eq!(parsed.render_threads, 4);
         assert_eq!(parsed.language, "zh");
+        assert_eq!(parsed.favorites, vec!["/Users/test/Photos", "/Volumes/SD"]);
     }
 
     #[test]

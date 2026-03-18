@@ -319,6 +319,9 @@ pub struct FffViewerApp {
     current_dir: Option<PathBuf>,
     expanded_dirs: HashSet<PathBuf>,
 
+    // Favorites (synced with app_config.favorites)
+    favorites: Vec<PathBuf>,
+
     // File list in current directory
     fff_files: Vec<PathBuf>,
 
@@ -474,9 +477,16 @@ impl FffViewerApp {
         let (thumb_tx, thumb_rx) = mpsc::channel();
         let (detail_tx, detail_rx) = mpsc::channel();
 
+        let favorites: Vec<PathBuf> = app_config
+            .favorites
+            .iter()
+            .map(|s| PathBuf::from(s))
+            .collect();
+
         let mut app = Self {
             current_dir: None,
             expanded_dirs: HashSet::new(),
+            favorites,
             fff_files: Vec::new(),
             thumbnails: HashMap::new(),
             thumb_rx,
@@ -517,7 +527,7 @@ impl FffViewerApp {
                 }
             }
         } else if let Some(home) = dirs_home() {
-            app.current_dir = Some(home);
+            app.set_directory(home);
         }
 
         app
@@ -909,15 +919,31 @@ impl eframe::App for FffViewerApp {
             }
         }
 
-        // ── Left panel: directory tree ──────────────────────────────────
-        let folders_label = i18n::strings(self.language).folders.to_string();
+        // ── Left panel: favorites + directory tree ──────────────────────
+        let s = i18n::strings(self.language);
+        let favorites_heading = s.favorites.to_string();
+        let folders_label = s.folders.to_string();
         egui::SidePanel::left("dir_tree_panel")
             .default_width(220.0)
             .min_width(160.0)
             .show(ctx, |ui| {
+                // ── Favorites section ────────────────────────────────────
+                ui.heading(&favorites_heading);
+                ui.separator();
+                let fav_height = if self.favorites.is_empty() { 28.0 } else { (self.favorites.len() as f32 * 22.0).min(160.0) };
+                egui::ScrollArea::vertical()
+                    .id_salt("favs_scroll")
+                    .max_height(fav_height)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        self.render_favorites(ui);
+                    });
+                ui.add_space(4.0);
+                // ── Folders section ──────────────────────────────────────
                 ui.heading(&folders_label);
                 ui.separator();
                 egui::ScrollArea::vertical()
+                    .id_salt("tree_scroll")
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
                         self.render_dir_tree(ui);
@@ -1015,6 +1041,58 @@ impl eframe::App for FffViewerApp {
 // ─── Directory tree ─────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    fn render_favorites(&mut self, ui: &mut egui::Ui) {
+        let s = i18n::strings(self.language);
+        if self.favorites.is_empty() {
+            ui.label(egui::RichText::new(s.no_favorites).weak().italics());
+            return;
+        }
+        let favorites = self.favorites.clone();
+        let mut remove_idx: Option<usize> = None;
+        for (i, fav) in favorites.iter().enumerate() {
+            let is_selected = self.current_dir.as_deref() == Some(fav.as_path());
+            let name = fav
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| fav.to_string_lossy().to_string());
+            let name = shorten_dir_name(&name);
+
+            ui.horizontal(|ui| {
+                // Remove-from-favorites button
+                let star_resp = ui.add(
+                    egui::Label::new(egui::RichText::new("★").color(egui::Color32::from_rgb(255, 200, 0)))
+                        .sense(egui::Sense::click()),
+                );
+                if star_resp.on_hover_text(s.remove_favorite).clicked() {
+                    remove_idx = Some(i);
+                }
+
+                let text = egui::RichText::new(format!("📁 {}", name)).color(if is_selected {
+                    ui.visuals().hyperlink_color
+                } else {
+                    ui.visuals().text_color()
+                });
+                let label = egui::Label::new(if is_selected { text.strong() } else { text })
+                    .sense(egui::Sense::click())
+                    .truncate();
+                let resp = ui.add(label);
+                let resp = resp.on_hover_text(fav.to_string_lossy());
+                if resp.clicked() {
+                    self.set_directory(fav.clone());
+                }
+            });
+        }
+        if let Some(idx) = remove_idx {
+            self.favorites.remove(idx);
+            self.save_favorites();
+        }
+    }
+
+    fn save_favorites(&mut self) {
+        self.app_config.favorites = self.favorites.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        let _ = config::save(&self.app_config);
+    }
+
     fn render_dir_tree(&mut self, ui: &mut egui::Ui) {
         let roots = get_root_dirs();
         for root in &roots {
@@ -1025,6 +1103,7 @@ impl FffViewerApp {
     fn render_dir_node(&mut self, ui: &mut egui::Ui, path: &Path, depth: usize) {
         let is_expanded = self.expanded_dirs.contains(path);
         let is_selected = self.current_dir.as_deref() == Some(path);
+        let is_fav = self.favorites.contains(&path.to_path_buf());
 
         let raw_name = path
             .file_name()
@@ -1033,6 +1112,7 @@ impl FffViewerApp {
         let name = shorten_dir_name(&raw_name);
 
         let indent = depth as f32 * 16.0;
+        let mut toggle_fav = false;
         ui.horizontal(|ui| {
             ui.add_space(indent);
 
@@ -1049,6 +1129,23 @@ impl FffViewerApp {
                 } else {
                     self.expanded_dirs.insert(path.to_path_buf());
                 }
+            }
+
+            // Star icon: filled gold if favorited, dim outline if not
+            let star_char = if is_fav { "★" } else { "☆" };
+            let star_color = if is_fav {
+                egui::Color32::from_rgb(255, 200, 0)
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let s = i18n::strings(self.language);
+            let hint = if is_fav { s.remove_favorite } else { s.add_favorite };
+            let star_resp = ui.add(
+                egui::Label::new(egui::RichText::new(star_char).color(star_color).small())
+                    .sense(egui::Sense::click()),
+            );
+            if star_resp.on_hover_text(hint).clicked() {
+                toggle_fav = true;
             }
 
             let text = egui::RichText::new(format!("📁 {}", name)).color(if is_selected {
@@ -1079,6 +1176,16 @@ impl FffViewerApp {
                 }
             }
         });
+
+        if toggle_fav {
+            let pb = path.to_path_buf();
+            if is_fav {
+                self.favorites.retain(|f| f != &pb);
+            } else {
+                self.favorites.push(pb);
+            }
+            self.save_favorites();
+        }
 
         if is_expanded {
             if let Ok(entries) = std::fs::read_dir(path) {
