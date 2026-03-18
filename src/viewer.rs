@@ -2593,7 +2593,7 @@ impl FffViewerApp {
             color_image,
             egui::TextureOptions::LINEAR,
         ));
-        self.histogram_needs_update = true;
+        // Histogram shows base_rgb (input distribution), no update needed on re-adjust
     }
 
     fn compute_histogram(&mut self) {
@@ -2606,12 +2606,10 @@ impl FffViewerApp {
             return;
         };
 
+        // Compute histogram from base_rgb (pre-adjustment) so it shows input distribution.
+        // histogram[0..2] = R,G,B; histogram[3] = luminance (for "RGB" combined view).
         let mut hist = Box::new([[0u32; 256]; 4]);
-        let img = image::DynamicImage::ImageRgb8(base.clone());
-        let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
-        let rgb = adjusted.to_rgb8();
-
-        for pixel in rgb.pixels() {
+        for pixel in base.pixels() {
             let [r, g, b] = pixel.0;
             hist[0][r as usize] += 1;
             hist[1][g as usize] += 1;
@@ -2678,6 +2676,13 @@ impl FffViewerApp {
         let shadows_str = s.shadows;
         let saturation_str = s.saturation_label;
         let color_balance_str = s.color_balance;
+        let hist_rgb = s.hist_rgb;
+        let hist_r = s.hist_r;
+        let hist_g = s.hist_g;
+        let hist_b = s.hist_b;
+
+        // Clone histogram data to avoid borrow conflicts when mutating manual_adjust
+        let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading(adjust_heading);
@@ -2698,39 +2703,108 @@ impl FffViewerApp {
 
             ui.add_space(4.0);
 
-            // Render histogram inline to avoid borrow conflicts with self.manual_adjust below
-            if let Some(ref hist) = self.histogram {
-                let desired_size = egui::vec2(ui.available_width(), 80.0);
-                let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+            // ── 4 histogram sections with levels sliders ─────────────────
+            let sections = [
+                (hist_rgb, 3usize, egui::Color32::from_gray(160)),        // luminance → RGB combined
+                (hist_r,   0usize, egui::Color32::from_rgb(200, 50, 50)), // R channel
+                (hist_g,   1usize, egui::Color32::from_rgb(50, 180, 50)), // G channel
+                (hist_b,   2usize, egui::Color32::from_rgb(60, 100, 220)),// B channel
+            ];
+
+            // levels index: master=0, R=1, G=2, B=3
+            let levels_idx = [0usize, 1usize, 2usize, 3usize];
+
+            for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
+                let lvl_idx = levels_idx[section_pos];
+
+                ui.label(egui::RichText::new(*title).small().strong());
+
+                // ── Histogram bars ────────────────────────────────────────
+                let hist_h = 55.0_f32;
+                let desired = egui::vec2(ui.available_width(), hist_h);
+                let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
                 let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, 2.0, egui::Color32::from_gray(20));
-                let max_count = hist[0].iter().chain(hist[1].iter()).chain(hist[2].iter())
-                    .copied().max().unwrap_or(1).max(1) as f32;
-                let w = rect.width();
-                let h = rect.height();
-                let colors = [
-                    egui::Color32::from_rgba_unmultiplied(220, 50, 50, 100),
-                    egui::Color32::from_rgba_unmultiplied(50, 200, 50, 100),
-                    egui::Color32::from_rgba_unmultiplied(50, 100, 255, 100),
-                ];
-                for ch in 0..3 {
+                painter.rect_filled(rect, 2.0, egui::Color32::from_gray(18));
+
+                if let Some(ref hists) = hist_data {
+                    let h_arr = &hists[*hist_ch];
+                    let max_v = h_arr.iter().copied().max().unwrap_or(1).max(1) as f32;
+                    let w = rect.width();
+                    let bar_w = (w / 256.0).max(1.0);
+
+                    // Use log scale so both dark and bright areas are visible
+                    let log_max = max_v.ln_1p();
                     for i in 0..256 {
-                        let bar_h = (hist[ch][i] as f32 / max_count * h).min(h);
-                        if bar_h < 0.5 { continue; }
+                        let count = h_arr[i] as f32;
+                        if count < 0.5 { continue; }
+                        let bar_h = (count.ln_1p() / log_max * hist_h).min(hist_h);
                         let x = rect.left() + i as f32 / 255.0 * w;
-                        let bar_w = (w / 256.0).max(1.0);
-                        let bar_rect = egui::Rect::from_min_size(
-                            egui::pos2(x, rect.bottom() - bar_h),
-                            egui::vec2(bar_w, bar_h),
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(x, rect.bottom() - bar_h),
+                                egui::vec2(bar_w, bar_h),
+                            ),
+                            0.0,
+                            *bar_color,
                         );
-                        painter.rect_filled(bar_rect, 0.0, colors[ch]);
                     }
                 }
+
+                // Draw black / white point marker lines on histogram
+                let black_x = rect.left()
+                    + self.manual_adjust.levels_black[lvl_idx] / 255.0 * rect.width();
+                let white_x = rect.left()
+                    + self.manual_adjust.levels_white[lvl_idx] / 255.0 * rect.width();
+                painter.line_segment(
+                    [egui::pos2(black_x, rect.top()), egui::pos2(black_x, rect.bottom())],
+                    egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(80, 130, 255, 220)),
+                );
+                painter.line_segment(
+                    [egui::pos2(white_x, rect.top()), egui::pos2(white_x, rect.bottom())],
+                    egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(255, 230, 50, 220)),
+                );
+
+                // ── Three input controls: black | gamma | white ───────────
+                ui.horizontal(|ui| {
+                    let max_black = (self.manual_adjust.levels_white[lvl_idx] - 1.0).max(0.0);
+                    let min_white = (self.manual_adjust.levels_black[lvl_idx] + 1.0).min(255.0);
+
+                    let dv_black = egui::DragValue::new(&mut self.manual_adjust.levels_black[lvl_idx])
+                        .range(0.0..=max_black)
+                        .max_decimals(0)
+                        .speed(0.5);
+                    if ui.add(dv_black).on_hover_text("Black point").changed() {
+                        rebuild = true;
+                    }
+
+                    ui.centered_and_justified(|ui| {
+                        let dv_gamma = egui::DragValue::new(&mut self.manual_adjust.levels_gamma[lvl_idx])
+                            .range(0.10..=9.99)
+                            .max_decimals(2)
+                            .speed(0.01);
+                        if ui.add(dv_gamma).on_hover_text("Midtone gamma").changed() {
+                            rebuild = true;
+                        }
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let dv_white = egui::DragValue::new(&mut self.manual_adjust.levels_white[lvl_idx])
+                            .range(min_white..=255.0)
+                            .max_decimals(0)
+                            .speed(0.5);
+                        if ui.add(dv_white).on_hover_text("White point").changed() {
+                            rebuild = true;
+                        }
+                    });
+                });
+
+                ui.add_space(6.0);
             }
 
-            ui.add_space(8.0);
             ui.separator();
+            ui.add_space(4.0);
 
+            // ── Basic adjustment sliders ─────────────────────────────────
             let adj = &mut self.manual_adjust;
 
             ui.label(exposure_str);

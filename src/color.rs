@@ -289,6 +289,11 @@ pub struct ManualAdjust {
     pub r_shift: f32,       // color balance red:   -100..100
     pub g_shift: f32,       // color balance green: -100..100
     pub b_shift: f32,       // color balance blue:  -100..100
+
+    // Levels (input range): index 0=master, 1=R, 2=G, 3=B
+    pub levels_black: [f32; 4],  // input black point: 0-255
+    pub levels_gamma: [f32; 4],  // midtone gamma: 0.10-9.99 (1.0=neutral)
+    pub levels_white: [f32; 4],  // input white point: 0-255
 }
 
 impl Default for ManualAdjust {
@@ -297,6 +302,9 @@ impl Default for ManualAdjust {
             enabled: false,
             exposure: 0.0, contrast: 0.0, highlights: 0.0, shadows: 0.0,
             saturation: 0.0, r_shift: 0.0, g_shift: 0.0, b_shift: 0.0,
+            levels_black: [0.0; 4],
+            levels_gamma: [1.0; 4],
+            levels_white: [255.0; 4],
         }
     }
 }
@@ -311,7 +319,10 @@ impl ManualAdjust {
                 && self.saturation.abs() < 0.1
                 && self.r_shift.abs() < 0.1
                 && self.g_shift.abs() < 0.1
-                && self.b_shift.abs() < 0.1)
+                && self.b_shift.abs() < 0.1
+                && self.levels_black.iter().all(|&v| v < 0.5)
+                && self.levels_gamma.iter().all(|&v| (v - 1.0).abs() < 0.01)
+                && self.levels_white.iter().all(|&v| v > 254.5))
     }
 }
 
@@ -712,31 +723,49 @@ pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> ima
     let exposure_mult = 2.0_f32.powf(adj.exposure);
     let sat = adj.saturation / 100.0;
 
-    // Build per-channel LUTs incorporating exposure + color balance + contrast + shadows/highlights
+    // Master levels params
+    let bl_m = adj.levels_black[0] / 255.0;
+    let wh_m = adj.levels_white[0] / 255.0;
+    let range_m = (wh_m - bl_m).max(0.001);
+    let gamma_m = adj.levels_gamma[0].clamp(0.01, 99.0);
+
+    // Build per-channel LUTs: levels → exposure/color-balance → shadows/highlights → contrast
     let mut luts = [[0u8; 256]; 3];
     let shifts = [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0];
 
     for ch in 0..3 {
+        let bl_c = adj.levels_black[ch + 1] / 255.0;
+        let wh_c = adj.levels_white[ch + 1] / 255.0;
+        let range_c = (wh_c - bl_c).max(0.001);
+        let gamma_c = adj.levels_gamma[ch + 1].clamp(0.01, 99.0);
+
         for i in 0..=255u32 {
             let mut v = i as f32 / 255.0;
+
+            // Step 1: Apply master levels (affects all channels equally)
+            v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
+
+            // Step 2: Apply per-channel levels
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
+
+            // Step 3: Color balance + exposure
             v += shifts[ch];
             v *= exposure_mult;
             v = v.clamp(0.0, 1.0);
 
-            // Shadows rolloff: lift/lower dark tones
+            // Step 4: Shadows rolloff
             if adj.shadows.abs() > 0.1 {
                 let s = adj.shadows / 100.0;
-                let t = 1.0 - v; // how "dark" is this value
+                let t = 1.0 - v;
                 v = (v + s * t * t * 0.5).clamp(0.0, 1.0);
             }
-            // Highlights rolloff: lift/lower bright tones
+            // Step 5: Highlights rolloff
             if adj.highlights.abs() > 0.1 {
                 let hi = adj.highlights / 100.0;
-                let t = v; // how "bright" is this value
+                let t = v;
                 v = (v + hi * t * t * 0.5).clamp(0.0, 1.0);
             }
-
-            // Contrast: S-curve through 0.5
+            // Step 6: Contrast S-curve
             if adj.contrast.abs() > 0.1 {
                 let c = adj.contrast / 100.0;
                 let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };

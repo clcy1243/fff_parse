@@ -97,6 +97,12 @@ fn to_xml(c: &SidecarConfig) -> String {
     let _ = writeln!(s, "    <adj_r_shift>{}</adj_r_shift>", a.r_shift);
     let _ = writeln!(s, "    <adj_g_shift>{}</adj_g_shift>", a.g_shift);
     let _ = writeln!(s, "    <adj_b_shift>{}</adj_b_shift>", a.b_shift);
+    let _ = writeln!(s, "    <adj_levels_black>{},{},{},{}</adj_levels_black>",
+        a.levels_black[0], a.levels_black[1], a.levels_black[2], a.levels_black[3]);
+    let _ = writeln!(s, "    <adj_levels_gamma>{},{},{},{}</adj_levels_gamma>",
+        a.levels_gamma[0], a.levels_gamma[1], a.levels_gamma[2], a.levels_gamma[3]);
+    let _ = writeln!(s, "    <adj_levels_white>{},{},{},{}</adj_levels_white>",
+        a.levels_white[0], a.levels_white[1], a.levels_white[2], a.levels_white[3]);
     s.push_str("  </adjust>\n");
 
     // Split section
@@ -208,6 +214,24 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     }
     if let Some(v) = tag_content(xml, "adj_b_shift") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.b_shift = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_levels_black") {
+        let vals: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if vals.len() == 4 {
+            config.manual_adjust.levels_black = [vals[0], vals[1], vals[2], vals[3]];
+        }
+    }
+    if let Some(v) = tag_content(xml, "adj_levels_gamma") {
+        let vals: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if vals.len() == 4 {
+            config.manual_adjust.levels_gamma = [vals[0], vals[1], vals[2], vals[3]];
+        }
+    }
+    if let Some(v) = tag_content(xml, "adj_levels_white") {
+        let vals: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if vals.len() == 4 {
+            config.manual_adjust.levels_white = [vals[0], vals[1], vals[2], vals[3]];
+        }
     }
 
     // Parse region elements: <region cx="..." cy="..." w="..." h="..." angle="..."/>

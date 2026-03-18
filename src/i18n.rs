@@ -195,6 +195,11 @@ pub struct Strings {
     pub color_balance: &'static str,
     pub reset_adjust: &'static str,
     pub adjust_enabled: &'static str,
+    // Histogram channel labels
+    pub hist_rgb: &'static str,
+    pub hist_r: &'static str,
+    pub hist_g: &'static str,
+    pub hist_b: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -350,6 +355,10 @@ static EN: Strings = Strings {
     color_balance: "Color Balance",
     reset_adjust: "↺ Reset",
     adjust_enabled: "Enable",
+    hist_rgb: "RGB",
+    hist_r: "R",
+    hist_g: "G",
+    hist_b: "B",
 };
 
 static ZH: Strings = Strings {
@@ -505,6 +514,10 @@ static ZH: Strings = Strings {
     color_balance: "色彩平衡",
     reset_adjust: "↺ 重置",
     adjust_enabled: "启用",
+    hist_rgb: "红绿蓝",
+    hist_r: "红",
+    hist_g: "绿",
+    hist_b: "蓝",
 };
 
 pub fn strings(lang: Language) -> &'static Strings {
