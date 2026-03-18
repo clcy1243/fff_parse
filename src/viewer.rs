@@ -829,6 +829,7 @@ impl FffViewerApp {
                         if result.auto_corrected {
                             self.use_embedded_correction = true;
                         }
+                        self.histogram_needs_update = true;
                     }
                     self.loading_status = LoadingStatus::Idle;
                 }
@@ -2528,6 +2529,7 @@ impl FffViewerApp {
         if let Some(detail) = &mut self.detail {
             detail.base_rgb = Some(result.to_rgb8());
         }
+        self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
 
         let status_parts: Vec<&str> = [
@@ -2575,6 +2577,7 @@ impl FffViewerApp {
                 detail.base_rgb = Some(processed.to_rgb8());
             }
         }
+        self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
         log::info!("Color profile reset");
     }
@@ -2658,6 +2661,182 @@ impl FffViewerApp {
         }
     }
 
+    /// Renders one histogram + gradient track + draggable triangle handles for black/gamma/white.
+    /// Returns true if any value was changed.
+    fn render_levels_section(
+        ui: &mut egui::Ui,
+        section_id: egui::Id,
+        title: &str,
+        hist: Option<&[u32; 256]>,
+        bar_color: egui::Color32,
+        black: &mut f32,
+        gamma: &mut f32,
+        white: &mut f32,
+    ) -> bool {
+        let mut changed = false;
+        let avail_w = ui.available_width();
+
+        ui.label(egui::RichText::new(title).small().strong());
+
+        // ── Histogram bars ───────────────────────────────────────────────
+        let hist_h = 55.0_f32;
+        let (hist_rect, _) = ui.allocate_exact_size(egui::vec2(avail_w, hist_h), egui::Sense::hover());
+        let painter = ui.painter_at(hist_rect);
+        painter.rect_filled(hist_rect, 2.0, egui::Color32::from_gray(18));
+
+        if let Some(h_arr) = hist {
+            let max_v = h_arr.iter().copied().max().unwrap_or(1).max(1) as f32;
+            let w = hist_rect.width();
+            let bar_w = (w / 256.0).max(1.0);
+            let log_max = max_v.ln_1p();
+            for i in 0..256 {
+                let count = h_arr[i] as f32;
+                if count < 0.5 { continue; }
+                let bar_h = (count.ln_1p() / log_max * hist_h).min(hist_h);
+                let x = hist_rect.left() + i as f32 / 255.0 * w;
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(x, hist_rect.bottom() - bar_h),
+                        egui::vec2(bar_w, bar_h),
+                    ),
+                    0.0,
+                    bar_color,
+                );
+            }
+        }
+
+        // Marker lines on histogram for current black/white points
+        let bx_hist = hist_rect.left() + *black / 255.0 * hist_rect.width();
+        let wx_hist = hist_rect.left() + *white / 255.0 * hist_rect.width();
+        painter.line_segment(
+            [egui::pos2(bx_hist, hist_rect.top()), egui::pos2(bx_hist, hist_rect.bottom())],
+            egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(80, 130, 255, 220)),
+        );
+        painter.line_segment(
+            [egui::pos2(wx_hist, hist_rect.top()), egui::pos2(wx_hist, hist_rect.bottom())],
+            egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(255, 230, 50, 220)),
+        );
+
+        // ── Gradient track ───────────────────────────────────────────────
+        let track_h = 22.0_f32;
+        let (track_rect, _) = ui.allocate_exact_size(egui::vec2(avail_w, track_h), egui::Sense::hover());
+        let track_painter = ui.painter_at(track_rect);
+
+        // Draw black→white gradient strip
+        let steps = 64u32;
+        let step_w = track_rect.width() / steps as f32;
+        for i in 0..steps {
+            let t = i as f32 / (steps - 1) as f32;
+            let gray = (t * 255.0) as u8;
+            track_painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(track_rect.left() + i as f32 * step_w, track_rect.top()),
+                    egui::vec2(step_w + 0.5, track_h),
+                ),
+                0.0,
+                egui::Color32::from_gray(gray),
+            );
+        }
+
+        // Triangle handle positions
+        let bx = track_rect.left() + *black / 255.0 * track_rect.width();
+        let wx = track_rect.left() + *white / 255.0 * track_rect.width();
+        let t_gamma = 0.5_f32.powf(1.0 / (*gamma).max(0.01));
+        let gx = bx + t_gamma * (wx - bx);
+        let center_y = track_rect.center().y;
+        let tri_h = track_h * 0.75;
+        let tri_w = tri_h * 0.8;
+
+        // Draw gamma handle first (sits between black and white)
+        track_painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(gx, center_y - tri_h / 2.0),
+                egui::pos2(gx - tri_w / 2.0, center_y + tri_h / 2.0),
+                egui::pos2(gx + tri_w / 2.0, center_y + tri_h / 2.0),
+            ],
+            egui::Color32::from_gray(190),
+            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+        ));
+        // Black handle
+        track_painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(bx, center_y - tri_h / 2.0),
+                egui::pos2(bx - tri_w / 2.0, center_y + tri_h / 2.0),
+                egui::pos2(bx + tri_w / 2.0, center_y + tri_h / 2.0),
+            ],
+            egui::Color32::from_rgb(30, 60, 180),
+            egui::Stroke::new(1.0, egui::Color32::WHITE),
+        ));
+        // White handle
+        track_painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(wx, center_y - tri_h / 2.0),
+                egui::pos2(wx - tri_w / 2.0, center_y + tri_h / 2.0),
+                egui::pos2(wx + tri_w / 2.0, center_y + tri_h / 2.0),
+            ],
+            egui::Color32::from_rgb(240, 215, 50),
+            egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+        ));
+
+        // ── Drag interaction ─────────────────────────────────────────────
+        let hit_w = tri_w + 6.0;
+
+        let r_white = ui.interact(
+            egui::Rect::from_center_size(egui::pos2(wx, center_y), egui::vec2(hit_w, track_h)),
+            section_id.with("w"),
+            egui::Sense::drag(),
+        );
+        if r_white.dragged() {
+            *white = (*white + r_white.drag_delta().x / track_rect.width() * 255.0)
+                .clamp(*black + 1.0, 255.0);
+            changed = true;
+        }
+
+        let r_black = ui.interact(
+            egui::Rect::from_center_size(egui::pos2(bx, center_y), egui::vec2(hit_w, track_h)),
+            section_id.with("b"),
+            egui::Sense::drag(),
+        );
+        if r_black.dragged() {
+            *black = (*black + r_black.drag_delta().x / track_rect.width() * 255.0)
+                .clamp(0.0, *white - 1.0);
+            changed = true;
+        }
+
+        let r_gamma = ui.interact(
+            egui::Rect::from_center_size(egui::pos2(gx, center_y), egui::vec2(hit_w, track_h)),
+            section_id.with("g"),
+            egui::Sense::drag(),
+        );
+        if r_gamma.dragged() {
+            let range = (wx - bx).max(1.0);
+            let new_gx = (gx + r_gamma.drag_delta().x).clamp(bx + 1.0, wx - 1.0);
+            let t = (new_gx - bx) / range;
+            if t > 0.001 && t < 0.999 {
+                *gamma = (0.5_f32.ln() / t.ln()).clamp(0.10, 9.99);
+            }
+            changed = true;
+        }
+
+        // ── Compact numeric inputs below the track ───────────────────────
+        ui.horizontal(|ui| {
+            let col_w = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
+            let max_black = (*white - 1.0).max(0.0);
+            let min_white = (*black + 1.0).min(255.0);
+            if ui.add_sized([col_w, 0.0],
+                egui::DragValue::new(black).range(0.0..=max_black).max_decimals(0).speed(0.5),
+            ).on_hover_text("Black point").changed() { changed = true; }
+            if ui.add_sized([col_w, 0.0],
+                egui::DragValue::new(gamma).range(0.10..=9.99).max_decimals(2).speed(0.01),
+            ).on_hover_text("Midtone gamma").changed() { changed = true; }
+            if ui.add_sized([col_w, 0.0],
+                egui::DragValue::new(white).range(min_white..=255.0).max_decimals(0).speed(0.5),
+            ).on_hover_text("White point").changed() { changed = true; }
+        });
+
+        changed
+    }
+
     fn render_color_adjust_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let s = self.s();
 
@@ -2705,99 +2884,32 @@ impl FffViewerApp {
             ui.add_space(4.0);
 
             // ── 4 histogram sections with levels sliders ─────────────────
-            let sections = [
-                (hist_rgb, 3usize, egui::Color32::from_gray(160)),        // luminance → RGB combined
-                (hist_r,   0usize, egui::Color32::from_rgb(200, 50, 50)), // R channel
-                (hist_g,   1usize, egui::Color32::from_rgb(50, 180, 50)), // G channel
-                (hist_b,   2usize, egui::Color32::from_rgb(60, 100, 220)),// B channel
+            let sections: [(&str, usize, egui::Color32); 4] = [
+                (hist_rgb, 3usize, egui::Color32::from_gray(160)),
+                (hist_r,   0usize, egui::Color32::from_rgb(200, 50, 50)),
+                (hist_g,   1usize, egui::Color32::from_rgb(50, 180, 50)),
+                (hist_b,   2usize, egui::Color32::from_rgb(60, 100, 220)),
             ];
-
             // levels index: master=0, R=1, G=2, B=3
             let levels_idx = [0usize, 1usize, 2usize, 3usize];
 
             for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
                 let lvl_idx = levels_idx[section_pos];
-
-                ui.label(egui::RichText::new(*title).small().strong());
-
-                // ── Histogram bars ────────────────────────────────────────
-                let hist_h = 55.0_f32;
-                let desired = egui::vec2(ui.available_width(), hist_h);
-                let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
-                let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, 2.0, egui::Color32::from_gray(18));
-
-                if let Some(ref hists) = hist_data {
-                    let h_arr = &hists[*hist_ch];
-                    let max_v = h_arr.iter().copied().max().unwrap_or(1).max(1) as f32;
-                    let w = rect.width();
-                    let bar_w = (w / 256.0).max(1.0);
-
-                    // Use log scale so both dark and bright areas are visible
-                    let log_max = max_v.ln_1p();
-                    for i in 0..256 {
-                        let count = h_arr[i] as f32;
-                        if count < 0.5 { continue; }
-                        let bar_h = (count.ln_1p() / log_max * hist_h).min(hist_h);
-                        let x = rect.left() + i as f32 / 255.0 * w;
-                        painter.rect_filled(
-                            egui::Rect::from_min_size(
-                                egui::pos2(x, rect.bottom() - bar_h),
-                                egui::vec2(bar_w, bar_h),
-                            ),
-                            0.0,
-                            *bar_color,
-                        );
-                    }
+                let hist = hist_data.as_ref().map(|hd| &hd[*hist_ch]);
+                let section_id = ui.id().with(section_pos);
+                if Self::render_levels_section(
+                    ui,
+                    section_id,
+                    title,
+                    hist,
+                    *bar_color,
+                    &mut self.manual_adjust.levels_black[lvl_idx],
+                    &mut self.manual_adjust.levels_gamma[lvl_idx],
+                    &mut self.manual_adjust.levels_white[lvl_idx],
+                ) {
+                    rebuild = true;
                 }
-
-                // Draw black / white point marker lines on histogram
-                let black_x = rect.left()
-                    + self.manual_adjust.levels_black[lvl_idx] / 255.0 * rect.width();
-                let white_x = rect.left()
-                    + self.manual_adjust.levels_white[lvl_idx] / 255.0 * rect.width();
-                painter.line_segment(
-                    [egui::pos2(black_x, rect.top()), egui::pos2(black_x, rect.bottom())],
-                    egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(80, 130, 255, 220)),
-                );
-                painter.line_segment(
-                    [egui::pos2(white_x, rect.top()), egui::pos2(white_x, rect.bottom())],
-                    egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(255, 230, 50, 220)),
-                );
-
-                // ── Three input controls: black | gamma | white ───────────
-                ui.horizontal(|ui| {
-                    let col_w = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
-
-                    let max_black = (self.manual_adjust.levels_white[lvl_idx] - 1.0).max(0.0);
-                    let min_white = (self.manual_adjust.levels_black[lvl_idx] + 1.0).min(255.0);
-
-                    let dv_black = egui::DragValue::new(&mut self.manual_adjust.levels_black[lvl_idx])
-                        .range(0.0..=max_black)
-                        .max_decimals(0)
-                        .speed(0.5);
-                    if ui.add_sized([col_w, 0.0], dv_black).on_hover_text("Black point").changed() {
-                        rebuild = true;
-                    }
-
-                    let dv_gamma = egui::DragValue::new(&mut self.manual_adjust.levels_gamma[lvl_idx])
-                        .range(0.10..=9.99)
-                        .max_decimals(2)
-                        .speed(0.01);
-                    if ui.add_sized([col_w, 0.0], dv_gamma).on_hover_text("Midtone gamma").changed() {
-                        rebuild = true;
-                    }
-
-                    let dv_white = egui::DragValue::new(&mut self.manual_adjust.levels_white[lvl_idx])
-                        .range(min_white..=255.0)
-                        .max_decimals(0)
-                        .speed(0.5);
-                    if ui.add_sized([col_w, 0.0], dv_white).on_hover_text("White point").changed() {
-                        rebuild = true;
-                    }
-                });
-
-                ui.add_space(6.0);
+                ui.add_space(4.0);
             }
 
             ui.separator();
