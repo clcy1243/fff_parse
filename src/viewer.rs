@@ -540,6 +540,18 @@ impl FffViewerApp {
     fn set_directory(&mut self, dir: PathBuf) {
         log::info!("set_directory: {}", dir.display());
         self.current_dir = Some(dir.clone());
+
+        // Expand all ancestor directories so the selected path is visible in the tree
+        let mut ancestor = dir.parent().map(|p| p.to_path_buf());
+        while let Some(p) = ancestor {
+            if p == dir || p.as_os_str().is_empty() {
+                break;
+            }
+            self.expanded_dirs.insert(p.clone());
+            ancestor = p.parent().map(|q| q.to_path_buf());
+        }
+        // Also expand the directory itself so its children are visible
+        self.expanded_dirs.insert(dir.clone());
         self.fff_files = scan_fff_files(&dir);
         self.fff_files.sort();
         log::info!("Found {} .fff files", self.fff_files.len());
