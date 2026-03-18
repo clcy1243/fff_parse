@@ -2863,58 +2863,58 @@ impl FffViewerApp {
         // Clone histogram data to avoid borrow conflicts when mutating manual_adjust
         let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.heading(adjust_heading);
-            ui.add_space(4.0);
+        // ── Header + toggle (not scrollable) ────────────────────────────
+        ui.heading(adjust_heading);
+        ui.add_space(4.0);
 
-            ui.horizontal(|ui| {
-                if ui.checkbox(&mut self.manual_adjust.enabled, adjust_enabled).changed() {
-                    rebuild = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(reset_adjust).clicked() {
-                        let enabled = self.manual_adjust.enabled;
-                        self.manual_adjust = color::ManualAdjust { enabled, ..Default::default() };
-                        rebuild = true;
-                    }
-                });
-            });
-
-            ui.add_space(4.0);
-
-            // ── 4 histogram sections with levels sliders ─────────────────
-            let sections: [(&str, usize, egui::Color32); 4] = [
-                (hist_rgb, 3usize, egui::Color32::from_gray(160)),
-                (hist_r,   0usize, egui::Color32::from_rgb(200, 50, 50)),
-                (hist_g,   1usize, egui::Color32::from_rgb(50, 180, 50)),
-                (hist_b,   2usize, egui::Color32::from_rgb(60, 100, 220)),
-            ];
-            // levels index: master=0, R=1, G=2, B=3
-            let levels_idx = [0usize, 1usize, 2usize, 3usize];
-
-            for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
-                let lvl_idx = levels_idx[section_pos];
-                let hist = hist_data.as_ref().map(|hd| &hd[*hist_ch]);
-                let section_id = ui.id().with(section_pos);
-                if Self::render_levels_section(
-                    ui,
-                    section_id,
-                    title,
-                    hist,
-                    *bar_color,
-                    &mut self.manual_adjust.levels_black[lvl_idx],
-                    &mut self.manual_adjust.levels_gamma[lvl_idx],
-                    &mut self.manual_adjust.levels_white[lvl_idx],
-                ) {
-                    rebuild = true;
-                }
-                ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut self.manual_adjust.enabled, adjust_enabled).changed() {
+                rebuild = true;
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(reset_adjust).clicked() {
+                    let enabled = self.manual_adjust.enabled;
+                    self.manual_adjust = color::ManualAdjust { enabled, ..Default::default() };
+                    rebuild = true;
+                }
+            });
+        });
 
-            ui.separator();
+        ui.add_space(4.0);
+
+        // ── 4 histogram sections (outside ScrollArea so scrollbar can't overlap) ──
+        let sections: [(&str, usize, egui::Color32); 4] = [
+            (hist_rgb, 3usize, egui::Color32::from_gray(160)),
+            (hist_r,   0usize, egui::Color32::from_rgb(200, 50, 50)),
+            (hist_g,   1usize, egui::Color32::from_rgb(50, 180, 50)),
+            (hist_b,   2usize, egui::Color32::from_rgb(60, 100, 220)),
+        ];
+        let levels_idx = [0usize, 1usize, 2usize, 3usize];
+
+        for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
+            let lvl_idx = levels_idx[section_pos];
+            let hist = hist_data.as_ref().map(|hd| &hd[*hist_ch]);
+            let section_id = ui.id().with(section_pos);
+            if Self::render_levels_section(
+                ui,
+                section_id,
+                title,
+                hist,
+                *bar_color,
+                &mut self.manual_adjust.levels_black[lvl_idx],
+                &mut self.manual_adjust.levels_gamma[lvl_idx],
+                &mut self.manual_adjust.levels_white[lvl_idx],
+            ) {
+                rebuild = true;
+            }
             ui.add_space(4.0);
+        }
 
-            // ── Basic adjustment sliders ─────────────────────────────────
+        ui.separator();
+        ui.add_space(4.0);
+
+        // ── Basic adjustment sliders (scrollable) ───────────────────────
+        egui::ScrollArea::vertical().id_salt("adjust_sliders").show(ui, |ui| {
             let adj = &mut self.manual_adjust;
 
             ui.label(exposure_str);
