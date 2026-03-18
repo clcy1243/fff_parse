@@ -114,6 +114,7 @@ pub struct FffViewerApp {
     selected_input_profile: Option<usize>,
     selected_preset: Option<usize>,
     use_embedded_icc: bool,
+    use_embedded_correction: bool,
     preset_category_filter: String,
     color_status: Option<String>,
 
@@ -217,6 +218,7 @@ impl FffViewerApp {
             selected_input_profile: None,
             selected_preset: None,
             use_embedded_icc: false,
+            use_embedded_correction: false,
             preset_category_filter: String::new(),
             color_status: None,
             loading_status: LoadingStatus::Idle,
@@ -263,6 +265,9 @@ impl FffViewerApp {
         self.selected_index = Some(index);
         self.expanded_setting = None;
         self.error_msg = None;
+        self.use_embedded_correction = false;
+        self.use_embedded_icc = false;
+        self.color_status = None;
 
         let path = self.fff_files[index].clone();
         log::info!("select_file: [{}] {}", index, path.display());
@@ -1293,7 +1298,7 @@ impl FffViewerApp {
 
         ui.add_space(8.0);
 
-        // ── Use Embedded ICC ──
+        // ── Use Embedded ICC (only shown when file has embedded ICC) ──
         let has_embedded = self
             .detail
             .as_ref()
@@ -1301,15 +1306,10 @@ impl FffViewerApp {
             .map(|d| !d.is_empty())
             .unwrap_or(false);
 
-        ui.horizontal(|ui| {
-            ui.add_enabled(has_embedded, egui::Checkbox::new(&mut self.use_embedded_icc, s.use_embedded_icc));
-        });
-        if !has_embedded && self.detail.is_some() {
-            ui.label(
-                egui::RichText::new(s.no_embedded_icc)
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-            );
+        if has_embedded {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.use_embedded_icc, s.use_embedded_icc);
+            });
         }
 
         ui.add_space(12.0);
@@ -1320,7 +1320,52 @@ impl FffViewerApp {
         ui.strong(s.settings_preset);
         ui.add_space(2.0);
 
-        // Category filter
+        // Embedded correction option (only shown if file has edit history)
+        let has_embedded_correction = self
+            .detail
+            .as_ref()
+            .and_then(|d| d.edit_history.as_ref())
+            .map(|h| !h.settings.is_empty())
+            .unwrap_or(false);
+
+        if has_embedded_correction {
+            let mut use_embedded = self.use_embedded_correction;
+            if ui
+                .checkbox(&mut use_embedded, s.use_embedded_correction)
+                .changed()
+            {
+                self.use_embedded_correction = use_embedded;
+                if use_embedded {
+                    // Deselect preset when using embedded correction
+                    self.selected_preset = None;
+                }
+                self.color_status = None;
+            }
+
+            // Show the embedded correction name
+            if use_embedded {
+                if let Some(ref detail) = self.detail {
+                    if let Some(ref history) = detail.edit_history {
+                        let idx = history.current_index.min(history.settings.len().saturating_sub(1));
+                        let setting = &history.settings[idx];
+                        let label = if setting.name.is_empty() {
+                            format!("#{}", idx)
+                        } else {
+                            setting.name.clone()
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("  📎 {}", label))
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                }
+            }
+            ui.add_space(4.0);
+        }
+
+        // Category filter (disabled when using embedded correction)
+        let preset_enabled = !self.use_embedded_correction;
         let categories: Vec<String> = {
             let mut cats: Vec<String> = self
                 .available_presets
@@ -1334,30 +1379,32 @@ impl FffViewerApp {
         };
 
         if !categories.is_empty() {
-            egui::ComboBox::from_id_salt("preset_category_combo")
-                .selected_text(if self.preset_category_filter.is_empty() {
-                    s.category_all
-                } else {
-                    &self.preset_category_filter
-                })
-                .width(ui.available_width() - 16.0)
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(self.preset_category_filter.is_empty(), s.category_all)
-                        .clicked()
-                    {
-                        self.preset_category_filter.clear();
-                    }
-                    for cat in &categories {
-                        let label = if cat.is_empty() { "Standard" } else { cat.as_str() };
+            ui.add_enabled_ui(preset_enabled, |ui| {
+                egui::ComboBox::from_id_salt("preset_category_combo")
+                    .selected_text(if self.preset_category_filter.is_empty() {
+                        s.category_all
+                    } else {
+                        &self.preset_category_filter
+                    })
+                    .width(ui.available_width() - 16.0)
+                    .show_ui(ui, |ui| {
                         if ui
-                            .selectable_label(self.preset_category_filter == *cat, label)
+                            .selectable_label(self.preset_category_filter.is_empty(), s.category_all)
                             .clicked()
                         {
-                            self.preset_category_filter = cat.clone();
+                            self.preset_category_filter.clear();
                         }
-                    }
-                });
+                        for cat in &categories {
+                            let label = if cat.is_empty() { "Standard" } else { cat.as_str() };
+                            if ui
+                                .selectable_label(self.preset_category_filter == *cat, label)
+                                .clicked()
+                            {
+                                self.preset_category_filter = cat.clone();
+                            }
+                        }
+                    });
+            });
 
             ui.add_space(4.0);
         }
@@ -1379,34 +1426,38 @@ impl FffViewerApp {
             .map(|p| p.name.clone())
             .unwrap_or_else(|| "—".to_string());
 
-        egui::ComboBox::from_id_salt("preset_combo")
-            .selected_text(&preset_label)
-            .width(ui.available_width() - 16.0)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_value(&mut self.selected_preset, None, "— None —")
-                    .clicked()
-                {
-                    self.color_status = None;
-                }
-                for (global_idx, preset) in &filtered_presets {
-                    let label = if preset.category.is_empty() {
-                        preset.name.clone()
-                    } else {
-                        format!("{}/{}", preset.category, preset.name)
-                    };
+        ui.add_enabled_ui(preset_enabled, |ui| {
+            egui::ComboBox::from_id_salt("preset_combo")
+                .selected_text(&preset_label)
+                .width(ui.available_width() - 16.0)
+                .show_ui(ui, |ui| {
                     if ui
-                        .selectable_value(
-                            &mut self.selected_preset,
-                            Some(*global_idx),
-                            &label,
-                        )
+                        .selectable_value(&mut self.selected_preset, None, "— None —")
                         .clicked()
                     {
+                        self.use_embedded_correction = false;
                         self.color_status = None;
                     }
-                }
-            });
+                    for (global_idx, preset) in &filtered_presets {
+                        let label = if preset.category.is_empty() {
+                            preset.name.clone()
+                        } else {
+                            format!("{}/{}", preset.category, preset.name)
+                        };
+                        if ui
+                            .selectable_value(
+                                &mut self.selected_preset,
+                                Some(*global_idx),
+                                &label,
+                            )
+                            .clicked()
+                        {
+                            self.use_embedded_correction = false;
+                            self.color_status = None;
+                        }
+                    }
+                });
+        });
 
         ui.add_space(12.0);
         ui.separator();
@@ -1417,7 +1468,8 @@ impl FffViewerApp {
             let can_apply = self.detail.is_some()
                 && (self.selected_input_profile.is_some()
                     || self.use_embedded_icc
-                    || self.selected_preset.is_some());
+                    || self.selected_preset.is_some()
+                    || self.use_embedded_correction);
 
             if ui
                 .add_enabled(can_apply, egui::Button::new(s.apply_profile))
@@ -1500,14 +1552,27 @@ impl FffViewerApp {
             None
         };
 
-        // Load preset correction if selected
-        let preset_correction = self.selected_preset.and_then(|idx| {
-            self.available_presets.get(idx).and_then(|p| {
-                std::fs::read_to_string(&p.path)
-                    .ok()
-                    .and_then(|xml| flexcolor::parse_settings_xml(&xml))
+        // Load preset correction: either from embedded edit history or from selected preset file
+        let preset_correction = if self.use_embedded_correction {
+            self.detail.as_ref().and_then(|d| {
+                d.edit_history.as_ref().and_then(|h| {
+                    if h.settings.is_empty() {
+                        None
+                    } else {
+                        let idx = h.current_index.min(h.settings.len() - 1);
+                        Some(h.settings[idx].correction.clone())
+                    }
+                })
             })
-        });
+        } else {
+            self.selected_preset.and_then(|idx| {
+                self.available_presets.get(idx).and_then(|p| {
+                    std::fs::read_to_string(&p.path)
+                        .ok()
+                        .and_then(|xml| flexcolor::parse_settings_xml(&xml))
+                })
+            })
+        };
 
         // Need either ICC or preset (or both)
         if input_icc.is_none() && preset_correction.is_none() {
@@ -1608,6 +1673,7 @@ impl FffViewerApp {
         self.selected_input_profile = None;
         self.selected_preset = None;
         self.use_embedded_icc = false;
+        self.use_embedded_correction = false;
         self.color_status = None;
 
         // Re-decode original preview with display gamma
