@@ -2661,6 +2661,29 @@ impl FffViewerApp {
         }
     }
 
+    /// Computes black/white points at 0.5%/99.5% percentile of a histogram.
+    fn auto_percentile_levels(hist: &[u32; 256]) -> (f32, f32) {
+        let total: u32 = hist.iter().sum();
+        if total == 0 { return (0.0, 255.0); }
+        let lo_target = ((total as f32 * 0.005) as u32).max(1);
+        let hi_target = total.saturating_sub(lo_target);
+
+        let mut b = 0f32;
+        let mut cumsum = 0u32;
+        for (i, &count) in hist.iter().enumerate() {
+            cumsum += count;
+            if cumsum >= lo_target { b = i as f32; break; }
+        }
+
+        let mut w = 255f32;
+        cumsum = 0;
+        for (i, &count) in hist.iter().enumerate().rev() {
+            cumsum += count;
+            if cumsum >= (total - hi_target) { w = i as f32; break; }
+        }
+        (b, w.max(b + 1.0))
+    }
+
     /// Renders one histogram + gradient track + draggable triangle handles for black/gamma/white.
     /// Returns true if any value was changed.
     fn render_levels_section(
@@ -2676,7 +2699,26 @@ impl FffViewerApp {
         let mut changed = false;
         let avail_w = ui.available_width();
 
-        ui.label(egui::RichText::new(title).small().strong());
+        // Title row with "A" (auto-levels) button on the right
+        let auto_clicked = ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(title).small().strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(egui::Button::new(egui::RichText::new("A").small())
+                    .min_size(egui::vec2(16.0, 0.0)))
+                    .on_hover_text("Auto-set levels (0.5%–99.5% percentile)")
+                    .clicked()
+            }).inner
+        }).inner;
+
+        if auto_clicked {
+            if let Some(h) = hist {
+                let (b, w) = Self::auto_percentile_levels(h);
+                *black = b;
+                *white = w;
+                *gamma = 1.0;
+                changed = true;
+            }
+        }
 
         // ── Histogram bars ───────────────────────────────────────────────
         let hist_h = 55.0_f32;
@@ -2685,6 +2727,19 @@ impl FffViewerApp {
         painter.rect_filled(hist_rect, 2.0, egui::Color32::from_gray(18));
 
         if let Some(h_arr) = hist {
+            // Highlight the actual data range with a slightly lighter background
+            let first_nz = h_arr.iter().position(|&c| c > 0);
+            let last_nz  = h_arr.iter().rposition(|&c| c > 0);
+            if let (Some(lo), Some(hi)) = (first_nz, last_nz) {
+                let x1 = hist_rect.left() + lo as f32 / 255.0 * hist_rect.width();
+                let x2 = hist_rect.left() + (hi + 1) as f32 / 255.0 * hist_rect.width();
+                painter.rect_filled(
+                    egui::Rect::from_x_y_ranges(x1..=x2, hist_rect.top()..=hist_rect.bottom()),
+                    0.0,
+                    egui::Color32::from_gray(28),
+                );
+            }
+
             let max_v = h_arr.iter().copied().max().unwrap_or(1).max(1) as f32;
             let w = hist_rect.width();
             let bar_w = (w / 256.0).max(1.0);
