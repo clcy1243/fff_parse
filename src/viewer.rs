@@ -2819,17 +2819,16 @@ impl FffViewerApp {
         }
 
         // ── Compact numeric inputs below the track ───────────────────────
-        ui.horizontal(|ui| {
-            let col_w = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
-            let max_black = (*white - 1.0).max(0.0);
-            let min_white = (*black + 1.0).min(255.0);
-            if ui.add_sized([col_w, 0.0],
+        let max_black = (*white - 1.0).max(0.0);
+        let min_white = (*black + 1.0).min(255.0);
+        ui.columns(3, |cols| {
+            if cols[0].add(
                 egui::DragValue::new(black).range(0.0..=max_black).max_decimals(0).speed(0.5),
             ).on_hover_text("Black point").changed() { changed = true; }
-            if ui.add_sized([col_w, 0.0],
+            if cols[1].add(
                 egui::DragValue::new(gamma).range(0.10..=9.99).max_decimals(2).speed(0.01),
             ).on_hover_text("Midtone gamma").changed() { changed = true; }
-            if ui.add_sized([col_w, 0.0],
+            if cols[2].add(
                 egui::DragValue::new(white).range(min_white..=255.0).max_decimals(0).speed(0.5),
             ).on_hover_text("White point").changed() { changed = true; }
         });
