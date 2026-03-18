@@ -351,6 +351,23 @@ fn get_element_name(node: &XmlNode) -> Option<&str> {
     }
 }
 
+/// Extract the "Name" string from a profile dict node (InputProfile/RGBProfile).
+/// These are stored as: <dict><key>Name</key><string>...</string>...</dict>
+fn get_profile_name_from_dict(dict_node: &XmlNode) -> Option<String> {
+    if get_element_name(dict_node) != Some("dict") {
+        return None;
+    }
+    let children = element_children(dict_node);
+    let mut i = 0;
+    while i + 1 < children.len() {
+        if get_element_text(children[i]).as_deref() == Some("Name") {
+            return get_element_text(children[i + 1]);
+        }
+        i += 2;
+    }
+    None
+}
+
 fn parse_image_settings_array(array_node: &XmlNode) -> Option<Vec<ImageSetting>> {
     let children = element_children(array_node);
     let mut settings = Vec::new();
@@ -518,10 +535,15 @@ fn parse_image_correction(dict_node: &XmlNode) -> ImageCorrection {
                 }
             }
             "InputProfile" => {
-                corr.input_profile_name = Some(val_text.clone());
+                // InputProfile is a dict with a "Name" key
+                if let Some(name) = get_profile_name_from_dict(val) {
+                    corr.input_profile_name = Some(name);
+                }
             }
             "RGBProfile" => {
-                corr.rgb_profile_name = Some(val_text.clone());
+                if let Some(name) = get_profile_name_from_dict(val) {
+                    corr.rgb_profile_name = Some(name);
+                }
             }
             _ => {}
         }

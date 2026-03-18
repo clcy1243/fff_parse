@@ -832,6 +832,7 @@ impl FffViewerApp {
                             self.auto_select_input_profile();
                             // Re-process from raw 16-bit with full pipeline (film + ICC)
                             self.apply_color_profile(ctx);
+                            self.save_sidecar();
                         }
                         self.histogram_needs_update = true;
                     }
