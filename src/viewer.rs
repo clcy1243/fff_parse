@@ -410,14 +410,13 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
             fonts.font_data.insert("cjk".to_owned(), fd.into());
 
             // Adjust emoji fonts' y_offset to align with shifted CJK text.
-            // Without this, emoji sits higher than CJK text after the CJK offset.
             if let Some(emoji_data) = fonts.font_data.get_mut("NotoEmoji-Regular") {
                 let fd = std::sync::Arc::make_mut(emoji_data);
-                fd.tweak.y_offset_factor = 0.20;
+                fd.tweak.y_offset_factor = -0.15;
             }
             if let Some(emoji_data) = fonts.font_data.get_mut("emoji-icon-font") {
                 let fd = std::sync::Arc::make_mut(emoji_data);
-                fd.tweak.y_offset_factor = 0.20;
+                fd.tweak.y_offset_factor = -0.15;
             }
 
             // Insert CJK as SECOND font (after Ubuntu-Light, before emoji fonts).
