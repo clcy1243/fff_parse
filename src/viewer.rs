@@ -397,17 +397,27 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
 
     for font_path in &cjk_font_paths {
         if let Ok(font_data) = std::fs::read(font_path) {
-            let mut fd = egui::FontData::from_owned(font_data);
-            fd.index = 0;
+            let fd = egui::FontData::from_owned(font_data).tweak(egui::FontTweak {
+                scale: 1.0,
+                y_offset_factor: 0.0,
+                y_offset: 0.0,
+                baseline_offset_factor: 0.0,
+            });
             fonts.font_data.insert("cjk".to_owned(), fd.into());
 
-            // Put CJK font FIRST so Latin and CJK characters share the same
-            // baseline and line metrics — eliminates misalignment between scripts
+            // Insert CJK as SECOND font (after Ubuntu-Light, before emoji fonts).
+            // This keeps Ubuntu-Light as primary for proper button/line metrics,
+            // while CJK characters fall back to this font, and emoji still use
+            // the built-in NotoEmoji/emoji-icon-font.
             if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                family.insert(0, "cjk".to_owned());
+                // Default order: ["Ubuntu-Light", "NotoEmoji-Regular", "emoji-icon-font"]
+                // Insert at position 1 → ["Ubuntu-Light", "cjk", "NotoEmoji-Regular", "emoji-icon-font"]
+                let pos = 1.min(family.len());
+                family.insert(pos, "cjk".to_owned());
             }
             if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                family.insert(0, "cjk".to_owned());
+                let pos = 1.min(family.len());
+                family.insert(pos, "cjk".to_owned());
             }
 
             ctx.set_fonts(fonts);
@@ -860,21 +870,21 @@ impl eframe::App for FffViewerApp {
                             ui.add(
                                 egui::ProgressBar::new(0.0)
                                     .animate(true)
-                                    .text(format!("{}  {}…", self.s().loading_file, name)),
+                                    .text(format!("⏳ {} {}…", self.s().loading_file, name)),
                             );
                         }
                         LoadingStatus::ApplyingColorProfile => {
                             ui.add(
                                 egui::ProgressBar::new(0.0)
                                     .animate(true)
-                                    .text("Applying color profile…"),
+                                    .text("⏳ Applying color profile…"),
                             );
                         }
                         _ if thumbs_loading => {
                             let progress = loaded as f32 / total as f32;
                             let s2 = i18n::strings(self.language);
                             let text = format!(
-                                "{} {}/{}",
+                                "📷 {} {}/{}",
                                 s2.loading_thumbnails, loaded, total
                             );
                             ui.add(egui::ProgressBar::new(progress).text(text));
@@ -1027,7 +1037,7 @@ impl FffViewerApp {
                 }
             }
 
-            let text = egui::RichText::new(name.to_string()).color(if is_selected {
+            let text = egui::RichText::new(format!("📁 {}", name)).color(if is_selected {
                 ui.visuals().hyperlink_color
             } else {
                 ui.visuals().text_color()
@@ -1790,7 +1800,7 @@ impl FffViewerApp {
                             setting.name.clone()
                         };
                         ui.label(
-                            egui::RichText::new(format!("  {}", label))
+                            egui::RichText::new(format!("  📎 {}", label))
                                 .small()
                                 .color(ui.visuals().weak_text_color()),
                         );
@@ -1926,7 +1936,7 @@ impl FffViewerApp {
         // Status message
         if let Some(status) = &self.color_status {
             ui.add_space(8.0);
-            let is_error = status.starts_with("[Error]");
+            let is_error = status.starts_with('❌');
             let color = if is_error {
                 if ui.visuals().dark_mode {
                     egui::Color32::from_rgb(255, 100, 100)
@@ -1950,7 +1960,7 @@ impl FffViewerApp {
                 ui.separator();
                 ui.add_space(4.0);
                 ui.strong(
-                    egui::RichText::new(preset.name.clone())
+                    egui::RichText::new(format!("📋 {}", preset.name))
                         .color(ui.visuals().hyperlink_color),
                 );
 
@@ -2420,7 +2430,7 @@ impl FffViewerApp {
 
         // Data directory info
         ui.label(
-            egui::RichText::new(format!("{}", config::app_data_dir().display()))
+            egui::RichText::new(format!("📁 {}", config::app_data_dir().display()))
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
@@ -2526,7 +2536,7 @@ impl FffViewerApp {
                             .color(ui.visuals().weak_text_color()),
                     );
 
-                    if ui.small_button("×").clicked() {
+                    if ui.small_button("🗑").clicked() {
                         remove_idx = Some(i);
                     }
                 });
@@ -3132,7 +3142,7 @@ impl FffViewerApp {
     }
 
     fn bool_icon(v: bool) -> String {
-        if v { "Yes".into() } else { "—".into() }
+        if v { "✅".into() } else { "—".into() }
     }
 }
 
