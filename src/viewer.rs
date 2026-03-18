@@ -581,14 +581,29 @@ impl FffViewerApp {
         log::info!("set_directory: {}", dir.display());
         self.current_dir = Some(dir.clone());
 
-        // Expand all ancestor directories so the selected path is visible in the tree
-        let mut ancestor = dir.parent().map(|p| p.to_path_buf());
-        while let Some(p) = ancestor {
-            if p == dir || p.as_os_str().is_empty() {
-                break;
+        // Find the most specific tree root that contains `dir` (longest prefix).
+        // Only expand ancestors between `dir` and that root — never go above it,
+        // so we don't accidentally expand e.g. "/" when home dir is also a root.
+        let roots = get_root_dirs();
+        let containing_root = roots
+            .iter()
+            .filter(|r| dir.starts_with(r.as_path()))
+            .max_by_key(|r| r.components().count())
+            .cloned();
+
+        if let Some(ref root) = containing_root {
+            let mut ancestor = dir.parent().map(|p| p.to_path_buf());
+            while let Some(ref p) = ancestor {
+                if p.starts_with(root.as_path()) {
+                    self.expanded_dirs.insert(p.clone());
+                    if p == root {
+                        break; // reached containing root — stop
+                    }
+                    ancestor = p.parent().map(|q| q.to_path_buf());
+                } else {
+                    break; // above the containing root — don't expand
+                }
             }
-            self.expanded_dirs.insert(p.clone());
-            ancestor = p.parent().map(|q| q.to_path_buf());
         }
         // Also expand the directory itself so its children are visible
         self.expanded_dirs.insert(dir.clone());
