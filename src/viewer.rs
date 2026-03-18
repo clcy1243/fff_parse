@@ -3779,7 +3779,25 @@ fn get_root_dirs() -> Vec<PathBuf> {
     if volumes.exists() {
         if let Ok(entries) = std::fs::read_dir(&volumes) {
             for entry in entries.filter_map(|e| e.ok()) {
-                roots.push(entry.path());
+                let path = entry.path();
+                // Skip symlinks — "Macintosh HD" is a symlink to "/" on macOS.
+                // Real external / removable drives are actual directories.
+                let is_symlink = path
+                    .symlink_metadata()
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false);
+                // Skip hidden system volumes (e.g. .Spotlight-V100, .timemachine)
+                let is_hidden = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with('.'))
+                    .unwrap_or(false);
+                // Skip volumes that are not readable (e.g. "Macintosh HD - Data"
+                // has d--x--x--x permissions — only the kernel can list it).
+                // External USB drives always have normal read permissions.
+                let is_readable = std::fs::read_dir(&path).is_ok();
+                if !is_symlink && !is_hidden && is_readable {
+                    roots.push(path);
+                }
             }
         }
     }
