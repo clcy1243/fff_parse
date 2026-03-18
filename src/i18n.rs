@@ -184,6 +184,17 @@ pub struct Strings {
     pub file_filter_placeholder: &'static str,
     pub file_filter_clear: &'static str,
     pub files_filtered: &'static str, // "{} / {} files"
+
+    // Color adjust panel
+    pub color_adjust: &'static str,
+    pub adjust_heading: &'static str,
+    pub exposure: &'static str,
+    pub highlights: &'static str,
+    pub shadows: &'static str,
+    pub saturation_label: &'static str,
+    pub color_balance: &'static str,
+    pub reset_adjust: &'static str,
+    pub adjust_enabled: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -329,6 +340,16 @@ static EN: Strings = Strings {
     file_filter_placeholder: "🔎 Filter by name or format…",
     file_filter_clear: "✕",
     files_filtered: "{} / {} files",
+
+    color_adjust: "✏️ Adjust",
+    adjust_heading: "Image Adjustments",
+    exposure: "Exposure",
+    highlights: "Highlights",
+    shadows: "Shadows",
+    saturation_label: "Saturation",
+    color_balance: "Color Balance",
+    reset_adjust: "↺ Reset",
+    adjust_enabled: "Enable",
 };
 
 static ZH: Strings = Strings {
@@ -474,6 +495,16 @@ static ZH: Strings = Strings {
     file_filter_placeholder: "🔎 按文件名或格式筛选…",
     file_filter_clear: "✕",
     files_filtered: "{} / {} 个文件",
+
+    color_adjust: "✏️ 调整",
+    adjust_heading: "图像调整",
+    exposure: "曝光",
+    highlights: "高光",
+    shadows: "阴影",
+    saturation_label: "饱和度",
+    color_balance: "色彩平衡",
+    reset_adjust: "↺ 重置",
+    adjust_enabled: "启用",
 };
 
 pub fn strings(lang: Language) -> &'static Strings {

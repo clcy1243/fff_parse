@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use crate::color;
 use crate::config;
 
 /// All per-file settings that should persist across sessions.
@@ -26,6 +27,7 @@ pub struct SidecarConfig {
     pub split_portrait: bool,
     pub split_naming_pattern: String,
     pub split_regions: Vec<SidecarRegion>,
+    pub manual_adjust: color::ManualAdjust,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +85,20 @@ fn to_xml(c: &SidecarConfig) -> String {
     let _ = writeln!(s, "    <target_color_space>{}</target_color_space>", xml_escape(&c.target_color_space));
     s.push_str("  </color>\n");
 
+    // Manual adjust section
+    let a = &c.manual_adjust;
+    s.push_str("  <adjust>\n");
+    let _ = writeln!(s, "    <adj_enabled>{}</adj_enabled>", a.enabled);
+    let _ = writeln!(s, "    <adj_exposure>{}</adj_exposure>", a.exposure);
+    let _ = writeln!(s, "    <adj_contrast>{}</adj_contrast>", a.contrast);
+    let _ = writeln!(s, "    <adj_highlights>{}</adj_highlights>", a.highlights);
+    let _ = writeln!(s, "    <adj_shadows>{}</adj_shadows>", a.shadows);
+    let _ = writeln!(s, "    <adj_saturation>{}</adj_saturation>", a.saturation);
+    let _ = writeln!(s, "    <adj_r_shift>{}</adj_r_shift>", a.r_shift);
+    let _ = writeln!(s, "    <adj_g_shift>{}</adj_g_shift>", a.g_shift);
+    let _ = writeln!(s, "    <adj_b_shift>{}</adj_b_shift>", a.b_shift);
+    s.push_str("  </adjust>\n");
+
     // Split section
     s.push_str("  <split>\n");
     let _ = writeln!(s, "    <format>{}</format>", xml_escape(&c.split_format));
@@ -137,6 +153,7 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
         split_portrait: false,
         split_naming_pattern: "{name}_{n}".to_string(),
         split_regions: Vec::new(),
+        manual_adjust: color::ManualAdjust::default(),
     };
 
     // Parse simple tags
@@ -163,6 +180,34 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     }
     if let Some(v) = tag_content(xml, "naming_pattern") {
         config.split_naming_pattern = xml_unescape(&v);
+    }
+
+    if let Some(v) = tag_content(xml, "adj_enabled") {
+        config.manual_adjust.enabled = v == "true";
+    }
+    if let Some(v) = tag_content(xml, "adj_exposure") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.exposure = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_contrast") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.contrast = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_highlights") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.highlights = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_shadows") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.shadows = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_saturation") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.saturation = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_r_shift") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.r_shift = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_g_shift") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.g_shift = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_b_shift") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.b_shift = f; }
     }
 
     // Parse region elements: <region cx="..." cy="..." w="..." h="..." angle="..."/>
@@ -230,6 +275,7 @@ mod tests {
                 SidecarRegion { cx: 0.5, cy: 0.25, w: 0.8, h: 0.3, angle: 0.05 },
                 SidecarRegion { cx: 0.5, cy: 0.75, w: 0.8, h: 0.3, angle: -0.02 },
             ],
+            manual_adjust: color::ManualAdjust::default(),
         };
 
         let xml = to_xml(&config);
@@ -245,6 +291,7 @@ mod tests {
         assert_eq!(parsed.split_regions.len(), 2);
         assert!((parsed.split_regions[0].cx - 0.5).abs() < 0.001);
         assert!((parsed.split_regions[1].angle - (-0.02)).abs() < 0.001);
+        assert!((parsed.manual_adjust.exposure - 0.0).abs() < 0.001);
     }
 
     #[test]
@@ -264,6 +311,7 @@ mod tests {
             split_portrait: false,
             split_naming_pattern: "{name}_{n}".to_string(),
             split_regions: vec![],
+            manual_adjust: color::ManualAdjust::default(),
         };
         let xml = to_xml(&config);
         let parsed = parse_xml(&xml).unwrap();

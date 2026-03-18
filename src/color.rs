@@ -277,6 +277,44 @@ fn create_output_profile(space: TargetColorSpace) -> Result<lcms2::Profile, Stri
     }
 }
 
+/// Manual image adjustment parameters applied after the color profile pipeline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManualAdjust {
+    pub enabled: bool,
+    pub exposure: f32,      // stops: -3.0..3.0
+    pub contrast: f32,      // -100..100
+    pub highlights: f32,    // -100..100
+    pub shadows: f32,       // -100..100
+    pub saturation: f32,    // -100..100
+    pub r_shift: f32,       // color balance red:   -100..100
+    pub g_shift: f32,       // color balance green: -100..100
+    pub b_shift: f32,       // color balance blue:  -100..100
+}
+
+impl Default for ManualAdjust {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            exposure: 0.0, contrast: 0.0, highlights: 0.0, shadows: 0.0,
+            saturation: 0.0, r_shift: 0.0, g_shift: 0.0, b_shift: 0.0,
+        }
+    }
+}
+
+impl ManualAdjust {
+    pub fn is_identity(&self) -> bool {
+        !self.enabled
+            || (self.exposure.abs() < 0.001
+                && self.contrast.abs() < 0.1
+                && self.highlights.abs() < 0.1
+                && self.shadows.abs() < 0.1
+                && self.saturation.abs() < 0.1
+                && self.r_shift.abs() < 0.1
+                && self.g_shift.abs() < 0.1
+                && self.b_shift.abs() < 0.1)
+    }
+}
+
 /// Apply ICC color transform to an image.
 /// `input_icc`: scanner/input ICC profile bytes
 /// `target`: output color space
@@ -658,6 +696,88 @@ pub fn apply_film_processing(
             image::DynamicImage::ImageRgb8(buf)
         }
     }
+}
+
+/// Apply manual adjustments (exposure, contrast, shadows/highlights, saturation, color balance)
+/// to an 8-bit image. Uses per-channel LUTs for performance.
+pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> image::DynamicImage {
+    if adj.is_identity() {
+        return img.clone();
+    }
+
+    let rgb8 = img.to_rgb8();
+    let (w, h) = (rgb8.width(), rgb8.height());
+    let src = rgb8.as_raw();
+
+    let exposure_mult = 2.0_f32.powf(adj.exposure);
+    let sat = adj.saturation / 100.0;
+
+    // Build per-channel LUTs incorporating exposure + color balance + contrast + shadows/highlights
+    let mut luts = [[0u8; 256]; 3];
+    let shifts = [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0];
+
+    for ch in 0..3 {
+        for i in 0..=255u32 {
+            let mut v = i as f32 / 255.0;
+            v += shifts[ch];
+            v *= exposure_mult;
+            v = v.clamp(0.0, 1.0);
+
+            // Shadows rolloff: lift/lower dark tones
+            if adj.shadows.abs() > 0.1 {
+                let s = adj.shadows / 100.0;
+                let t = 1.0 - v; // how "dark" is this value
+                v = (v + s * t * t * 0.5).clamp(0.0, 1.0);
+            }
+            // Highlights rolloff: lift/lower bright tones
+            if adj.highlights.abs() > 0.1 {
+                let hi = adj.highlights / 100.0;
+                let t = v; // how "bright" is this value
+                v = (v + hi * t * t * 0.5).clamp(0.0, 1.0);
+            }
+
+            // Contrast: S-curve through 0.5
+            if adj.contrast.abs() > 0.1 {
+                let c = adj.contrast / 100.0;
+                let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
+                v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
+            }
+
+            luts[ch][i as usize] = (v * 255.0) as u8;
+        }
+    }
+
+    let row_len = w as usize * 3;
+    let mut out = vec![0u8; row_len * h as usize];
+
+    use rayon::prelude::*;
+    out.par_chunks_mut(row_len)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let src_start = y * row_len;
+            for x in 0..w as usize {
+                let base = x * 3;
+                let si = src_start + base;
+                let mut rf = luts[0][src[si] as usize] as f32;
+                let mut gf = luts[1][src[si + 1] as usize] as f32;
+                let mut bf = luts[2][src[si + 2] as usize] as f32;
+
+                // Saturation: desaturate/saturate using luminance
+                if sat.abs() > 0.001 {
+                    let lum = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;
+                    rf = (lum + (rf - lum) * (1.0 + sat)).clamp(0.0, 255.0);
+                    gf = (lum + (gf - lum) * (1.0 + sat)).clamp(0.0, 255.0);
+                    bf = (lum + (bf - lum) * (1.0 + sat)).clamp(0.0, 255.0);
+                }
+
+                row[base] = rf as u8;
+                row[base + 1] = gf as u8;
+                row[base + 2] = bf as u8;
+            }
+        });
+
+    let buf = image::RgbImage::from_raw(w, h, out).expect("manual_adjust buffer mismatch");
+    image::DynamicImage::ImageRgb8(buf)
 }
 
 /// Extract embedded ICC profile data from FFF tag 0xC51A.

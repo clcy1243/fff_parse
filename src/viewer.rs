@@ -69,6 +69,7 @@ enum InfoPanel {
     Metadata,
     EditHistory,
     AllTags,
+    ColorAdjust,
     ColorProfile,
     Split,
     Settings,
@@ -286,6 +287,7 @@ struct LoadedDetail {
     edit_history: Option<EditHistory>,
     texture: Option<egui::TextureHandle>,
     embedded_icc: Option<Vec<u8>>,
+    base_rgb: Option<image::RgbImage>,
 }
 
 // ─── Export state ───────────────────────────────────────────────────────────
@@ -382,6 +384,9 @@ pub struct FffViewerApp {
 
     // Right panel
     info_panel: InfoPanel,
+    manual_adjust: color::ManualAdjust,
+    histogram: Option<Box<[[u32; 256]; 4]>>,
+    histogram_needs_update: bool,
     tag_filter: String,
     expanded_setting: Option<usize>,
 
@@ -541,6 +546,9 @@ impl FffViewerApp {
             detail_rx,
             detail_tx,
             info_panel: InfoPanel::Metadata,
+            manual_adjust: color::ManualAdjust::default(),
+            histogram: None,
+            histogram_needs_update: false,
             tag_filter: String::new(),
             expanded_setting: None,
             file_filter: String::new(),
@@ -787,16 +795,19 @@ impl FffViewerApp {
                     let has_sidecar = result.sidecar.is_some();
                     let sidecar = result.sidecar.clone();
 
-                    let texture = if let Some((pixels, w, h)) = result.preview_rgba {
+                    let (texture, base_rgb) = if let Some((ref pixels, w, h)) = result.preview_rgba {
                         let size = [w as usize, h as usize];
-                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                        Some(ctx.load_texture(
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
+                        let tex = ctx.load_texture(
                             "loupe_preview",
                             color_image,
                             egui::TextureOptions::LINEAR,
-                        ))
+                        );
+                        let rgb_pixels: Vec<u8> = pixels.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+                        let rgb_img = image::RgbImage::from_raw(w, h, rgb_pixels);
+                        (Some(tex), rgb_img)
                     } else {
-                        None
+                        (None, None)
                     };
 
                     self.detail = Some(LoadedDetail {
@@ -807,6 +818,7 @@ impl FffViewerApp {
                         edit_history: result.edit_history,
                         texture,
                         embedded_icc: result.embedded_icc,
+                        base_rgb,
                     });
 
                     if has_sidecar {
@@ -827,6 +839,10 @@ impl FffViewerApp {
                     log::error!("Background load failed for {}: {}", path.display(), e);
                 }
             }
+        }
+
+        if self.histogram_needs_update {
+            self.compute_histogram();
         }
 
         // Request repaint while background work is in progress
@@ -887,6 +903,7 @@ impl eframe::App for FffViewerApp {
                     ui.selectable_value(&mut self.info_panel, InfoPanel::Metadata, s.metadata);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::EditHistory, s.history);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::AllTags, s.tags);
+                    ui.selectable_value(&mut self.info_panel, InfoPanel::ColorAdjust, s.color_adjust);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::ColorProfile, s.color_profile);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::Split, s.split_export);
                     ui.separator();
@@ -1031,6 +1048,7 @@ impl eframe::App for FffViewerApp {
                     InfoPanel::Metadata => self.render_metadata_panel(ui),
                     InfoPanel::EditHistory => self.render_edit_history_panel(ui),
                     InfoPanel::AllTags => self.render_all_tags_panel(ui),
+                    InfoPanel::ColorAdjust => self.render_color_adjust_panel(ui, ctx),
                     InfoPanel::ColorProfile => self.render_color_profile_panel(ui, ctx),
                     InfoPanel::Split => self.render_split_panel(ui, ctx),
                     InfoPanel::Settings => self.render_settings_panel(ui),
@@ -2357,9 +2375,13 @@ impl FffViewerApp {
         self.split_state.dragging = None;
 
         // Re-apply color profile if any profile/preset was selected
+        self.manual_adjust = config.manual_adjust.clone();
+        self.histogram_needs_update = true;
         if self.selected_input_profile.is_some() || self.selected_preset.is_some()
             || self.use_embedded_icc || self.use_embedded_correction {
             self.apply_color_profile(ctx);
+        } else {
+            self.rebuild_texture_from_base(ctx);
         }
     }
 
@@ -2389,6 +2411,7 @@ impl FffViewerApp {
             split_regions: self.split_state.regions.iter().map(|r| {
                 SidecarRegionData { cx: r.cx, cy: r.cy, w: r.w, h: r.h, angle: r.angle }
             }).collect(),
+            manual_adjust: self.manual_adjust.clone(),
         };
 
         if let Err(e) = sidecar::save(path, &config) {
@@ -2498,22 +2521,13 @@ impl FffViewerApp {
             }
         }
 
-        // Step 3: Convert to display-ready 8-bit, clamp for GPU, upload texture
+        // Step 3: Convert to display-ready 8-bit, clamp for GPU, store base + upload texture
         let result = convert_16_to_8_for_display(result);
         let result = clamp_image_for_gpu(result);
-        let rgba = result.to_rgba8();
-        let size = [rgba.width() as usize, rgba.height() as usize];
-        let pixels = rgba.into_raw();
-        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-        let tex = ctx.load_texture(
-            "loupe_preview_icc",
-            color_image,
-            egui::TextureOptions::LINEAR,
-        );
-
         if let Some(detail) = &mut self.detail {
-            detail.texture = Some(tex);
+            detail.base_rgb = Some(result.to_rgb8());
         }
+        self.rebuild_texture_from_base(ctx);
 
         let status_parts: Vec<&str> = [
             input_icc.as_ref().map(|_| "ICC"),
@@ -2557,18 +2571,216 @@ impl FffViewerApp {
 
                 let processed = convert_16_to_8_for_display(processed);
                 let processed = clamp_image_for_gpu(processed);
-                let rgba = processed.to_rgba8();
-                let size = [rgba.width() as usize, rgba.height() as usize];
-                let pixels = rgba.into_raw();
-                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                detail.texture = Some(ctx.load_texture(
-                    "loupe_preview",
-                    color_image,
-                    egui::TextureOptions::LINEAR,
-                ));
+                detail.base_rgb = Some(processed.to_rgb8());
             }
         }
+        self.rebuild_texture_from_base(ctx);
         log::info!("Color profile reset");
+    }
+
+    fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
+        let Some(detail) = &mut self.detail else { return };
+        let Some(ref base) = detail.base_rgb else { return };
+
+        let img = image::DynamicImage::ImageRgb8(base.clone());
+        let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
+        let rgba = adjusted.to_rgba8();
+        let size = [rgba.width() as usize, rgba.height() as usize];
+        let pixels = rgba.into_raw();
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+        detail.texture = Some(ctx.load_texture(
+            "loupe_preview_adjusted",
+            color_image,
+            egui::TextureOptions::LINEAR,
+        ));
+        self.histogram_needs_update = true;
+    }
+
+    fn compute_histogram(&mut self) {
+        let Some(detail) = &self.detail else {
+            self.histogram = None;
+            return;
+        };
+        let Some(ref base) = detail.base_rgb else {
+            self.histogram = None;
+            return;
+        };
+
+        let mut hist = Box::new([[0u32; 256]; 4]);
+        let img = image::DynamicImage::ImageRgb8(base.clone());
+        let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
+        let rgb = adjusted.to_rgb8();
+
+        for pixel in rgb.pixels() {
+            let [r, g, b] = pixel.0;
+            hist[0][r as usize] += 1;
+            hist[1][g as usize] += 1;
+            hist[2][b as usize] += 1;
+            let lum = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) as u8;
+            hist[3][lum as usize] += 1;
+        }
+        self.histogram = Some(hist);
+        self.histogram_needs_update = false;
+    }
+
+    fn render_histogram(&self, ui: &mut egui::Ui) {
+        let Some(ref hist) = self.histogram else { return };
+
+        let desired_size = egui::vec2(ui.available_width(), 80.0);
+        let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+
+        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(20));
+
+        let max_count = hist[0].iter().chain(hist[1].iter()).chain(hist[2].iter())
+            .copied().max().unwrap_or(1).max(1) as f32;
+
+        let w = rect.width();
+        let h = rect.height();
+
+        let colors = [
+            egui::Color32::from_rgba_unmultiplied(220, 50, 50, 100),
+            egui::Color32::from_rgba_unmultiplied(50, 200, 50, 100),
+            egui::Color32::from_rgba_unmultiplied(50, 100, 255, 100),
+        ];
+
+        for ch in 0..3 {
+            for i in 0..256 {
+                let bar_h = (hist[ch][i] as f32 / max_count * h).min(h);
+                if bar_h < 0.5 { continue; }
+                let x = rect.left() + i as f32 / 255.0 * w;
+                let bar_w = (w / 256.0).max(1.0);
+                let bar_rect = egui::Rect::from_min_size(
+                    egui::pos2(x, rect.bottom() - bar_h),
+                    egui::vec2(bar_w, bar_h),
+                );
+                painter.rect_filled(bar_rect, 0.0, colors[ch]);
+            }
+        }
+    }
+
+    fn render_color_adjust_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let s = self.s();
+
+        if self.detail.is_none() {
+            ui.label(s.select_image);
+            return;
+        }
+
+        let mut rebuild = false;
+
+        let adjust_heading = s.adjust_heading;
+        let adjust_enabled = s.adjust_enabled;
+        let reset_adjust = s.reset_adjust;
+        let exposure_str = s.exposure;
+        let contrast_str = s.contrast;
+        let highlights_str = s.highlights;
+        let shadows_str = s.shadows;
+        let saturation_str = s.saturation_label;
+        let color_balance_str = s.color_balance;
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.heading(adjust_heading);
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut self.manual_adjust.enabled, adjust_enabled).changed() {
+                    rebuild = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(reset_adjust).clicked() {
+                        let enabled = self.manual_adjust.enabled;
+                        self.manual_adjust = color::ManualAdjust { enabled, ..Default::default() };
+                        rebuild = true;
+                    }
+                });
+            });
+
+            ui.add_space(4.0);
+
+            // Render histogram inline to avoid borrow conflicts with self.manual_adjust below
+            if let Some(ref hist) = self.histogram {
+                let desired_size = egui::vec2(ui.available_width(), 80.0);
+                let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                let painter = ui.painter_at(rect);
+                painter.rect_filled(rect, 2.0, egui::Color32::from_gray(20));
+                let max_count = hist[0].iter().chain(hist[1].iter()).chain(hist[2].iter())
+                    .copied().max().unwrap_or(1).max(1) as f32;
+                let w = rect.width();
+                let h = rect.height();
+                let colors = [
+                    egui::Color32::from_rgba_unmultiplied(220, 50, 50, 100),
+                    egui::Color32::from_rgba_unmultiplied(50, 200, 50, 100),
+                    egui::Color32::from_rgba_unmultiplied(50, 100, 255, 100),
+                ];
+                for ch in 0..3 {
+                    for i in 0..256 {
+                        let bar_h = (hist[ch][i] as f32 / max_count * h).min(h);
+                        if bar_h < 0.5 { continue; }
+                        let x = rect.left() + i as f32 / 255.0 * w;
+                        let bar_w = (w / 256.0).max(1.0);
+                        let bar_rect = egui::Rect::from_min_size(
+                            egui::pos2(x, rect.bottom() - bar_h),
+                            egui::vec2(bar_w, bar_h),
+                        );
+                        painter.rect_filled(bar_rect, 0.0, colors[ch]);
+                    }
+                }
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+
+            let adj = &mut self.manual_adjust;
+
+            ui.label(exposure_str);
+            if ui.add(egui::Slider::new(&mut adj.exposure, -3.0..=3.0).step_by(0.05).text("stops")).changed() {
+                rebuild = true;
+            }
+
+            ui.label(contrast_str);
+            if ui.add(egui::Slider::new(&mut adj.contrast, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.label(highlights_str);
+            if ui.add(egui::Slider::new(&mut adj.highlights, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.label(shadows_str);
+            if ui.add(egui::Slider::new(&mut adj.shadows, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.label(saturation_str);
+            if ui.add(egui::Slider::new(&mut adj.saturation, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(color_balance_str).strong());
+
+            ui.label("R");
+            if ui.add(egui::Slider::new(&mut adj.r_shift, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.label("G");
+            if ui.add(egui::Slider::new(&mut adj.g_shift, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.label("B");
+            if ui.add(egui::Slider::new(&mut adj.b_shift, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+        });
+
+        if rebuild {
+            self.rebuild_texture_from_base(ctx);
+            self.save_sidecar();
+        }
     }
 
     // ── Export ────────────────────────────────────────────────────────
