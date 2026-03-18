@@ -826,9 +826,31 @@ impl FffViewerApp {
                         // Restore settings from sidecar
                         self.apply_sidecar(sidecar.as_ref().unwrap(), ctx);
                     } else {
-                        // Default: auto-apply embedded correction
+                        // Default: auto-apply embedded correction + ICC
                         if result.auto_corrected {
                             self.use_embedded_correction = true;
+                            // Auto-select the input profile specified in the correction
+                            if let Some(detail) = &self.detail {
+                                if let Some(hist) = &detail.edit_history {
+                                    let idx = hist.current_index.min(hist.settings.len().saturating_sub(1));
+                                    if let Some(setting) = hist.settings.get(idx) {
+                                        if let Some(ref profile_name) = setting.correction.input_profile_name {
+                                            // Find matching profile in available_profiles
+                                            if let Some(pos) = self.available_profiles.iter().position(|p| {
+                                                p.name == *profile_name
+                                                    || p.name == format!("{}.icc", profile_name)
+                                            }) {
+                                                log::info!("Auto-selected input profile: {} (index {})", profile_name, pos);
+                                                self.selected_input_profile = Some(pos);
+                                            } else {
+                                                log::warn!("Correction specifies InputProfile='{}' but not found in available profiles", profile_name);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Re-process from raw 16-bit with full pipeline (film + ICC)
+                            self.apply_color_profile(ctx);
                         }
                         self.histogram_needs_update = true;
                     }

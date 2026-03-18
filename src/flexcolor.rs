@@ -97,6 +97,10 @@ pub struct ImageCorrection {
     pub gradation_sliders: [i64; 3],
     /// Gradation curve points per channel: [master, R, G, B, ...] each with [(x,y,dy), ...]
     pub gradations: Vec<Vec<(i64, i64, i64)>>,
+    /// Input ICC profile name (e.g. "Flextight Input")
+    pub input_profile_name: Option<String>,
+    /// Output RGB profile name (e.g. "sRGB Color Space Profile.icm")
+    pub rgb_profile_name: Option<String>,
     /// All raw key-value pairs (for display of unknown fields)
     pub raw_params: Vec<(String, String)>,
 }
@@ -512,6 +516,12 @@ fn parse_image_correction(dict_node: &XmlNode) -> ImageCorrection {
                 if arr.len() >= 3 {
                     corr.gradation_sliders = [arr[0], arr[1], arr[2]];
                 }
+            }
+            "InputProfile" => {
+                corr.input_profile_name = Some(val_text.clone());
+            }
+            "RGBProfile" => {
+                corr.rgb_profile_name = Some(val_text.clone());
             }
             _ => {}
         }
