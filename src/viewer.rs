@@ -641,6 +641,8 @@ impl FffViewerApp {
             files.par_iter().for_each(|path| {
                 let result = if let Ok(tiff) = TiffFile::open(path) {
                     if let Some(img) = tiff.decode_thumbnail() {
+                        // Apply same film processing as detail view for consistency
+                        let img = Self::process_thumbnail_image(&tiff, img);
                         let w = img.width();
                         let h = img.height();
                         let rgba = img.to_rgba8().into_raw();
@@ -654,6 +656,34 @@ impl FffViewerApp {
                 let _ = tx.send(result);
             });
         });
+    }
+
+    /// Apply the same film-processing pipeline used for detail preview to a
+    /// thumbnail image, so thumbnails and detail views look consistent.
+    fn process_thumbnail_image(tiff: &TiffFile, img: image::DynamicImage) -> image::DynamicImage {
+        // Only process 16-bit images (8-bit are pre-rendered by FlexColor)
+        let is_16bit = matches!(&img, image::DynamicImage::ImageRgb16(_));
+        if !is_16bit {
+            return img;
+        }
+
+        let edit_history = flexcolor::EditHistory::parse_from_file(tiff.raw_data());
+        let correction = edit_history.as_ref().and_then(|h| {
+            if h.settings.is_empty() {
+                None
+            } else {
+                let idx = h.current_index.min(h.settings.len() - 1);
+                Some(h.settings[idx].correction.clone())
+            }
+        });
+
+        let processed = if let Some(ref correction) = correction {
+            color::apply_film_processing(&img, correction)
+        } else {
+            img
+        };
+
+        convert_16_to_8_for_display(processed)
     }
 
     fn select_file(&mut self, index: usize, _ctx: &egui::Context) {
@@ -1347,6 +1377,7 @@ impl FffViewerApp {
                     files.par_iter().for_each(|path| {
                         let result = if let Ok(tiff) = TiffFile::open(path) {
                             if let Some(img) = tiff.decode_thumbnail() {
+                                let img = Self::process_thumbnail_image(&tiff, img);
                                 let w = img.width();
                                 let h = img.height();
                                 let rgba = img.to_rgba8().into_raw();

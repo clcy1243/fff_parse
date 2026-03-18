@@ -1282,7 +1282,10 @@ impl TiffFile {
     }
 
     /// Decode the smallest available thumbnail for grid/filmstrip display.
-    /// Prefers IFD with NewSubfileType=1 (thumbnail), then the smallest IFD.
+    /// Prefers small 16-bit IFDs over 8-bit thumbnails so the caller can apply
+    /// the same film-processing pipeline as the full preview, ensuring visual
+    /// consistency between thumbnail and detail views.
+    /// Falls back to 8-bit thumbnail if no small 16-bit IFD is available.
     pub fn decode_thumbnail(&self) -> Option<image::DynamicImage> {
         if let Some(jpeg_data) = &self.preview_jpeg {
             if let Ok(img) =
@@ -1292,7 +1295,7 @@ impl TiffFile {
             }
         }
 
-        let mut candidates: Vec<(usize, u64, bool)> = Vec::new();
+        let mut candidates: Vec<(usize, u64, u32, bool)> = Vec::new(); // (idx, pixels, bps, is_thumb)
         for (idx, ifd) in self.ifds.iter().enumerate() {
             let width = ifd.get_u32(0x0100).unwrap_or(0) as u64;
             let height = ifd.get_u32(0x0101).unwrap_or(0) as u64;
@@ -1300,19 +1303,33 @@ impl TiffFile {
             let photometric = ifd.get_u32(0x0106).unwrap_or(0);
             let spp = ifd.get_u32(0x0115).unwrap_or(1);
             let subfile_type = ifd.get_u32(0x00FE).unwrap_or(0);
+            let bps = ifd.get(0x0102).and_then(|v| v.as_u32()).unwrap_or(8);
 
             if compression == 1 && photometric == 2 && spp >= 3 && width > 0 && height > 0 {
                 let is_thumb = subfile_type == 1;
-                candidates.push((idx, width * height, is_thumb));
+                candidates.push((idx, width * height, bps, is_thumb));
             }
         }
 
-        // Sort: prefer thumbnails first, then smallest image
+        // Find the largest IFD to identify "full-size" images we want to skip
+        let max_pixels = candidates.iter().map(|c| c.1).max().unwrap_or(0);
+
+        // Prefer: small 16-bit IFD (not the largest) > 8-bit thumbnail > anything
+        // This ensures thumbnail data goes through the same 16-bit pipeline as the preview.
         candidates.sort_by(|a, b| {
-            b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1))
+            let a_is_small_16 = a.2 == 16 && a.1 < max_pixels;
+            let b_is_small_16 = b.2 == 16 && b.1 < max_pixels;
+            // small 16-bit first, then 8-bit thumbnails, then by smallest size
+            b_is_small_16.cmp(&a_is_small_16)
+                .then_with(|| b.3.cmp(&a.3))  // prefer is_thumb
+                .then_with(|| a.1.cmp(&b.1))  // prefer smallest
         });
 
-        for (idx, _pixels, _is_thumb) in &candidates {
+        // Skip the full-size IFD (largest) — we only want small images for thumbnails
+        for (idx, pixels, _bps, _is_thumb) in &candidates {
+            if *pixels >= max_pixels && max_pixels > 0 && candidates.len() > 1 {
+                continue; // skip full-size
+            }
             if let Some(img) = self.decode_uncompressed_rgb(&self.ifds[*idx]) {
                 return Some(img);
             }
