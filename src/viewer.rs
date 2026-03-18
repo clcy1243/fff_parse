@@ -111,10 +111,15 @@ impl SplitRegion {
     }
 
     fn clamp_to_image(&mut self) {
-        self.x = self.x.clamp(0.0, 1.0 - self.w);
-        self.y = self.y.clamp(0.0, 1.0 - self.h);
-        self.w = self.w.clamp(0.01, 1.0 - self.x);
-        self.h = self.h.clamp(0.01, 1.0 - self.y);
+        // Clamp size first to valid range
+        self.w = self.w.clamp(0.01, 1.0);
+        self.h = self.h.clamp(0.01, 1.0);
+        // Then clamp position so region stays within image
+        self.x = self.x.clamp(0.0, (1.0 - self.w).max(0.0));
+        self.y = self.y.clamp(0.0, (1.0 - self.h).max(0.0));
+        // Re-clamp size to fit within remaining space
+        self.w = self.w.min(1.0 - self.x);
+        self.h = self.h.min(1.0 - self.y);
     }
 }
 
@@ -2347,10 +2352,10 @@ impl FffViewerApp {
         // Stack regions vertically, offset each one
         let y_offset = (n as f32 * 0.05) % 0.5;
         let mut region = SplitRegion {
-            x: (0.5 - w / 2.0).clamp(0.0, 1.0 - w),
-            y: (0.1 + y_offset).clamp(0.0, 1.0 - h),
-            w,
-            h,
+            x: (0.5 - w / 2.0).max(0.0),
+            y: (0.1 + y_offset).max(0.0),
+            w: w.min(1.0),
+            h: h.min(1.0),
         };
         region.clamp_to_image();
         let new_idx = self.split_state.regions.len();
