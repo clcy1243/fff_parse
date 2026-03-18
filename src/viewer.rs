@@ -826,13 +826,9 @@ impl FffViewerApp {
                         // Restore settings from sidecar
                         self.apply_sidecar(sidecar.as_ref().unwrap(), ctx);
                     } else {
-                        // Default: auto-apply embedded correction + ICC
+                        // Default: auto-apply embedded correction (film processing only)
                         if result.auto_corrected {
                             self.use_embedded_correction = true;
-                            self.auto_select_input_profile();
-                            // Re-process from raw 16-bit with full pipeline (film + ICC)
-                            self.apply_color_profile(ctx);
-                            self.save_sidecar();
                         }
                         self.histogram_needs_update = true;
                     }
@@ -2384,11 +2380,6 @@ impl FffViewerApp {
         // Re-apply color profile if any profile/preset was selected
         self.manual_adjust = config.manual_adjust.clone();
         self.histogram_needs_update = true;
-
-        // Auto-select input profile from embedded correction if not already set
-        if self.selected_input_profile.is_none() && self.use_embedded_correction {
-            self.auto_select_input_profile();
-        }
 
         if self.selected_input_profile.is_some() || self.selected_preset.is_some()
             || self.use_embedded_icc || self.use_embedded_correction {

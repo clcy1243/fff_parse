@@ -502,6 +502,97 @@ fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32
     (shadow, highlight)
 }
 
+// ─── Film curve LUT ─────────────────────────────────────────────────────────
+// Empirical per-channel tone curves for FlexColor FilmCurve=4, Gamma=2.
+// These were reverse-engineered from pixel-level comparison of the 16-bit raw
+// processing pipeline against FlexColor's pre-rendered 8-bit thumbnails across
+// multiple Portra 160 scans on a Flextight X5.
+//
+// Maps linear per-channel levels output [0.0–1.0] → display value [0–255].
+// Encapsulates: film response curve + ICC transform (Flextight Input → sRGB) +
+// Gamma encoding.  Applied AFTER shadow/highlight levels but WITHOUT per-channel
+// gray midtone gamma (the gray shift is minor and already baked into the average).
+
+const FILM_CURVE_LUT_R: [u8; 256] = [
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   1,   1,   1,   1,   1,   1,   2,   2,   2,   3,   4,   5,   5,   5,
+      6,   7,   8,   9,  10,  11,  12,  13,  13,  14,  14,  15,  16,  17,  17,  19,
+     21,  24,  26,  28,  30,  32,  34,  36,  38,  40,  41,  41,  41,  41,  41,  41,
+     41,  41,  41,  41,  41,  41,  41,  41,  44,  46,  47,  49,  50,  52,  54,  57,
+     59,  61,  63,  65,  67,  68,  69,  71,  73,  75,  76,  77,  78,  80,  82,  83,
+     85,  87,  89,  91,  92,  94,  96,  97,  99, 101, 104, 106, 108, 111, 113, 115,
+    117, 119, 121, 124, 126, 128, 130, 133, 135, 137, 139, 141, 144, 146, 148, 150,
+    152, 154, 156, 158, 159, 162, 164, 167, 169, 172, 174, 177, 180, 182, 185, 187,
+    190, 192, 195, 197, 199, 201, 203, 205, 207, 209, 211, 212, 213, 213, 214, 215,
+    216, 217, 219, 220, 221, 223, 225, 227, 228, 230, 233, 236, 237, 238, 244, 253,
+];
+
+const FILM_CURVE_LUT_G: [u8; 256] = [
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   1,   1,   1,   1,   1,   1,   1,   1,
+      1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2,
+      2,   2,   2,   2,   2,   2,   3,   3,   3,   3,   3,   3,   3,   4,   4,   4,
+      4,   4,   4,   4,   5,   5,   5,   6,   6,   7,   7,   7,   8,   9,  10,  12,
+     13,  14,  16,  17,  18,  20,  21,  23,  24,  26,  28,  30,  31,  33,  35,  36,
+     38,  39,  41,  43,  44,  46,  48,  50,  52,  54,  55,  57,  59,  60,  62,  63,
+     65,  67,  69,  71,  72,  74,  76,  78,  80,  81,  83,  85,  88,  90,  92,  94,
+     96,  99, 101, 103, 105, 107, 110, 112, 114, 116, 118, 120, 122, 124, 127, 129,
+    131, 134, 137, 139, 142, 145, 148, 150, 153, 156, 159, 162, 164, 167, 170, 172,
+    175, 178, 180, 183, 185, 188, 191, 193, 196, 199, 202, 205, 207, 210, 213, 215,
+    218, 221, 225, 228, 231, 234, 236, 239, 242, 245, 248, 251, 253, 254, 254, 254,
+    254, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+];
+
+const FILM_CURVE_LUT_B: [u8; 256] = [
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   1,   1,   2,   2,
+      3,   3,   4,   5,   5,   6,   7,   7,   8,   9,  10,  11,  12,  13,  14,  15,
+     17,  18,  20,  21,  23,  25,  26,  28,  30,  32,  33,  35,  37,  39,  41,  43,
+     45,  47,  49,  51,  52,  54,  56,  58,  59,  61,  63,  64,  66,  67,  69,  71,
+     73,  75,  77,  79,  81,  83,  86,  88,  90,  92,  94,  96,  98, 100, 102, 105,
+    107, 109, 112, 114, 117, 119, 122, 125, 127, 130, 133, 136, 139, 142, 145, 148,
+    150, 154, 157, 160, 163, 166, 170, 173, 176, 179, 182, 186, 189, 192, 195, 198,
+    201, 204, 207, 210, 213, 216, 220, 223, 226, 229, 233, 236, 239, 242, 245, 247,
+    250, 252, 253, 253, 254, 254, 254, 254, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+];
+
+/// Linearly interpolate a 256-entry LUT for a floating-point input in [0, 1].
+/// Returns 16-bit value (0–65535).
+#[inline]
+fn lut_interp_16(val: f32, lut: &[u8; 256]) -> f32 {
+    let x = val * 255.0;
+    let lo = (x as usize).min(254);
+    let hi = lo + 1;
+    let frac = x - lo as f32;
+    let out = lut[lo] as f32 * (1.0 - frac) + lut[hi] as f32 * frac;
+    out * 257.0 // scale 0-255 → 0-65535
+}
+
+/// Linearly interpolate a 256-entry LUT for a floating-point input in [0, 1].
+/// Returns 8-bit value (0–255) as f32.
+#[inline]
+fn lut_interp_8(val: f32, lut: &[u8; 256]) -> f32 {
+    let x = val * 255.0;
+    let lo = (x as usize).min(254);
+    let hi = lo + 1;
+    let frac = x - lo as f32;
+    lut[lo] as f32 * (1.0 - frac) + lut[hi] as f32 * frac
+}
+
 /// Apply film type processing: negative inversion + per-channel levels.
 ///
 /// For negative film (FilmType=1, C-41): invert pixels then remap per-channel.
@@ -511,6 +602,9 @@ fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32
 ///
 /// For B&W negative (FilmType=2): same inversion + convert to grayscale.
 /// For positive film (FilmType=0): only apply levels adjustment using preset values.
+///
+/// When FilmCurve=4 and Gamma=2 (typical Portra/color negative), applies an
+/// empirical per-channel tone curve that matches FlexColor's rendering.
 ///
 /// Preserves bit depth: 16-bit input → 16-bit output, 8-bit → 8-bit.
 /// Uses rayon for parallel row processing on large images.
@@ -589,9 +683,22 @@ pub fn apply_film_processing(
                 ch_gamma[0], ch_gamma[1], ch_gamma[2], ch_gamma[3],
             );
 
-            let apply_master = (ch_s[0] > 4.0)
-                || ((highlight[0] as f32 * SCALE) < MAX_VAL - 4.0)
-                || (ch_gamma[0] - 1.0).abs() > 0.01;
+            // Use empirical film curve LUT when FilmCurve=4 + Gamma≈2 (color negative).
+            // The LUT was derived from pixel comparisons with FlexColor's pre-rendered
+            // thumbnails.  It replaces per-channel gray gamma, master levels, and
+            // encapsulates the film response + ICC + gamma encoding in one step.
+            let use_film_lut = is_negative
+                && correction.film_curve == 4
+                && (correction.gamma - 2.0).abs() < 0.01;
+
+            let apply_master = !use_film_lut
+                && ((ch_s[0] > 4.0)
+                    || ((highlight[0] as f32 * SCALE) < MAX_VAL - 4.0)
+                    || (ch_gamma[0] - 1.0).abs() > 0.01);
+
+            if use_film_lut {
+                log::info!("Using empirical film curve LUT (FilmCurve=4, Gamma=2)");
+            }
 
             // Saturation: FlexColor range is -100..+100, 0 = neutral
             let sat_factor = 1.0 + correction.saturation as f32 / 100.0;
@@ -619,16 +726,31 @@ pub fn apply_film_processing(
                             ch_f[2] = MAX_VAL - ch_f[2];
                         }
 
-                        for ch in 0..3 {
-                            let ci = ch + 1;
-                            let n = ((ch_f[ch] - ch_s[ci]) / ch_range[ci]).clamp(0.0, 1.0);
-                            ch_f[ch] = n.powf(ch_gamma[ci]) * MAX_VAL;
-                        }
-
-                        if apply_master {
+                        if use_film_lut {
+                            // Linear per-channel levels (no gray gamma) → LUT
+                            let luts: [&[u8; 256]; 3] = [
+                                &FILM_CURVE_LUT_R,
+                                &FILM_CURVE_LUT_G,
+                                &FILM_CURVE_LUT_B,
+                            ];
                             for ch in 0..3 {
-                                let n = ((ch_f[ch] - ch_s[0]) / ch_range[0]).clamp(0.0, 1.0);
-                                ch_f[ch] = n.powf(ch_gamma[0]) * MAX_VAL;
+                                let ci = ch + 1;
+                                let n = ((ch_f[ch] - ch_s[ci]) / ch_range[ci]).clamp(0.0, 1.0);
+                                ch_f[ch] = lut_interp_16(n, luts[ch]);
+                            }
+                        } else {
+                            // Original pipeline: per-channel levels with gray gamma
+                            for ch in 0..3 {
+                                let ci = ch + 1;
+                                let n = ((ch_f[ch] - ch_s[ci]) / ch_range[ci]).clamp(0.0, 1.0);
+                                ch_f[ch] = n.powf(ch_gamma[ci]) * MAX_VAL;
+                            }
+
+                            if apply_master {
+                                for ch in 0..3 {
+                                    let n = ((ch_f[ch] - ch_s[0]) / ch_range[0]).clamp(0.0, 1.0);
+                                    ch_f[ch] = n.powf(ch_gamma[0]) * MAX_VAL;
+                                }
                             }
                         }
 
@@ -681,7 +803,12 @@ pub fn apply_film_processing(
                 ch_range[i] = (h_val - ch_s[i]).max(1.0);
                 ch_gamma[i] = 1.0 / (gray[i] as f32 / 128.0).clamp(0.01, 10.0);
             }
-            let apply_master = (ch_s[0] > 1.0) || (ch_range[0] < 253.0) || (ch_gamma[0] - 1.0).abs() > 0.01;
+            let use_film_lut_8 = is_negative
+                && correction.film_curve == 4
+                && (correction.gamma - 2.0).abs() < 0.01;
+
+            let apply_master = !use_film_lut_8
+                && ((ch_s[0] > 1.0) || (ch_range[0] < 253.0) || (ch_gamma[0] - 1.0).abs() > 0.01);
 
             let src = rgb8.as_raw();
             let row_len = w as usize * 3;
@@ -703,16 +830,29 @@ pub fn apply_film_processing(
                             ch_f[2] = 255.0 - ch_f[2];
                         }
 
-                        for ch in 0..3 {
-                            let ci = ch + 1;
-                            let n = ((ch_f[ch] - ch_s[ci]) / ch_range[ci]).clamp(0.0, 1.0);
-                            ch_f[ch] = n.powf(ch_gamma[ci]) * 255.0;
-                        }
-
-                        if apply_master {
+                        if use_film_lut_8 {
+                            let luts: [&[u8; 256]; 3] = [
+                                &FILM_CURVE_LUT_R,
+                                &FILM_CURVE_LUT_G,
+                                &FILM_CURVE_LUT_B,
+                            ];
                             for ch in 0..3 {
-                                let n = ((ch_f[ch] - ch_s[0]) / ch_range[0]).clamp(0.0, 1.0);
-                                ch_f[ch] = n.powf(ch_gamma[0]) * 255.0;
+                                let ci = ch + 1;
+                                let n = ((ch_f[ch] - ch_s[ci]) / ch_range[ci]).clamp(0.0, 1.0);
+                                ch_f[ch] = lut_interp_8(n, luts[ch]);
+                            }
+                        } else {
+                            for ch in 0..3 {
+                                let ci = ch + 1;
+                                let n = ((ch_f[ch] - ch_s[ci]) / ch_range[ci]).clamp(0.0, 1.0);
+                                ch_f[ch] = n.powf(ch_gamma[ci]) * 255.0;
+                            }
+
+                            if apply_master {
+                                for ch in 0..3 {
+                                    let n = ((ch_f[ch] - ch_s[0]) / ch_range[0]).clamp(0.0, 1.0);
+                                    ch_f[ch] = n.powf(ch_gamma[0]) * 255.0;
+                                }
                             }
                         }
 
