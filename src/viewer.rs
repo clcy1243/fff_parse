@@ -28,6 +28,134 @@ enum InfoPanel {
     EditHistory,
     AllTags,
     ColorProfile,
+    Split,
+}
+
+// ─── Film split & export ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FilmFormat {
+    Free,
+    Full35mm,
+    Medium645,
+    Medium6x6,
+    Medium6x7,
+    Medium6x9,
+    Medium6x12,
+    Medium6x17,
+    LargeFormat4x5,
+}
+
+impl FilmFormat {
+    const ALL: &[Self] = &[
+        Self::Free,
+        Self::Full35mm,
+        Self::Medium645,
+        Self::Medium6x6,
+        Self::Medium6x7,
+        Self::Medium6x9,
+        Self::Medium6x12,
+        Self::Medium6x17,
+        Self::LargeFormat4x5,
+    ];
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Free => "Free",
+            Self::Full35mm => "35mm (3:2)",
+            Self::Medium645 => "6×4.5 (4:3)",
+            Self::Medium6x6 => "6×6 (1:1)",
+            Self::Medium6x7 => "6×7 (7:6)",
+            Self::Medium6x9 => "6×9 (3:2)",
+            Self::Medium6x12 => "6×12 (2:1)",
+            Self::Medium6x17 => "6×17 (3:1)",
+            Self::LargeFormat4x5 => "4×5 (5:4)",
+        }
+    }
+
+    /// Aspect ratio as width/height for landscape orientation. None for Free.
+    fn ratio(&self) -> Option<f32> {
+        match self {
+            Self::Free => None,
+            Self::Full35mm | Self::Medium6x9 => Some(3.0 / 2.0),
+            Self::Medium645 => Some(4.0 / 3.0),
+            Self::Medium6x6 => Some(1.0),
+            Self::Medium6x7 => Some(7.0 / 6.0),
+            Self::Medium6x12 => Some(2.0),
+            Self::Medium6x17 => Some(3.0),
+            Self::LargeFormat4x5 => Some(5.0 / 4.0),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SplitRegion {
+    /// Normalized coordinates (0.0–1.0) relative to image dimensions
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+impl SplitRegion {
+    fn to_screen_rect(&self, image_rect: egui::Rect) -> egui::Rect {
+        let min = egui::pos2(
+            image_rect.min.x + self.x * image_rect.width(),
+            image_rect.min.y + self.y * image_rect.height(),
+        );
+        let size = egui::vec2(
+            self.w * image_rect.width(),
+            self.h * image_rect.height(),
+        );
+        egui::Rect::from_min_size(min, size)
+    }
+
+    fn clamp_to_image(&mut self) {
+        self.x = self.x.clamp(0.0, 1.0 - self.w);
+        self.y = self.y.clamp(0.0, 1.0 - self.h);
+        self.w = self.w.clamp(0.01, 1.0 - self.x);
+        self.h = self.h.clamp(0.01, 1.0 - self.y);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DragKind {
+    Move,
+    ResizeTopLeft,
+    ResizeTopRight,
+    ResizeBottomLeft,
+    ResizeBottomRight,
+}
+
+const REGION_COLORS: &[egui::Color32] = &[
+    egui::Color32::from_rgb(66, 133, 244),   // blue
+    egui::Color32::from_rgb(234, 67, 53),    // red
+    egui::Color32::from_rgb(52, 168, 83),    // green
+    egui::Color32::from_rgb(251, 188, 4),    // yellow
+    egui::Color32::from_rgb(171, 71, 188),   // purple
+    egui::Color32::from_rgb(0, 188, 212),    // cyan
+];
+
+struct SplitState {
+    regions: Vec<SplitRegion>,
+    format: FilmFormat,
+    portrait: bool,
+    naming_pattern: String,
+    dragging: Option<(usize, DragKind)>,
+    selected: Option<usize>,
+}
+
+impl Default for SplitState {
+    fn default() -> Self {
+        Self {
+            regions: Vec::new(),
+            format: FilmFormat::Full35mm,
+            portrait: false,
+            naming_pattern: "{name}_{n}".to_string(),
+            dragging: None,
+            selected: None,
+        }
+    }
 }
 
 // ─── Thumbnail cache entry ──────────────────────────────────────────────────
@@ -158,6 +286,9 @@ pub struct FffViewerApp {
     color_status: Option<String>,
     target_color_space: TargetColorSpace,
 
+    // Split & export
+    split_state: SplitState,
+
     // Loading progress
     loading_status: LoadingStatus,
 
@@ -269,6 +400,7 @@ impl FffViewerApp {
             preset_category_filter: String::new(),
             color_status: None,
             target_color_space: TargetColorSpace::default(),
+            split_state: SplitState::default(),
             loading_status: LoadingStatus::Idle,
             error_msg: None,
             show_info_panel: true,
@@ -556,6 +688,7 @@ impl eframe::App for FffViewerApp {
                     ui.selectable_value(&mut self.info_panel, InfoPanel::EditHistory, s.history);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::AllTags, s.tags);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::ColorProfile, s.color_profile);
+                    ui.selectable_value(&mut self.info_panel, InfoPanel::Split, s.split_export);
                 }
 
                 ui.separator();
@@ -676,6 +809,7 @@ impl eframe::App for FffViewerApp {
                     InfoPanel::EditHistory => self.render_edit_history_panel(ui),
                     InfoPanel::AllTags => self.render_all_tags_panel(ui),
                     InfoPanel::ColorProfile => self.render_color_profile_panel(ui, ctx),
+                    InfoPanel::Split => self.render_split_panel(ui, ctx),
                 });
         }
 
@@ -1002,9 +1136,40 @@ impl FffViewerApp {
                     .min(1.0);
                 let display_size = egui::vec2(tex_size.x * scale, tex_size.y * scale);
 
-                ui.centered_and_justified(|ui| {
-                    ui.image(egui::load::SizedTexture::new(texture.id(), display_size));
-                });
+                // Allocate full area with click+drag sensing for split interaction
+                let (full_rect, response) = ui.allocate_exact_size(
+                    available,
+                    if self.info_panel == InfoPanel::Split {
+                        egui::Sense::click_and_drag()
+                    } else {
+                        egui::Sense::hover()
+                    },
+                );
+
+                // Center the image within the allocated area
+                let image_rect =
+                    egui::Align2::CENTER_CENTER.align_size_within_rect(display_size, full_rect);
+
+                // Draw the image
+                let painter = ui.painter_at(full_rect);
+                painter.image(
+                    texture.id(),
+                    image_rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+
+                // Draw split overlays and handle interactions
+                if self.info_panel == InfoPanel::Split {
+                    self.handle_split_interactions(&response, image_rect);
+                    let painter = ui.painter_at(full_rect);
+                    draw_split_overlays(
+                        &painter,
+                        image_rect,
+                        &self.split_state.regions,
+                        self.split_state.selected,
+                    );
+                }
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label(self.s().no_preview);
@@ -1017,10 +1182,11 @@ impl FffViewerApp {
         }
 
         // Keyboard navigation
-        let (left, right) = ctx.input(|i| {
+        let (left, right, delete) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowLeft),
                 i.key_pressed(egui::Key::ArrowRight),
+                i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
             )
         });
         if left || right {
@@ -1033,6 +1199,16 @@ impl FffViewerApp {
                     (cur + count - 1) % count
                 };
                 self.select_file(next, ctx);
+            }
+        }
+        // Delete selected split region with Delete/Backspace key
+        if delete && self.info_panel == InfoPanel::Split {
+            if let Some(idx) = self.split_state.selected {
+                if idx < self.split_state.regions.len() {
+                    self.split_state.regions.remove(idx);
+                    self.split_state.selected = None;
+                    self.split_state.dragging = None;
+                }
             }
         }
     }
@@ -1973,6 +2149,420 @@ impl FffViewerApp {
         Ok(())
     }
 
+    // ── Split & Export ────────────────────────────────────────────────
+
+    fn render_split_panel(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
+        let s = self.s();
+        ui.heading(s.split_export);
+        ui.separator();
+
+        // Film format selector
+        ui.strong(s.film_format);
+        ui.add_space(2.0);
+        egui::ComboBox::from_id_salt("film_format_combo")
+            .selected_text(self.split_state.format.label())
+            .width(ui.available_width() - 16.0)
+            .show_ui(ui, |ui| {
+                for &fmt in FilmFormat::ALL {
+                    ui.selectable_value(&mut self.split_state.format, fmt, fmt.label());
+                }
+            });
+
+        // Orientation toggle (only for non-free, non-square formats)
+        if let Some(ratio) = self.split_state.format.ratio() {
+            if (ratio - 1.0).abs() > 0.01 {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(s.orientation_label);
+                    ui.selectable_value(&mut self.split_state.portrait, false, s.landscape_label);
+                    ui.selectable_value(&mut self.split_state.portrait, true, s.portrait_label);
+                });
+            }
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Add / Clear buttons
+        let has_detail = self.detail.is_some();
+        ui.horizontal(|ui| {
+            if ui.add_enabled(has_detail, egui::Button::new(s.add_region)).clicked() {
+                self.add_split_region();
+            }
+            if ui.add_enabled(!self.split_state.regions.is_empty(), egui::Button::new(s.clear_all)).clicked() {
+                self.split_state.regions.clear();
+                self.split_state.dragging = None;
+                self.split_state.selected = None;
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // Region list
+        if self.split_state.regions.is_empty() {
+            ui.label(
+                egui::RichText::new(s.no_regions)
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+        } else {
+            let mut remove_idx = None;
+            let n_regions = self.split_state.regions.len();
+            for i in 0..n_regions {
+                let color = REGION_COLORS[i % REGION_COLORS.len()];
+                let is_active = self.split_state.selected == Some(i);
+
+                ui.horizontal(|ui| {
+                    // Color swatch
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 2.0, color);
+
+                    let label = format!("{} #{}", s.region_label, i + 1);
+                    let rt = if is_active {
+                        egui::RichText::new(&label).strong()
+                    } else {
+                        egui::RichText::new(&label)
+                    };
+                    if ui.selectable_label(is_active, rt).clicked() {
+                        self.split_state.selected = Some(i);
+                    }
+
+                    // Show dimensions in percentage
+                    let r = &self.split_state.regions[i];
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{:.0}%×{:.0}%",
+                            r.w * 100.0,
+                            r.h * 100.0
+                        ))
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                    );
+
+                    if ui.small_button("🗑").clicked() {
+                        remove_idx = Some(i);
+                    }
+                });
+            }
+            if let Some(idx) = remove_idx {
+                self.split_state.regions.remove(idx);
+                // Fix selected index
+                if let Some(sel) = self.split_state.selected {
+                    if sel == idx {
+                        self.split_state.selected = None;
+                    } else if sel > idx {
+                        self.split_state.selected = Some(sel - 1);
+                    }
+                }
+                // Fix dragging index
+                if let Some((drag_idx, _)) = &self.split_state.dragging {
+                    if *drag_idx == idx {
+                        self.split_state.dragging = None;
+                    } else if *drag_idx > idx {
+                        self.split_state.dragging = Some((*drag_idx - 1, DragKind::Move));
+                    }
+                }
+            }
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Naming pattern
+        ui.strong(s.naming_pattern);
+        ui.add_space(2.0);
+        ui.text_edit_singleline(&mut self.split_state.naming_pattern);
+        ui.label(
+            egui::RichText::new("{name} = filename, {n} = index")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+
+        // Preview of naming
+        if !self.split_state.regions.is_empty() {
+            if let Some(detail) = &self.detail {
+                let stem = detail.path.file_stem()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".to_string());
+                let preview = self.split_state.naming_pattern
+                    .replace("{name}", &stem)
+                    .replace("{n}", "1");
+                ui.label(
+                    egui::RichText::new(format!("→ {}.tif", preview))
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+        }
+
+        ui.add_space(12.0);
+
+        // Export button
+        let can_export = has_detail && !self.split_state.regions.is_empty();
+        if ui.add_enabled(can_export, egui::Button::new(s.export_splits)).clicked() {
+            self.export_split_regions();
+        }
+
+        // Show export status
+        if let ExportStatus::Done { count, ref dir } = self.export_state.status {
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(format!("✅ {} {} → {}", s.split_exported, count, dir.display()))
+                    .color(if ui.visuals().dark_mode {
+                        egui::Color32::from_rgb(100, 255, 100)
+                    } else {
+                        egui::Color32::from_rgb(0, 140, 0)
+                    }),
+            );
+        }
+        if let ExportStatus::Error(ref e) = self.export_state.status {
+            ui.add_space(4.0);
+            ui.colored_label(egui::Color32::RED, format!("❌ {}", e));
+        }
+    }
+
+    fn add_split_region(&mut self) {
+        let effective_ratio = self.split_state.format.ratio().map(|r| {
+            if self.split_state.portrait { 1.0 / r } else { r }
+        });
+
+        // Default region: centered, ~30% of image height
+        let h = 0.3_f32;
+        let w = if let Some(ratio) = effective_ratio {
+            // Aspect ratio = w/h in image-normalized space
+            // We need to account for the actual image aspect ratio
+            // since our coordinates are normalized to image w/h
+            let img_aspect = self.detail.as_ref()
+                .and_then(|d| d.texture.as_ref())
+                .map(|t| t.size_vec2().x / t.size_vec2().y)
+                .unwrap_or(1.0);
+            (h * ratio / img_aspect).min(0.95)
+        } else {
+            0.3
+        };
+
+        let n = self.split_state.regions.len();
+        // Stack regions vertically, offset each one
+        let y_offset = (n as f32 * 0.05) % 0.5;
+        let mut region = SplitRegion {
+            x: (0.5 - w / 2.0).clamp(0.0, 1.0 - w),
+            y: (0.1 + y_offset).clamp(0.0, 1.0 - h),
+            w,
+            h,
+        };
+        region.clamp_to_image();
+        let new_idx = self.split_state.regions.len();
+        self.split_state.selected = Some(new_idx);
+        self.split_state.regions.push(region);
+    }
+
+    fn handle_split_interactions(&mut self, response: &egui::Response, image_rect: egui::Rect) {
+        let handle_size = 10.0_f32;
+
+        if response.drag_started() {
+            if let Some(mouse_pos) = response.interact_pointer_pos() {
+                // Check if clicking on a handle of any existing region
+                let mut found = None;
+                for (i, region) in self.split_state.regions.iter().enumerate().rev() {
+                    let sr = region.to_screen_rect(image_rect);
+                    let corners = [
+                        (sr.left_top(), DragKind::ResizeTopLeft),
+                        (sr.right_top(), DragKind::ResizeTopRight),
+                        (sr.left_bottom(), DragKind::ResizeBottomLeft),
+                        (sr.right_bottom(), DragKind::ResizeBottomRight),
+                    ];
+
+                    for (corner_pos, kind) in &corners {
+                        let handle_rect = egui::Rect::from_center_size(
+                            *corner_pos,
+                            egui::vec2(handle_size * 2.0, handle_size * 2.0),
+                        );
+                        if handle_rect.contains(mouse_pos) {
+                            found = Some((i, *kind));
+                            break;
+                        }
+                    }
+                    if found.is_some() {
+                        break;
+                    }
+
+                    if sr.contains(mouse_pos) {
+                        found = Some((i, DragKind::Move));
+                        break;
+                    }
+                }
+                self.split_state.dragging = found;
+                self.split_state.selected = found.map(|(i, _)| i);
+            }
+        }
+
+        if response.dragged() {
+            let delta = response.drag_delta();
+            if let Some((idx, kind)) = self.split_state.dragging {
+                if idx < self.split_state.regions.len() {
+                    let iw = image_rect.width();
+                    let ih = image_rect.height();
+                    if iw > 0.0 && ih > 0.0 {
+                        let dx = delta.x / iw;
+                        let dy = delta.y / ih;
+                        let region = &mut self.split_state.regions[idx];
+
+                        match kind {
+                            DragKind::Move => {
+                                region.x += dx;
+                                region.y += dy;
+                                region.clamp_to_image();
+                            }
+                            DragKind::ResizeTopLeft => {
+                                self.resize_region(idx, dx, dy, true, true, image_rect);
+                            }
+                            DragKind::ResizeTopRight => {
+                                self.resize_region(idx, dx, dy, false, true, image_rect);
+                            }
+                            DragKind::ResizeBottomLeft => {
+                                self.resize_region(idx, dx, dy, true, false, image_rect);
+                            }
+                            DragKind::ResizeBottomRight => {
+                                self.resize_region(idx, dx, dy, false, false, image_rect);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if response.drag_stopped() {
+            self.split_state.dragging = None;
+        }
+    }
+
+    fn resize_region(
+        &mut self,
+        idx: usize,
+        dx: f32,
+        dy: f32,
+        from_left: bool,
+        from_top: bool,
+        image_rect: egui::Rect,
+    ) {
+        let effective_ratio = self.split_state.format.ratio().map(|r| {
+            if self.split_state.portrait { 1.0 / r } else { r }
+        });
+        let img_aspect = image_rect.width() / image_rect.height();
+
+        let region = &mut self.split_state.regions[idx];
+
+        if from_left {
+            let new_x = (region.x + dx).clamp(0.0, region.x + region.w - 0.01);
+            let dw = region.x - new_x;
+            region.x = new_x;
+            region.w += dw;
+        } else {
+            region.w = (region.w + dx).max(0.01);
+        }
+
+        if let Some(ratio) = effective_ratio {
+            let old_bottom = region.y + region.h;
+            // Constrain aspect ratio: w_pixels / h_pixels = ratio
+            // h_norm = w_norm * img_aspect / ratio
+            region.h = region.w * img_aspect / ratio;
+            if from_top {
+                region.y = old_bottom - region.h;
+            }
+        } else {
+            if from_top {
+                let new_y = (region.y + dy).clamp(0.0, region.y + region.h - 0.01);
+                let dh = region.y - new_y;
+                region.y = new_y;
+                region.h += dh;
+            } else {
+                region.h = (region.h + dy).max(0.01);
+            }
+        }
+
+        region.clamp_to_image();
+    }
+
+    fn export_split_regions(&mut self) {
+        let s = self.s();
+        let Some(detail) = &self.detail else { return };
+        if self.split_state.regions.is_empty() {
+            return;
+        }
+
+        let Some(out_dir) = rfd::FileDialog::new()
+            .set_title("Select output directory")
+            .pick_folder()
+        else {
+            return;
+        };
+
+        let src_path = detail.path.clone();
+        let stem = src_path.file_stem()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+
+        // Decode full-resolution image for export
+        let img = match detail.tiff.decode_for_export() {
+            Some(img) => img,
+            None => {
+                self.export_state.status = ExportStatus::Error("Failed to decode image".into());
+                return;
+            }
+        };
+
+        let img_w = img.width();
+        let img_h = img.height();
+        let mut exported = 0;
+
+        for (i, region) in self.split_state.regions.iter().enumerate() {
+            // Map normalized coords to pixel coords
+            let px = (region.x * img_w as f32) as u32;
+            let py = (region.y * img_h as f32) as u32;
+            let pw = ((region.w * img_w as f32) as u32).min(img_w - px);
+            let ph = ((region.h * img_h as f32) as u32).min(img_h - py);
+
+            if pw == 0 || ph == 0 {
+                continue;
+            }
+
+            let cropped = img.crop_imm(px, py, pw, ph);
+
+            let name = self.split_state.naming_pattern
+                .replace("{name}", &stem)
+                .replace("{n}", &(i + 1).to_string());
+            let out_path = out_dir.join(format!("{}.tif", name));
+
+            // Guard: never overwrite source
+            if let (Ok(src_c), Ok(dst_c)) = (src_path.canonicalize(), out_path.canonicalize()) {
+                if src_c == dst_c {
+                    self.export_state.status = ExportStatus::Error(s.cannot_overwrite_source.to_string());
+                    return;
+                }
+            }
+
+            match cropped.save(&out_path) {
+                Ok(()) => {
+                    log::info!("Split export: {} ({}x{})", out_path.display(), pw, ph);
+                    exported += 1;
+                }
+                Err(e) => {
+                    log::error!("Split export failed: {} — {}", out_path.display(), e);
+                    self.export_state.status = ExportStatus::Error(format!("{}: {}", out_path.display(), e));
+                    return;
+                }
+            }
+        }
+
+        self.export_state.status = ExportStatus::Done {
+            count: exported,
+            dir: out_dir,
+        };
+        log::info!("Split export: {} files", exported);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     fn param_chip(ui: &mut egui::Ui, label: &str, value: &str, modified: bool) {
@@ -2193,6 +2783,64 @@ impl FffViewerApp {
 
     fn bool_icon(v: bool) -> String {
         if v { "✅".into() } else { "—".into() }
+    }
+}
+
+// ─── Split overlay rendering ────────────────────────────────────────────────
+
+fn draw_split_overlays(
+    painter: &egui::Painter,
+    image_rect: egui::Rect,
+    regions: &[SplitRegion],
+    selected_idx: Option<usize>,
+) {
+    let handle_size = 8.0_f32;
+
+    for (i, region) in regions.iter().enumerate() {
+        let sr = region.to_screen_rect(image_rect);
+        let color = REGION_COLORS[i % REGION_COLORS.len()];
+        let is_selected = selected_idx == Some(i);
+        let stroke_width = if is_selected { 3.0 } else { 2.0 };
+
+        // Semi-transparent fill
+        let fill = egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 20);
+        painter.rect_filled(sr, 0.0, fill);
+
+        // Border
+        painter.rect_stroke(sr, 0.0, egui::Stroke::new(stroke_width, color), egui::StrokeKind::Outside);
+
+        // Corner handles
+        let corners = [sr.left_top(), sr.right_top(), sr.left_bottom(), sr.right_bottom()];
+        for corner in &corners {
+            let handle_rect =
+                egui::Rect::from_center_size(*corner, egui::vec2(handle_size, handle_size));
+            painter.rect_filled(handle_rect, 2.0, color);
+            painter.rect_stroke(
+                handle_rect,
+                2.0,
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+                egui::StrokeKind::Outside,
+            );
+        }
+
+        // Region number label
+        let label_pos = egui::pos2(sr.min.x + 4.0, sr.min.y + 2.0);
+        let galley = painter.layout_no_wrap(
+            format!("#{}", i + 1),
+            egui::FontId::proportional(14.0),
+            egui::Color32::WHITE,
+        );
+        // Background for label
+        let label_rect = egui::Rect::from_min_size(
+            label_pos,
+            galley.size() + egui::vec2(6.0, 2.0),
+        );
+        painter.rect_filled(
+            label_rect,
+            3.0,
+            egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 180),
+        );
+        painter.galley(label_pos + egui::vec2(3.0, 1.0), galley, egui::Color32::WHITE);
     }
 }
 

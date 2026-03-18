@@ -132,6 +132,22 @@ pub struct Strings {
     pub files_count: &'static str,
     pub loading_thumbnails: &'static str,
     pub loading_file: &'static str,
+
+    // Split & export
+    pub split_export: &'static str,
+    pub film_format: &'static str,
+    pub add_region: &'static str,
+    pub remove_selected: &'static str,
+    pub clear_all: &'static str,
+    pub export_splits: &'static str,
+    pub naming_pattern: &'static str,
+    pub orientation_label: &'static str,
+    pub landscape_label: &'static str,
+    pub portrait_label: &'static str,
+    pub region_label: &'static str,
+    pub no_regions: &'static str,
+    pub split_exported: &'static str,
+    pub cannot_overwrite_source: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -238,6 +254,21 @@ static EN: Strings = Strings {
     files_count: "files",
     loading_thumbnails: "Loading thumbnails",
     loading_file: "Loading",
+
+    split_export: "✂ Split",
+    film_format: "Film Format",
+    add_region: "➕ Add Region",
+    remove_selected: "🗑 Remove",
+    clear_all: "Clear All",
+    export_splits: "📤 Export Splits",
+    naming_pattern: "Naming Pattern",
+    orientation_label: "Orientation",
+    landscape_label: "Landscape",
+    portrait_label: "Portrait",
+    region_label: "Region",
+    no_regions: "No split regions. Click \"Add Region\" to start.",
+    split_exported: "Exported",
+    cannot_overwrite_source: "Cannot overwrite source file",
 };
 
 static ZH: Strings = Strings {
@@ -344,6 +375,21 @@ static ZH: Strings = Strings {
     files_count: "个文件",
     loading_thumbnails: "加载缩略图",
     loading_file: "正在加载",
+
+    split_export: "✂ 分割",
+    film_format: "胶片画幅",
+    add_region: "➕ 添加区域",
+    remove_selected: "🗑 删除",
+    clear_all: "全部清除",
+    export_splits: "📤 导出分割",
+    naming_pattern: "命名规则",
+    orientation_label: "方向",
+    landscape_label: "横向",
+    portrait_label: "纵向",
+    region_label: "区域",
+    no_regions: "暂无分割区域，点击「添加区域」开始。",
+    split_exported: "已导出",
+    cannot_overwrite_source: "不能覆盖源文件",
 };
 
 pub fn strings(lang: Language) -> &'static Strings {
