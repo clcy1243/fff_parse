@@ -59,8 +59,8 @@ pub struct AppConfig {
     pub language: String,
     /// Favorited directory paths (absolute paths, |-separated in XML)
     pub favorites: Vec<String>,
-    /// Scan subdirectories recursively for image files (default: false)
-    pub scan_subdirs: bool,
+    /// Per-directory scan depth: path → 0 (flat), 1 (one level), 2 (all subdirs)
+    pub dir_scan_modes: std::collections::HashMap<String, u8>,
 }
 
 impl Default for AppConfig {
@@ -71,7 +71,7 @@ impl Default for AppConfig {
             render_threads: default_thread_count(),
             language: detect_system_language(),
             favorites: Vec::new(),
-            scan_subdirs: false,
+            dir_scan_modes: std::collections::HashMap::new(),
         }
     }
 }
@@ -158,7 +158,11 @@ fn to_xml(c: &AppConfig) -> String {
     let _ = writeln!(s, "  <language>{}</language>", xml_escape(&c.language));
     let favorites_str = c.favorites.iter().map(|f| xml_escape(f)).collect::<Vec<_>>().join("|");
     let _ = writeln!(s, "  <favorites>{}</favorites>", favorites_str);
-    let _ = writeln!(s, "  <scan_subdirs>{}</scan_subdirs>", c.scan_subdirs);
+    // dir_scan_modes: "path:depth" pairs joined by "|"
+    let modes_str = c.dir_scan_modes.iter()
+        .map(|(k, v)| format!("{}:{}", xml_escape(k), v))
+        .collect::<Vec<_>>().join("|");
+    let _ = writeln!(s, "  <dir_scan_modes>{}</dir_scan_modes>", modes_str);
     s.push_str("</fff_viewer_config>\n");
     s
 }
@@ -188,8 +192,18 @@ fn parse_xml(xml: &str) -> Option<AppConfig> {
             config.favorites = v.split('|').map(|s| xml_unescape(s.trim())).filter(|s| !s.is_empty()).collect();
         }
     }
-    if let Some(v) = tag_content(xml, "scan_subdirs") {
-        config.scan_subdirs = v == "true";
+    if let Some(v) = tag_content(xml, "dir_scan_modes") {
+        if !v.is_empty() {
+            for pair in v.split('|') {
+                // Split on last ':' so paths with ':' (Windows drive letters) still work
+                if let Some(colon) = pair.rfind(':') {
+                    let path = xml_unescape(pair[..colon].trim());
+                    if let Ok(depth) = pair[colon+1..].trim().parse::<u8>() {
+                        config.dir_scan_modes.insert(path, depth.min(2));
+                    }
+                }
+            }
+        }
     }
     Some(config)
 }
@@ -222,13 +236,15 @@ mod tests {
 
     #[test]
     fn roundtrip() {
+        let mut dir_scan_modes = std::collections::HashMap::new();
+        dir_scan_modes.insert("/Users/test/Photos".to_string(), 2u8);
         let config = AppConfig {
             gpu_enabled: false,
             gpu_device: "AMD Radeon Pro 5500M".to_string(),
             render_threads: 4,
             language: "zh".to_string(),
             favorites: vec!["/Users/test/Photos".to_string(), "/Volumes/SD".to_string()],
-            scan_subdirs: true,
+            dir_scan_modes,
         };
         let xml = to_xml(&config);
         let parsed = parse_xml(&xml).unwrap();
@@ -237,7 +253,7 @@ mod tests {
         assert_eq!(parsed.render_threads, 4);
         assert_eq!(parsed.language, "zh");
         assert_eq!(parsed.favorites, vec!["/Users/test/Photos", "/Volumes/SD"]);
-        assert_eq!(parsed.scan_subdirs, true);
+        assert_eq!(parsed.dir_scan_modes.get("/Users/test/Photos"), Some(&2u8));
     }
 
     #[test]

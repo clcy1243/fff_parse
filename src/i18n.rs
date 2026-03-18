@@ -176,7 +176,9 @@ pub struct Strings {
     pub settings_saved: &'static str,
     pub restart_required: &'static str,
     pub scan_subdirs: &'static str,
-    pub scan_subdirs_hint: &'static str,
+    pub scan_depth_flat: &'static str,
+    pub scan_depth_one: &'static str,
+    pub scan_depth_all: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -314,8 +316,10 @@ static EN: Strings = Strings {
     ui_language: "Language",
     settings_saved: "Settings saved",
     restart_required: "⚠ Restart required for GPU/thread changes to take effect",
-    scan_subdirs: "Include Subdirectories",
-    scan_subdirs_hint: "Show image files from all subdirectories of the selected folder",
+    scan_subdirs: "Subdirectory scan",
+    scan_depth_flat: "This folder only",
+    scan_depth_one: "One level deep",
+    scan_depth_all: "All subdirectories",
 };
 
 static ZH: Strings = Strings {
@@ -453,8 +457,10 @@ static ZH: Strings = Strings {
     ui_language: "界面语言",
     settings_saved: "设置已保存",
     restart_required: "⚠ GPU / 线程数变更需要重启应用生效",
-    scan_subdirs: "包含子目录",
-    scan_subdirs_hint: "显示所选文件夹及所有子目录中的图像文件",
+    scan_subdirs: "子目录扫描",
+    scan_depth_flat: "仅当前目录",
+    scan_depth_one: "包含一级子目录",
+    scan_depth_all: "包含所有子目录",
 };
 
 pub fn strings(lang: Language) -> &'static Strings {
