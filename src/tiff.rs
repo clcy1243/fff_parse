@@ -1114,6 +1114,171 @@ impl TiffFile {
         None
     }
 
+    /// Decode the largest preview image, subsampled to fit within `max_dim` pixels.
+    /// Reads directly from file data without intermediate full-resolution buffers.
+    /// Returns a 16-bit or 8-bit image at reduced resolution for fast display.
+    pub fn decode_preview_downscaled(&self, max_dim: u32) -> Option<image::DynamicImage> {
+        // First try: use preview JPEG (already small)
+        if let Some(jpeg_data) = &self.preview_jpeg {
+            if let Ok(img) =
+                image::load_from_memory_with_format(jpeg_data, image::ImageFormat::Jpeg)
+            {
+                return Some(img);
+            }
+        }
+
+        // Find the largest uncompressed RGB IFD
+        let mut best: Option<(usize, u64)> = None;
+        for (idx, ifd) in self.ifds.iter().enumerate() {
+            let width = ifd.get_u32(0x0100).unwrap_or(0) as u64;
+            let height = ifd.get_u32(0x0101).unwrap_or(0) as u64;
+            let compression = ifd.get_u32(0x0103).unwrap_or(1);
+            let photometric = ifd.get_u32(0x0106).unwrap_or(0);
+            let spp = ifd.get_u32(0x0115).unwrap_or(1);
+
+            if compression == 1 && photometric == 2 && spp >= 3 && width > 0 && height > 0 {
+                let pixels = width * height;
+                if best.is_none() || pixels > best.unwrap().1 {
+                    best = Some((idx, pixels));
+                }
+            }
+        }
+
+        let (idx, _) = best?;
+        self.decode_ifd_downscaled(&self.ifds[idx], max_dim)
+    }
+
+    /// Decode an IFD's uncompressed RGB data, subsampled by a nearest-neighbor factor
+    /// to fit within `max_dim`. Reads directly from `self.data` to avoid copying
+    /// the full strip data into an intermediate buffer.
+    fn decode_ifd_downscaled(&self, ifd: &Ifd, max_dim: u32) -> Option<image::DynamicImage> {
+        let width = ifd.get_u32(0x0100)? as usize;
+        let height = ifd.get_u32(0x0101)? as usize;
+        let bps = ifd.get(0x0102).and_then(|v| v.as_u32()).unwrap_or(8);
+
+        let strip_offsets = ifd.get(0x0111)?;
+        let offsets = strip_offsets.as_u32_vec();
+        let strip_counts = ifd.get(0x0117)?;
+        let counts = strip_counts.as_u32_vec();
+
+        if offsets.is_empty() || counts.is_empty() {
+            return None;
+        }
+
+        let src_pixel_bytes: usize = if bps == 16 { 6 } else { 3 }; // bytes per pixel (3 channels)
+        let src_row_bytes = width * src_pixel_bytes;
+
+        // Calculate subsample factor
+        let factor = if width as u32 > max_dim || height as u32 > max_dim {
+            let fw = (width as f64 / max_dim as f64).ceil() as usize;
+            let fh = (height as f64 / max_dim as f64).ceil() as usize;
+            fw.max(fh).max(1)
+        } else {
+            1
+        };
+
+        let out_w = (width + factor - 1) / factor;
+        let out_h = (height + factor - 1) / factor;
+
+        // Build row-to-file-offset lookup (maps each source row to its byte offset in self.data)
+        let mut row_file_offsets: Vec<usize> = Vec::with_capacity(height);
+        for (off, cnt) in offsets.iter().zip(counts.iter()) {
+            let rows_in_strip = (*cnt as usize) / src_row_bytes;
+            for r in 0..rows_in_strip {
+                row_file_offsets.push(*off as usize + r * src_row_bytes);
+            }
+            if row_file_offsets.len() >= height {
+                break;
+            }
+        }
+        if row_file_offsets.len() < height {
+            row_file_offsets.resize(height, 0);
+        }
+
+        log::info!(
+            "decode_ifd_downscaled: {}x{} → {}x{} (factor={})",
+            width, height, out_w, out_h, factor
+        );
+
+        if bps == 16 {
+            use rayon::prelude::*;
+            let byte_order = self.byte_order;
+            let out_row_len = out_w * 3; // u16 values per output row
+            let mut rgb16 = vec![0u16; out_row_len * out_h];
+            let data = &self.data;
+
+            rgb16
+                .par_chunks_mut(out_row_len)
+                .enumerate()
+                .for_each(|(out_y, row)| {
+                    let src_y = out_y * factor;
+                    if src_y >= height {
+                        return;
+                    }
+                    let row_start = row_file_offsets[src_y];
+                    for out_x in 0..out_w {
+                        let src_x = out_x * factor;
+                        if src_x >= width {
+                            break;
+                        }
+                        let base_idx = row_start + src_x * 6; // 3 channels × 2 bytes
+                        for ch in 0..3 {
+                            let byte_idx = base_idx + ch * 2;
+                            if byte_idx + 1 < data.len() {
+                                row[out_x * 3 + ch] = match byte_order {
+                                    ByteOrder::LittleEndian => u16::from_le_bytes([
+                                        data[byte_idx],
+                                        data[byte_idx + 1],
+                                    ]),
+                                    ByteOrder::BigEndian => u16::from_be_bytes([
+                                        data[byte_idx],
+                                        data[byte_idx + 1],
+                                    ]),
+                                };
+                            }
+                        }
+                    }
+                });
+
+            let img = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(
+                out_w as u32,
+                out_h as u32,
+                rgb16,
+            )?;
+            return Some(image::DynamicImage::ImageRgb16(img));
+        } else if bps == 8 {
+            let out_row_len = out_w * 3;
+            let mut rgb8 = vec![0u8; out_row_len * out_h];
+            let data = &self.data;
+
+            for out_y in 0..out_h {
+                let src_y = out_y * factor;
+                if src_y >= height {
+                    break;
+                }
+                let row_start = row_file_offsets[src_y];
+                for out_x in 0..out_w {
+                    let src_x = out_x * factor;
+                    if src_x >= width {
+                        break;
+                    }
+                    let base_idx = row_start + src_x * 3;
+                    for ch in 0..3 {
+                        let idx = base_idx + ch;
+                        if idx < data.len() {
+                            rgb8[out_y * out_row_len + out_x * 3 + ch] = data[idx];
+                        }
+                    }
+                }
+            }
+
+            let img = image::RgbImage::from_raw(out_w as u32, out_h as u32, rgb8)?;
+            return Some(image::DynamicImage::ImageRgb8(img));
+        }
+
+        None
+    }
+
     /// Decode the smallest available thumbnail for grid/filmstrip display.
     /// Prefers IFD with NewSubfileType=1 (thumbnail), then the smallest IFD.
     pub fn decode_thumbnail(&self) -> Option<image::DynamicImage> {

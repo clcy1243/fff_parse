@@ -4,9 +4,15 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use fff_viewer::color::{self, IccProfileInfo, SettingsPreset};
-use fff_viewer::flexcolor::{self, EditHistory};
+use fff_viewer::flexcolor::{self, EditHistory, ImageCorrection};
 use fff_viewer::i18n::{self, Language, Strings};
 use fff_viewer::tiff::TiffFile;
+
+/// Maximum pixel dimension for display preview.
+/// Larger images are subsampled during decode for speed.
+/// 4096 gives good quality for typical screen sizes while being ~25× faster
+/// than full-resolution decode of large scanner images.
+const DISPLAY_MAX_DIM: u32 = 4096;
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
@@ -100,6 +106,7 @@ struct DetailResult {
     edit_history: Option<EditHistory>,
     preview_rgba: Option<(Vec<u8>, u32, u32)>, // (pixels, width, height)
     embedded_icc: Option<Vec<u8>>,
+    auto_corrected: bool, // true if embedded correction was auto-applied
 }
 
 enum DetailMsg {
@@ -365,18 +372,40 @@ impl FffViewerApp {
                     log::debug!("Edit history: {} settings",
                         edit_history.as_ref().map(|h| h.settings.len()).unwrap_or(0));
 
-                    let preview_rgba = if let Some(img) = tiff.decode_preview_image() {
-                        log::info!("Decoded preview: {}x{} {:?}",
+                    // Extract the embedded correction from edit history (if any)
+                    let embedded_correction: Option<ImageCorrection> = edit_history.as_ref().and_then(|h| {
+                        if h.settings.is_empty() {
+                            None
+                        } else {
+                            let idx = h.current_index.min(h.settings.len() - 1);
+                            Some(h.settings[idx].correction.clone())
+                        }
+                    });
+
+                    // Decode preview with downsampling for fast display
+                    let (preview_rgba, auto_corrected) = if let Some(img) = tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
+                        log::info!("Decoded downscaled preview: {}x{} {:?}",
                             img.width(), img.height(), img.color());
-                        let img = convert_16_to_8_for_display(img);
-                        let img = clamp_image_for_gpu(img);
-                        let rgba = img.to_rgba8();
+
+                        // Auto-apply embedded correction if available
+                        let (processed, corrected) = if let Some(ref correction) = embedded_correction {
+                            log::info!("Auto-applying embedded correction: film_type={}",
+                                correction.film_type);
+                            let result = color::apply_film_processing(&img, correction);
+                            (result, true)
+                        } else {
+                            (img, false)
+                        };
+
+                        let processed = convert_16_to_8_for_display(processed);
+                        let processed = clamp_image_for_gpu(processed);
+                        let rgba = processed.to_rgba8();
                         let w = rgba.width();
                         let h = rgba.height();
-                        Some((rgba.into_raw(), w, h))
+                        (Some((rgba.into_raw(), w, h)), corrected)
                     } else {
                         log::warn!("No preview decoded for {}", path.display());
-                        None
+                        (None, false)
                     };
 
                     let embedded_icc = color::extract_embedded_icc(tiff.raw_data(), &all_tags);
@@ -391,6 +420,7 @@ impl FffViewerApp {
                         edit_history,
                         preview_rgba,
                         embedded_icc,
+                        auto_corrected,
                     }));
                 }
                 Err(e) => {
@@ -450,6 +480,10 @@ impl FffViewerApp {
                         texture,
                         embedded_icc: result.embedded_icc,
                     });
+                    // Set embedded correction flag if auto-applied during load
+                    if result.auto_corrected {
+                        self.use_embedded_correction = true;
+                    }
                     self.loading_status = LoadingStatus::Idle;
                 }
                 DetailMsg::Error(path, e) => {
@@ -1678,8 +1712,8 @@ impl FffViewerApp {
             return;
         };
 
-        // Re-decode the preview image from the TiffFile
-        let preview_img = match detail.tiff.decode_preview_image() {
+        // Re-decode the preview image from the TiffFile (downscaled for display)
+        let preview_img = match detail.tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
             Some(img) => img,
             None => {
                 self.color_status = Some(format!("❌ {}: no preview", s.profile_error));
@@ -1767,15 +1801,29 @@ impl FffViewerApp {
         self.selected_input_profile = None;
         self.selected_preset = None;
         self.use_embedded_icc = false;
-        self.use_embedded_correction = false;
         self.color_status = None;
 
-        // Re-decode original preview with display gamma
+        // Re-decode preview with downscaling, auto-apply embedded correction if available
         if let Some(detail) = &mut self.detail {
-            if let Some(img) = detail.tiff.decode_preview_image() {
-                let img = convert_16_to_8_for_display(img);
-                let img = clamp_image_for_gpu(img);
-                let rgba = img.to_rgba8();
+            if let Some(img) = detail.tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
+                // Auto-apply embedded correction (same as initial load)
+                let (processed, corrected) = if let Some(ref eh) = detail.edit_history {
+                    if !eh.settings.is_empty() {
+                        let idx = eh.current_index.min(eh.settings.len() - 1);
+                        let correction = &eh.settings[idx].correction;
+                        log::info!("Reset: re-applying embedded correction");
+                        (color::apply_film_processing(&img, correction), true)
+                    } else {
+                        (img, false)
+                    }
+                } else {
+                    (img, false)
+                };
+                self.use_embedded_correction = corrected;
+
+                let processed = convert_16_to_8_for_display(processed);
+                let processed = clamp_image_for_gpu(processed);
+                let rgba = processed.to_rgba8();
                 let size = [rgba.width() as usize, rgba.height() as usize];
                 let pixels = rgba.into_raw();
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
