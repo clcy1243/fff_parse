@@ -6,6 +6,7 @@ use std::sync::mpsc;
 use fff_viewer::color::{self, IccProfileInfo, SettingsPreset, TargetColorSpace};
 use fff_viewer::flexcolor::{self, EditHistory, ImageCorrection};
 use fff_viewer::i18n::{self, Language, Strings};
+use fff_viewer::sidecar::{self, SidecarConfig, SidecarRegion as SidecarRegionData};
 use fff_viewer::tiff::TiffFile;
 
 /// Maximum pixel dimension for display preview.
@@ -84,6 +85,34 @@ impl FilmFormat {
             Self::Medium6x12 => Some(2.0),
             Self::Medium6x17 => Some(3.0),
             Self::LargeFormat4x5 => Some(5.0 / 4.0),
+        }
+    }
+
+    fn to_str(&self) -> &'static str {
+        match self {
+            Self::Free => "Free",
+            Self::Full35mm => "Full35mm",
+            Self::Medium645 => "Medium645",
+            Self::Medium6x6 => "Medium6x6",
+            Self::Medium6x7 => "Medium6x7",
+            Self::Medium6x9 => "Medium6x9",
+            Self::Medium6x12 => "Medium6x12",
+            Self::Medium6x17 => "Medium6x17",
+            Self::LargeFormat4x5 => "LargeFormat4x5",
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "Full35mm" => Self::Full35mm,
+            "Medium645" => Self::Medium645,
+            "Medium6x6" => Self::Medium6x6,
+            "Medium6x7" => Self::Medium6x7,
+            "Medium6x9" => Self::Medium6x9,
+            "Medium6x12" => Self::Medium6x12,
+            "Medium6x17" => Self::Medium6x17,
+            "LargeFormat4x5" => Self::LargeFormat4x5,
+            _ => Self::Free,
         }
     }
 }
@@ -273,6 +302,7 @@ struct DetailResult {
     preview_rgba: Option<(Vec<u8>, u32, u32)>, // (pixels, width, height)
     embedded_icc: Option<Vec<u8>>,
     auto_corrected: bool, // true if embedded correction was auto-applied
+    sidecar: Option<SidecarConfig>, // persisted settings from XML sidecar
 }
 
 enum DetailMsg {
@@ -584,6 +614,12 @@ impl FffViewerApp {
                     log::debug!("Embedded ICC: {} bytes",
                         embedded_icc.as_ref().map(|d| d.len()).unwrap_or(0));
 
+                    // Load sidecar XML if it exists
+                    let sidecar_config = sidecar::load(&path);
+                    if sidecar_config.is_some() {
+                        log::info!("Loaded sidecar: {}", sidecar::sidecar_path(&path).display());
+                    }
+
                     let _ = tx.send(DetailMsg::Loaded(DetailResult {
                         path,
                         tiff,
@@ -593,6 +629,7 @@ impl FffViewerApp {
                         preview_rgba,
                         embedded_icc,
                         auto_corrected,
+                        sidecar: sidecar_config,
                     }));
                 }
                 Err(e) => {
@@ -631,6 +668,9 @@ impl FffViewerApp {
         if let Ok(msg) = self.detail_rx.try_recv() {
             match msg {
                 DetailMsg::Loaded(result) => {
+                    let has_sidecar = result.sidecar.is_some();
+                    let sidecar = result.sidecar.clone();
+
                     let texture = if let Some((pixels, w, h)) = result.preview_rgba {
                         let size = [w as usize, h as usize];
                         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
@@ -652,9 +692,15 @@ impl FffViewerApp {
                         texture,
                         embedded_icc: result.embedded_icc,
                     });
-                    // Set embedded correction flag if auto-applied during load
-                    if result.auto_corrected {
-                        self.use_embedded_correction = true;
+
+                    if has_sidecar {
+                        // Restore settings from sidecar
+                        self.apply_sidecar(sidecar.as_ref().unwrap(), ctx);
+                    } else {
+                        // Default: auto-apply embedded correction
+                        if result.auto_corrected {
+                            self.use_embedded_correction = true;
+                        }
                     }
                     self.loading_status = LoadingStatus::Idle;
                 }
@@ -1246,6 +1292,7 @@ impl FffViewerApp {
                     self.split_state.regions.remove(idx);
                     self.split_state.selected = None;
                     self.split_state.dragging = None;
+                    self.save_sidecar();
                 }
             }
         }
@@ -1664,6 +1711,7 @@ impl FffViewerApp {
         ui.strong(s.target_color_space);
         ui.add_space(2.0);
 
+        let old_target = self.target_color_space;
         let current_target_label = self.target_color_space.label();
         egui::ComboBox::from_id_salt("target_colorspace_combo")
             .selected_text(current_target_label)
@@ -1678,6 +1726,9 @@ impl FffViewerApp {
                     }
                 }
             });
+        if self.target_color_space != old_target {
+            self.save_sidecar();
+        }
 
         ui.add_space(12.0);
         ui.separator();
@@ -1845,10 +1896,12 @@ impl FffViewerApp {
                 self.loading_status = LoadingStatus::ApplyingColorProfile;
                 self.apply_color_profile(ctx);
                 self.loading_status = LoadingStatus::Idle;
+                self.save_sidecar();
             }
 
             if ui.button(s.reset_profile).clicked() {
                 self.reset_color_profile(ctx);
+                self.save_sidecar();
             }
         });
 
@@ -1900,6 +1953,75 @@ impl FffViewerApp {
                     }
                 }
             }
+        }
+    }
+
+    /// Apply saved sidecar configuration to current state
+    fn apply_sidecar(&mut self, config: &SidecarConfig, ctx: &egui::Context) {
+        log::info!("Applying sidecar config");
+        self.use_embedded_correction = config.use_embedded_correction;
+        self.use_embedded_icc = config.use_embedded_icc;
+        self.target_color_space = TargetColorSpace::from_str(&config.target_color_space);
+
+        // Look up profile by name
+        self.selected_input_profile = config.input_profile_name.as_ref().and_then(|name| {
+            self.available_profiles.iter().position(|p| &p.name == name)
+        });
+
+        // Look up preset by name
+        self.selected_preset = config.preset_name.as_ref().and_then(|name| {
+            self.available_presets.iter().position(|p| &p.name == name)
+        });
+
+        // Restore split state
+        self.split_state.format = FilmFormat::from_str(&config.split_format);
+        self.split_state.portrait = config.split_portrait;
+        self.split_state.naming_pattern = config.split_naming_pattern.clone();
+        self.split_state.regions = config.split_regions.iter().map(|r| {
+            SplitRegion { cx: r.cx, cy: r.cy, w: r.w, h: r.h, angle: r.angle }
+        }).collect();
+        self.split_state.selected = None;
+        self.split_state.dragging = None;
+
+        // Re-apply color profile if any profile/preset was selected
+        if self.selected_input_profile.is_some() || self.selected_preset.is_some()
+            || self.use_embedded_icc || self.use_embedded_correction {
+            self.apply_color_profile(ctx);
+        }
+    }
+
+    /// Save current state to sidecar XML file
+    fn save_sidecar(&self) {
+        let path = match &self.detail {
+            Some(d) => &d.path,
+            None => return,
+        };
+
+        let input_profile_name = self.selected_input_profile
+            .and_then(|i| self.available_profiles.get(i))
+            .map(|p| p.name.clone());
+        let preset_name = self.selected_preset
+            .and_then(|i| self.available_presets.get(i))
+            .map(|p| p.name.clone());
+
+        let config = SidecarConfig {
+            use_embedded_correction: self.use_embedded_correction,
+            use_embedded_icc: self.use_embedded_icc,
+            input_profile_name,
+            preset_name,
+            target_color_space: self.target_color_space.to_str().to_string(),
+            split_format: self.split_state.format.to_str().to_string(),
+            split_portrait: self.split_state.portrait,
+            split_naming_pattern: self.split_state.naming_pattern.clone(),
+            split_regions: self.split_state.regions.iter().map(|r| {
+                SidecarRegionData { cx: r.cx, cy: r.cy, w: r.w, h: r.h, angle: r.angle }
+            }).collect(),
+        };
+
+        if let Err(e) = sidecar::save(path, &config) {
+            log::error!("Failed to save sidecar: {}", e);
+        } else {
+            log::debug!("Saved sidecar: {}", sidecar::sidecar_path(path).display());
         }
     }
 
@@ -2197,6 +2319,7 @@ impl FffViewerApp {
         // Film format selector
         ui.strong(s.film_format);
         ui.add_space(2.0);
+        let old_format = self.split_state.format;
         egui::ComboBox::from_id_salt("film_format_combo")
             .selected_text(self.split_state.format.label())
             .width(ui.available_width() - 16.0)
@@ -2207,6 +2330,7 @@ impl FffViewerApp {
             });
 
         // Orientation toggle (only for non-free, non-square formats)
+        let old_portrait = self.split_state.portrait;
         if let Some(ratio) = self.split_state.format.ratio() {
             if (ratio - 1.0).abs() > 0.01 {
                 ui.add_space(4.0);
@@ -2216,6 +2340,9 @@ impl FffViewerApp {
                     ui.selectable_value(&mut self.split_state.portrait, true, s.portrait_label);
                 });
             }
+        }
+        if self.split_state.format != old_format || self.split_state.portrait != old_portrait {
+            self.save_sidecar();
         }
 
         ui.add_space(8.0);
@@ -2227,11 +2354,13 @@ impl FffViewerApp {
         ui.horizontal(|ui| {
             if ui.add_enabled(has_detail, egui::Button::new(s.add_region)).clicked() {
                 self.add_split_region();
+                self.save_sidecar();
             }
             if ui.add_enabled(!self.split_state.regions.is_empty(), egui::Button::new(s.clear_all)).clicked() {
                 self.split_state.regions.clear();
                 self.split_state.dragging = None;
                 self.split_state.selected = None;
+                self.save_sidecar();
             }
         });
 
@@ -2303,6 +2432,7 @@ impl FffViewerApp {
                         self.split_state.dragging = Some((*drag_idx - 1, DragKind::Move));
                     }
                 }
+                self.save_sidecar();
             }
         }
 
@@ -2313,7 +2443,11 @@ impl FffViewerApp {
         // Naming pattern
         ui.strong(s.naming_pattern);
         ui.add_space(2.0);
-        ui.text_edit_singleline(&mut self.split_state.naming_pattern);
+        let old_pattern = self.split_state.naming_pattern.clone();
+        let resp = ui.text_edit_singleline(&mut self.split_state.naming_pattern);
+        if resp.lost_focus() && self.split_state.naming_pattern != old_pattern {
+            self.save_sidecar();
+        }
         ui.label(
             egui::RichText::new("{name} = filename, {n} = index")
                 .small()
@@ -2528,6 +2662,9 @@ impl FffViewerApp {
         }
 
         if response.drag_stopped() {
+            if self.split_state.dragging.is_some() {
+                self.save_sidecar();
+            }
             self.split_state.dragging = None;
         }
     }

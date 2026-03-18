@@ -206,6 +206,24 @@ impl TargetColorSpace {
             Self::DisplayP3 => "Display P3",
         }
     }
+
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::SRGB => "sRGB",
+            Self::AdobeRGB => "AdobeRGB",
+            Self::ProPhotoRGB => "ProPhotoRGB",
+            Self::DisplayP3 => "DisplayP3",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "sRGB" => Self::SRGB,
+            "AdobeRGB" => Self::AdobeRGB,
+            "DisplayP3" => Self::DisplayP3,
+            _ => Self::ProPhotoRGB,
+        }
+    }
 }
 
 impl Default for TargetColorSpace {
