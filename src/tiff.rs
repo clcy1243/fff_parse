@@ -469,6 +469,8 @@ impl<R: Read + Seek> TiffReader<R> {
 }
 
 impl TiffFile {
+    /// Open and parse a TIFF/FFF file (read-only).
+    /// The file is read entirely into memory; the original file is never modified.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let data = fs::read(path)?;
         Self::parse(&data)

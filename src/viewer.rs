@@ -1941,7 +1941,15 @@ impl FffViewerApp {
 
     /// Export a single FFF file to standard TIFF.
     /// Reads the full-resolution image (preserving 16-bit) and writes a standard TIFF.
+    /// The source file is never modified — export always writes to a new file.
     fn export_fff_to_tiff(src: &Path, dst: &Path) -> Result<(), String> {
+        // Guard: never overwrite the source file
+        if let (Ok(src_canon), Ok(dst_canon)) = (src.canonicalize(), dst.canonicalize()) {
+            if src_canon == dst_canon {
+                return Err("Cannot overwrite source file".to_string());
+            }
+        }
+
         log::info!("export_fff_to_tiff: {} → {}", src.display(), dst.display());
         let tiff = TiffFile::open(src).map_err(|e| {
             log::error!("export: failed to open {}: {}", src.display(), e);
