@@ -64,16 +64,34 @@ fn dirs_home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
 
+fn load_app_icon() -> Option<egui::IconData> {
+    let png_bytes = include_bytes!("../icons/icon_256.png");
+    let img = image::load_from_memory(png_bytes).ok()?.into_rgba8();
+    let (w, h) = img.dimensions();
+    Some(egui::IconData {
+        rgba: img.into_raw(),
+        width: w,
+        height: h,
+    })
+}
+
 fn main() {
     setup_logging();
 
     let initial_file = std::env::args().nth(1).map(std::path::PathBuf::from);
     log::info!("Initial file: {:?}", initial_file);
 
+    let icon = load_app_icon();
+
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1400.0, 900.0])
+        .with_drag_and_drop(true);
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(std::sync::Arc::new(icon));
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1400.0, 900.0])
-            .with_drag_and_drop(true),
+        viewport,
         ..Default::default()
     };
 

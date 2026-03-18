@@ -1,6 +1,7 @@
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use fff_viewer::color::{self, IccProfileInfo, SettingsPreset};
 use fff_viewer::flexcolor::{self, EditHistory};
@@ -71,12 +72,39 @@ impl Default for ExportState {
 enum LoadingStatus {
     Idle,
     LoadingThumbnails,
-    DecodingPreview,
+    LoadingFile(String),       // file name being loaded
     ApplyingColorProfile,
 }
 
 impl Default for LoadingStatus {
     fn default() -> Self { Self::Idle }
+}
+
+// ─── Background thread messages ─────────────────────────────────────────────
+
+/// Result of loading a thumbnail on a background thread.
+struct ThumbResult {
+    path: PathBuf,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+/// Result of loading a full detail file on a background thread.
+/// Textures cannot be created off the main thread, so we send raw image data.
+struct DetailResult {
+    path: PathBuf,
+    tiff: TiffFile,
+    metadata: Vec<(String, String)>,
+    all_tags: Vec<(String, String, String, String)>,
+    edit_history: Option<EditHistory>,
+    preview_rgba: Option<(Vec<u8>, u32, u32)>, // (pixels, width, height)
+    embedded_icc: Option<Vec<u8>>,
+}
+
+enum DetailMsg {
+    Loaded(DetailResult),
+    Error(PathBuf, String),
 }
 
 // ─── App state ──────────────────────────────────────────────────────────────
@@ -91,7 +119,9 @@ pub struct FffViewerApp {
 
     // Thumbnails cache
     thumbnails: HashMap<PathBuf, ThumbEntry>,
-    thumb_load_queue: Vec<PathBuf>,
+    thumb_rx: mpsc::Receiver<ThumbResult>,
+    thumb_tx: mpsc::Sender<ThumbResult>,
+    thumb_pending: usize,
 
     // View state
     view_mode: ViewMode,
@@ -99,6 +129,8 @@ pub struct FffViewerApp {
 
     // Detail of selected file
     detail: Option<LoadedDetail>,
+    detail_rx: mpsc::Receiver<DetailMsg>,
+    detail_tx: mpsc::Sender<DetailMsg>,
 
     // Right panel
     info_panel: InfoPanel,
@@ -200,15 +232,22 @@ impl FffViewerApp {
             available_presets.len()
         );
 
+        let (thumb_tx, thumb_rx) = mpsc::channel();
+        let (detail_tx, detail_rx) = mpsc::channel();
+
         let mut app = Self {
             current_dir: None,
             expanded_dirs: HashSet::new(),
             fff_files: Vec::new(),
             thumbnails: HashMap::new(),
-            thumb_load_queue: Vec::new(),
+            thumb_rx,
+            thumb_tx,
+            thumb_pending: 0,
             view_mode: ViewMode::Grid,
             selected_index: None,
             detail: None,
+            detail_rx,
+            detail_tx,
             info_panel: InfoPanel::Metadata,
             tag_filter: String::new(),
             expanded_setting: None,
@@ -254,10 +293,37 @@ impl FffViewerApp {
         self.selected_index = None;
         self.detail = None;
         self.thumbnails.clear();
-        self.thumb_load_queue = self.fff_files.clone();
+        self.thumb_pending = self.fff_files.len();
+        self.loading_status = if self.fff_files.is_empty() {
+            LoadingStatus::Idle
+        } else {
+            LoadingStatus::LoadingThumbnails
+        };
+
+        // Spawn background thread pool to load thumbnails
+        let files = self.fff_files.clone();
+        let tx = self.thumb_tx.clone();
+        std::thread::spawn(move || {
+            use rayon::prelude::*;
+            files.par_iter().for_each(|path| {
+                let result = if let Ok(tiff) = TiffFile::open(path) {
+                    if let Some(img) = tiff.decode_thumbnail() {
+                        let w = img.width();
+                        let h = img.height();
+                        let rgba = img.to_rgba8().into_raw();
+                        ThumbResult { path: path.clone(), rgba, width: w, height: h }
+                    } else {
+                        ThumbResult { path: path.clone(), rgba: Vec::new(), width: 0, height: 0 }
+                    }
+                } else {
+                    ThumbResult { path: path.clone(), rgba: Vec::new(), width: 0, height: 0 }
+                };
+                let _ = tx.send(result);
+            });
+        });
     }
 
-    fn select_file(&mut self, index: usize, ctx: &egui::Context) {
+    fn select_file(&mut self, index: usize, _ctx: &egui::Context) {
         if index >= self.fff_files.len() {
             log::warn!("select_file: index {} out of range ({})", index, self.fff_files.len());
             return;
@@ -278,102 +344,127 @@ impl FffViewerApp {
             }
         }
 
-        match TiffFile::open(&path) {
-            Ok(tiff) => {
-                log::info!("Opened file: {} ({} bytes)",
-                    path.display(), tiff.raw_data().len());
-                let metadata = tiff.metadata_summary();
-                let all_tags = tiff.all_tags();
-                log::debug!("Parsed {} metadata entries, {} tags", metadata.len(), all_tags.len());
-                let edit_history = EditHistory::parse_from_file(tiff.raw_data());
-                log::debug!("Edit history: {} settings",
-                    edit_history.as_ref().map(|h| h.settings.len()).unwrap_or(0));
+        // Show loading state immediately
+        let file_name = path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.loading_status = LoadingStatus::LoadingFile(file_name);
+        self.detail = None;
 
-                // Use the full-resolution preview (16-bit raw) for the loupe view.
-                // Apply sRGB gamma during 16→8 conversion so it visually matches
-                // the FlexColor-rendered 8-bit thumbnail used in the grid view.
-                self.loading_status = LoadingStatus::DecodingPreview;
-                let texture = if let Some(img) = tiff.decode_preview_image() {
-                    log::info!("Decoded preview: {}x{} {:?}",
-                        img.width(), img.height(), img.color());
-                    let img = convert_16_to_8_for_display(img);
-                    let img = clamp_image_for_gpu(img);
-                    let rgba = img.to_rgba8();
-                    let size = [rgba.width() as usize, rgba.height() as usize];
-                    let pixels = rgba.into_raw();
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                    Some(ctx.load_texture(
-                        "loupe_preview",
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    ))
-                } else {
-                    log::warn!("No preview decoded for {}", path.display());
-                    None
-                };
-                self.loading_status = LoadingStatus::Idle;
+        // Spawn background thread for file I/O and parsing
+        let tx = self.detail_tx.clone();
+        std::thread::spawn(move || {
+            match TiffFile::open(&path) {
+                Ok(tiff) => {
+                    log::info!("Opened file: {} ({} bytes)",
+                        path.display(), tiff.raw_data().len());
+                    let metadata = tiff.metadata_summary();
+                    let all_tags = tiff.all_tags();
+                    log::debug!("Parsed {} metadata entries, {} tags", metadata.len(), all_tags.len());
+                    let edit_history = EditHistory::parse_from_file(tiff.raw_data());
+                    log::debug!("Edit history: {} settings",
+                        edit_history.as_ref().map(|h| h.settings.len()).unwrap_or(0));
 
-                let embedded_icc = color::extract_embedded_icc(tiff.raw_data(), &all_tags);
-                log::debug!("Embedded ICC: {} bytes",
-                    embedded_icc.as_ref().map(|d| d.len()).unwrap_or(0));
+                    let preview_rgba = if let Some(img) = tiff.decode_preview_image() {
+                        log::info!("Decoded preview: {}x{} {:?}",
+                            img.width(), img.height(), img.color());
+                        let img = convert_16_to_8_for_display(img);
+                        let img = clamp_image_for_gpu(img);
+                        let rgba = img.to_rgba8();
+                        let w = rgba.width();
+                        let h = rgba.height();
+                        Some((rgba.into_raw(), w, h))
+                    } else {
+                        log::warn!("No preview decoded for {}", path.display());
+                        None
+                    };
 
-                self.detail = Some(LoadedDetail {
-                    path,
-                    tiff,
-                    metadata,
-                    all_tags,
-                    edit_history,
-                    texture,
-                    embedded_icc,
-                });
+                    let embedded_icc = color::extract_embedded_icc(tiff.raw_data(), &all_tags);
+                    log::debug!("Embedded ICC: {} bytes",
+                        embedded_icc.as_ref().map(|d| d.len()).unwrap_or(0));
+
+                    let _ = tx.send(DetailMsg::Loaded(DetailResult {
+                        path,
+                        tiff,
+                        metadata,
+                        all_tags,
+                        edit_history,
+                        preview_rgba,
+                        embedded_icc,
+                    }));
+                }
+                Err(e) => {
+                    log::error!("Failed to open {}: {}", path.display(), e);
+                    let _ = tx.send(DetailMsg::Error(path, e.to_string()));
+                }
             }
-            Err(e) => {
-                log::error!("Failed to open {}: {}", path.display(), e);
-                self.error_msg = Some(format!("{}: {}", self.s().failed_to_open, e));
-                self.detail = None;
-            }
-        }
+        });
     }
 
-    fn load_pending_thumbnails(&mut self, ctx: &egui::Context) {
-        if self.thumb_load_queue.is_empty() {
-            return;
-        }
-        self.loading_status = LoadingStatus::LoadingThumbnails;
-
-        for _ in 0..2 {
-            let path = match self.thumb_load_queue.pop() {
-                Some(p) => p,
-                None => break,
-            };
-
-            if self.thumbnails.contains_key(&path) {
-                continue;
+    /// Poll background thread results for thumbnails and detail files.
+    fn poll_background_results(&mut self, ctx: &egui::Context) {
+        // Poll thumbnail results
+        while let Ok(result) = self.thumb_rx.try_recv() {
+            self.thumb_pending = self.thumb_pending.saturating_sub(1);
+            if result.width > 0 && result.height > 0 {
+                let size = [result.width as usize, result.height as usize];
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &result.rgba);
+                let tex = ctx.load_texture(
+                    format!("thumb_{}", result.path.display()),
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.thumbnails.insert(result.path, ThumbEntry {
+                    texture: tex,
+                    width: result.width,
+                    height: result.height,
+                });
             }
+        }
+        if self.thumb_pending == 0 && matches!(self.loading_status, LoadingStatus::LoadingThumbnails) {
+            self.loading_status = LoadingStatus::Idle;
+        }
 
-            if let Ok(tiff) = TiffFile::open(&path) {
-                if let Some(img) = tiff.decode_thumbnail() {
-                    let w = img.width();
-                    let h = img.height();
-                    log::debug!("Loaded thumbnail: {} ({}x{})", path.display(), w, h);
-                    let rgba = img.to_rgba8();
-                    let size = [rgba.width() as usize, rgba.height() as usize];
-                    let pixels = rgba.into_raw();
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                    let tex = ctx.load_texture(
-                        format!("thumb_{}", path.display()),
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    );
-                    self.thumbnails
-                        .insert(path, ThumbEntry { texture: tex, width: w, height: h });
+        // Poll detail file result
+        if let Ok(msg) = self.detail_rx.try_recv() {
+            match msg {
+                DetailMsg::Loaded(result) => {
+                    let texture = if let Some((pixels, w, h)) = result.preview_rgba {
+                        let size = [w as usize, h as usize];
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                        Some(ctx.load_texture(
+                            "loupe_preview",
+                            color_image,
+                            egui::TextureOptions::LINEAR,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    self.detail = Some(LoadedDetail {
+                        path: result.path,
+                        tiff: result.tiff,
+                        metadata: result.metadata,
+                        all_tags: result.all_tags,
+                        edit_history: result.edit_history,
+                        texture,
+                        embedded_icc: result.embedded_icc,
+                    });
+                    self.loading_status = LoadingStatus::Idle;
+                }
+                DetailMsg::Error(path, e) => {
+                    self.error_msg = Some(format!("{}: {}", self.s().failed_to_open, e));
+                    self.detail = None;
+                    self.loading_status = LoadingStatus::Idle;
+                    log::error!("Background load failed for {}: {}", path.display(), e);
                 }
             }
         }
 
-        if self.thumb_load_queue.is_empty() {
-            self.loading_status = LoadingStatus::Idle;
-        } else {
+        // Request repaint while background work is in progress
+        if self.thumb_pending > 0
+            || matches!(self.loading_status, LoadingStatus::LoadingFile(_))
+        {
             ctx.request_repaint();
         }
     }
@@ -389,7 +480,7 @@ impl FffViewerApp {
 
 impl eframe::App for FffViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.load_pending_thumbnails(ctx);
+        self.poll_background_results(ctx);
 
         // Handle drag-and-drop
         let dropped_path = ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()));
@@ -484,19 +575,22 @@ impl eframe::App for FffViewerApp {
         {
             let total = self.fff_files.len();
             let loaded = self.thumbnails.len();
-            let thumbs_loading = !self.thumb_load_queue.is_empty() && total > 0;
+            let thumbs_loading = self.thumb_pending > 0 && total > 0;
 
             let show_bar = thumbs_loading
-                || matches!(self.loading_status, LoadingStatus::DecodingPreview | LoadingStatus::ApplyingColorProfile);
+                || matches!(self.loading_status,
+                    LoadingStatus::LoadingFile(_)
+                    | LoadingStatus::ApplyingColorProfile
+                );
 
             if show_bar {
                 egui::TopBottomPanel::top("progress_bar").show(ctx, |ui| {
-                    match self.loading_status {
-                        LoadingStatus::DecodingPreview => {
+                    match &self.loading_status {
+                        LoadingStatus::LoadingFile(name) => {
                             ui.add(
                                 egui::ProgressBar::new(0.0)
                                     .animate(true)
-                                    .text("⏳ Decoding preview…"),
+                                    .text(format!("⏳ {} {}…", self.s().loading_file, name)),
                             );
                         }
                         LoadingStatus::ApplyingColorProfile => {

@@ -130,6 +130,7 @@ pub struct Strings {
     // Status bar
     pub files_count: &'static str,
     pub loading_thumbnails: &'static str,
+    pub loading_file: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -234,6 +235,7 @@ static EN: Strings = Strings {
 
     files_count: "files",
     loading_thumbnails: "Loading thumbnails",
+    loading_file: "Loading",
 };
 
 static ZH: Strings = Strings {
@@ -338,6 +340,7 @@ static ZH: Strings = Strings {
 
     files_count: "个文件",
     loading_thumbnails: "加载缩略图",
+    loading_file: "正在加载",
 };
 
 pub fn strings(lang: Language) -> &'static Strings {
