@@ -1044,6 +1044,7 @@ impl eframe::App for FffViewerApp {
             egui::SidePanel::right("info_panel")
                 .default_width(340.0)
                 .min_width(260.0)
+                .max_width(360.0)
                 .show(ctx, |ui| match self.info_panel {
                     InfoPanel::Metadata => self.render_metadata_panel(ui),
                     InfoPanel::EditHistory => self.render_edit_history_panel(ui),
@@ -2766,6 +2767,8 @@ impl FffViewerApp {
 
                 // ── Three input controls: black | gamma | white ───────────
                 ui.horizontal(|ui| {
+                    let col_w = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
+
                     let max_black = (self.manual_adjust.levels_white[lvl_idx] - 1.0).max(0.0);
                     let min_white = (self.manual_adjust.levels_black[lvl_idx] + 1.0).min(255.0);
 
@@ -2773,29 +2776,25 @@ impl FffViewerApp {
                         .range(0.0..=max_black)
                         .max_decimals(0)
                         .speed(0.5);
-                    if ui.add(dv_black).on_hover_text("Black point").changed() {
+                    if ui.add_sized([col_w, 0.0], dv_black).on_hover_text("Black point").changed() {
                         rebuild = true;
                     }
 
-                    ui.centered_and_justified(|ui| {
-                        let dv_gamma = egui::DragValue::new(&mut self.manual_adjust.levels_gamma[lvl_idx])
-                            .range(0.10..=9.99)
-                            .max_decimals(2)
-                            .speed(0.01);
-                        if ui.add(dv_gamma).on_hover_text("Midtone gamma").changed() {
-                            rebuild = true;
-                        }
-                    });
+                    let dv_gamma = egui::DragValue::new(&mut self.manual_adjust.levels_gamma[lvl_idx])
+                        .range(0.10..=9.99)
+                        .max_decimals(2)
+                        .speed(0.01);
+                    if ui.add_sized([col_w, 0.0], dv_gamma).on_hover_text("Midtone gamma").changed() {
+                        rebuild = true;
+                    }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let dv_white = egui::DragValue::new(&mut self.manual_adjust.levels_white[lvl_idx])
-                            .range(min_white..=255.0)
-                            .max_decimals(0)
-                            .speed(0.5);
-                        if ui.add(dv_white).on_hover_text("White point").changed() {
-                            rebuild = true;
-                        }
-                    });
+                    let dv_white = egui::DragValue::new(&mut self.manual_adjust.levels_white[lvl_idx])
+                        .range(min_white..=255.0)
+                        .max_decimals(0)
+                        .speed(0.5);
+                    if ui.add_sized([col_w, 0.0], dv_white).on_hover_text("White point").changed() {
+                        rebuild = true;
+                    }
                 });
 
                 ui.add_space(6.0);
