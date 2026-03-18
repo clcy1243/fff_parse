@@ -397,13 +397,28 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
 
     for font_path in &cjk_font_paths {
         if let Ok(font_data) = std::fs::read(font_path) {
+            // CJK fonts (e.g. Hiragino Sans GB) have a higher ascent ratio (~0.88)
+            // than Ubuntu-Light (~0.83), causing CJK glyphs to sit visually higher.
+            // y_offset_factor pushes glyphs down to align with the primary font's
+            // visual center in buttons.
             let fd = egui::FontData::from_owned(font_data).tweak(egui::FontTweak {
                 scale: 1.0,
-                y_offset_factor: 0.0,
+                y_offset_factor: 0.2,
                 y_offset: 0.0,
                 baseline_offset_factor: 0.0,
             });
             fonts.font_data.insert("cjk".to_owned(), fd.into());
+
+            // Adjust emoji fonts' y_offset to align with shifted CJK text.
+            // Without this, emoji sits higher than CJK text after the CJK offset.
+            if let Some(emoji_data) = fonts.font_data.get_mut("NotoEmoji-Regular") {
+                let fd = std::sync::Arc::make_mut(emoji_data);
+                fd.tweak.y_offset_factor = 0.20;
+            }
+            if let Some(emoji_data) = fonts.font_data.get_mut("emoji-icon-font") {
+                let fd = std::sync::Arc::make_mut(emoji_data);
+                fd.tweak.y_offset_factor = 0.20;
+            }
 
             // Insert CJK as SECOND font (after Ubuntu-Light, before emoji fonts).
             // This keeps Ubuntu-Light as primary for proper button/line metrics,
