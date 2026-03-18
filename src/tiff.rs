@@ -1283,9 +1283,9 @@ impl TiffFile {
 
     /// Decode the smallest available thumbnail for grid/filmstrip display.
     /// Prefers IFD with NewSubfileType=1 (thumbnail), then the smallest IFD.
-    /// Decode a thumbnail-sized image, preferring 16-bit raw IFDs for
-    /// consistency with the preview pipeline. Both thumbnail and preview
-    /// will go through the same `apply_film_processing` code path.
+    /// Decode the FlexColor pre-rendered 8-bit thumbnail (NewSubfileType=1).
+    /// This thumbnail has full FlexColor processing baked in (ICC, saturation,
+    /// curves, levels) and is the authoritative "correct" look.
     pub fn decode_thumbnail(&self) -> Option<image::DynamicImage> {
         if let Some(jpeg_data) = &self.preview_jpeg {
             if let Ok(img) =
@@ -1295,26 +1295,27 @@ impl TiffFile {
             }
         }
 
-        let mut candidates: Vec<(usize, u64, u32)> = Vec::new();
+        let mut candidates: Vec<(usize, u64, bool)> = Vec::new();
         for (idx, ifd) in self.ifds.iter().enumerate() {
             let width = ifd.get_u32(0x0100).unwrap_or(0) as u64;
             let height = ifd.get_u32(0x0101).unwrap_or(0) as u64;
             let compression = ifd.get_u32(0x0103).unwrap_or(1);
             let photometric = ifd.get_u32(0x0106).unwrap_or(0);
             let spp = ifd.get_u32(0x0115).unwrap_or(1);
-            let bps = ifd.get(0x0102).and_then(|v| v.as_u32()).unwrap_or(8);
+            let subfile_type = ifd.get_u32(0x00FE).unwrap_or(0);
 
             if compression == 1 && photometric == 2 && spp >= 3 && width > 0 && height > 0 {
-                candidates.push((idx, width * height, bps));
+                let is_thumb = subfile_type == 1;
+                candidates.push((idx, width * height, is_thumb));
             }
         }
 
-        // Sort: prefer 16-bit over 8-bit (higher bps first), then smallest image
+        // Sort: prefer thumbnails (NewSubfileType=1) first, then smallest image
         candidates.sort_by(|a, b| {
             b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1))
         });
 
-        for (idx, _pixels, _bps) in &candidates {
+        for (idx, _pixels, _is_thumb) in &candidates {
             if let Some(img) = self.decode_uncompressed_rgb(&self.ifds[*idx]) {
                 return Some(img);
             }

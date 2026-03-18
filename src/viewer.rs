@@ -640,21 +640,8 @@ impl FffViewerApp {
             use rayon::prelude::*;
             files.par_iter().for_each(|path| {
                 let result = if let Ok(tiff) = TiffFile::open(path) {
-                    if let Some(mut img) = tiff.decode_thumbnail() {
-                        // Apply embedded film processing for consistency with preview
-                        if let Some(edit_history) = EditHistory::parse_from_file(tiff.raw_data()) {
-                            if !edit_history.settings.is_empty() {
-                                let idx = edit_history.current_index.min(edit_history.settings.len() - 1);
-                                let correction = &edit_history.settings[idx].correction;
-                                img = color::apply_film_processing(&img, correction);
-                            }
-                        }
-                        // Convert 16-bit to 8-bit for display
-                        let img = if matches!(&img, image::DynamicImage::ImageRgb16(_)) {
-                            image::DynamicImage::ImageRgb8(img.to_rgb8())
-                        } else {
-                            img
-                        };
+                    if let Some(img) = tiff.decode_thumbnail() {
+                        // 8-bit FlexColor thumbnails already have processing baked in
                         let w = img.width();
                         let h = img.height();
                         let rgba = img.to_rgba8().into_raw();
@@ -1360,19 +1347,7 @@ impl FffViewerApp {
                     use rayon::prelude::*;
                     files.par_iter().for_each(|path| {
                         let result = if let Ok(tiff) = TiffFile::open(path) {
-                            if let Some(mut img) = tiff.decode_thumbnail() {
-                                if let Some(edit_history) = EditHistory::parse_from_file(tiff.raw_data()) {
-                                    if !edit_history.settings.is_empty() {
-                                        let idx = edit_history.current_index.min(edit_history.settings.len() - 1);
-                                        let correction = &edit_history.settings[idx].correction;
-                                        img = color::apply_film_processing(&img, correction);
-                                    }
-                                }
-                                let img = if matches!(&img, image::DynamicImage::ImageRgb16(_)) {
-                                    image::DynamicImage::ImageRgb8(img.to_rgb8())
-                                } else {
-                                    img
-                                };
+                            if let Some(img) = tiff.decode_thumbnail() {
                                 let w = img.width();
                                 let h = img.height();
                                 let rgba = img.to_rgba8().into_raw();

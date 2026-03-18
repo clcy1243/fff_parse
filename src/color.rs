@@ -593,6 +593,9 @@ pub fn apply_film_processing(
                 || ((highlight[0] as f32 * SCALE) < MAX_VAL - 4.0)
                 || (ch_gamma[0] - 1.0).abs() > 0.01;
 
+            // Saturation: FlexColor range is -100..+100, 0 = neutral
+            let sat_factor = 1.0 + correction.saturation as f32 / 100.0;
+
             let row_len = w as usize * 3;
             let mut out_pixels = vec![0u16; row_len * h as usize];
 
@@ -632,6 +635,14 @@ pub fn apply_film_processing(
                         if film_type == 2 {
                             let lum = 0.299 * ch_f[0] + 0.587 * ch_f[1] + 0.114 * ch_f[2];
                             ch_f = [lum, lum, lum];
+                        }
+
+                        // Apply saturation adjustment
+                        if (sat_factor - 1.0).abs() > 0.001 {
+                            let lum = 0.299 * ch_f[0] + 0.587 * ch_f[1] + 0.114 * ch_f[2];
+                            ch_f[0] = lum + (ch_f[0] - lum) * sat_factor;
+                            ch_f[1] = lum + (ch_f[1] - lum) * sat_factor;
+                            ch_f[2] = lum + (ch_f[2] - lum) * sat_factor;
                         }
 
                         row[base] = ch_f[0].clamp(0.0, MAX_VAL) as u16;
