@@ -552,7 +552,7 @@ impl FffViewerApp {
         }
         // Also expand the directory itself so its children are visible
         self.expanded_dirs.insert(dir.clone());
-        self.fff_files = scan_fff_files(&dir);
+        self.fff_files = scan_fff_files(&dir, self.app_config.scan_subdirs);
         self.fff_files.sort();
         log::info!("Found {} .fff files", self.fff_files.len());
         self.selected_index = None;
@@ -2531,18 +2531,39 @@ impl FffViewerApp {
                 ui.selectable_value(&mut self.language, Language::Chinese, Language::Chinese.label());
             });
 
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // ── File Scanning ──
+        ui.strong(s.scan_subdirs);
+        ui.add_space(2.0);
+        let old_scan_subdirs = self.app_config.scan_subdirs;
+        ui.checkbox(&mut self.app_config.scan_subdirs, s.scan_subdirs);
+        ui.label(
+            egui::RichText::new(s.scan_subdirs_hint)
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+
         // Detect changes and save
         let gpu_changed = self.app_config.gpu_enabled != old_gpu
             || self.app_config.gpu_device != old_device;
         let threads_changed = self.app_config.render_threads != old_threads;
         let lang_changed = self.language != old_lang;
+        let scan_subdirs_changed = self.app_config.scan_subdirs != old_scan_subdirs;
 
-        if gpu_changed || threads_changed || lang_changed {
+        if gpu_changed || threads_changed || lang_changed || scan_subdirs_changed {
             if lang_changed {
                 self.app_config.language = self.language.to_config().to_string();
             }
             let _ = config::save(&self.app_config);
 
+            if scan_subdirs_changed {
+                if let Some(dir) = self.current_dir.clone() {
+                    self.set_directory(dir);
+                }
+            }
             if gpu_changed || threads_changed {
                 self.settings_needs_restart = true;
             }
@@ -3518,27 +3539,35 @@ fn bilinear_sample_rgb8(
 
 // ─── Utility functions ──────────────────────────────────────────────────────
 
-fn scan_fff_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
+fn scan_fff_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
+    fn is_image_file(path: &Path) -> bool {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext) => matches!(ext.to_lowercase().as_str(), "fff" | "3fr" | "tif" | "tiff"),
+            None => false,
+        }
+    }
 
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let path = e.path();
-            if !path.is_file() {
-                return false;
-            }
-            match path.extension().and_then(|ext| ext.to_str()) {
-                Some(ext) => {
-                    matches!(ext.to_lowercase().as_str(), "fff" | "3fr" | "tif" | "tiff")
+    fn collect(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() {
+                if is_image_file(&path) {
+                    out.push(path);
                 }
-                None => false,
+            } else if recursive && path.is_dir() {
+                // Skip hidden directories
+                let name = path.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(false);
+                if !name {
+                    collect(&path, true, out);
+                }
             }
-        })
-        .map(|e| e.path())
-        .collect()
+        }
+    }
+
+    let mut files = Vec::new();
+    collect(dir, recursive, &mut files);
+    files
 }
 
 fn get_root_dirs() -> Vec<PathBuf> {

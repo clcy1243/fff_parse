@@ -59,6 +59,8 @@ pub struct AppConfig {
     pub language: String,
     /// Favorited directory paths (absolute paths, |-separated in XML)
     pub favorites: Vec<String>,
+    /// Scan subdirectories recursively for image files (default: false)
+    pub scan_subdirs: bool,
 }
 
 impl Default for AppConfig {
@@ -69,6 +71,7 @@ impl Default for AppConfig {
             render_threads: default_thread_count(),
             language: detect_system_language(),
             favorites: Vec::new(),
+            scan_subdirs: false,
         }
     }
 }
@@ -155,6 +158,7 @@ fn to_xml(c: &AppConfig) -> String {
     let _ = writeln!(s, "  <language>{}</language>", xml_escape(&c.language));
     let favorites_str = c.favorites.iter().map(|f| xml_escape(f)).collect::<Vec<_>>().join("|");
     let _ = writeln!(s, "  <favorites>{}</favorites>", favorites_str);
+    let _ = writeln!(s, "  <scan_subdirs>{}</scan_subdirs>", c.scan_subdirs);
     s.push_str("</fff_viewer_config>\n");
     s
 }
@@ -183,6 +187,9 @@ fn parse_xml(xml: &str) -> Option<AppConfig> {
         if !v.is_empty() {
             config.favorites = v.split('|').map(|s| xml_unescape(s.trim())).filter(|s| !s.is_empty()).collect();
         }
+    }
+    if let Some(v) = tag_content(xml, "scan_subdirs") {
+        config.scan_subdirs = v == "true";
     }
     Some(config)
 }
@@ -221,6 +228,7 @@ mod tests {
             render_threads: 4,
             language: "zh".to_string(),
             favorites: vec!["/Users/test/Photos".to_string(), "/Volumes/SD".to_string()],
+            scan_subdirs: true,
         };
         let xml = to_xml(&config);
         let parsed = parse_xml(&xml).unwrap();
@@ -229,6 +237,7 @@ mod tests {
         assert_eq!(parsed.render_threads, 4);
         assert_eq!(parsed.language, "zh");
         assert_eq!(parsed.favorites, vec!["/Users/test/Photos", "/Volumes/SD"]);
+        assert_eq!(parsed.scan_subdirs, true);
     }
 
     #[test]
