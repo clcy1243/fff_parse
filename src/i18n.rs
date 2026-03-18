@@ -179,6 +179,11 @@ pub struct Strings {
     pub scan_depth_flat: &'static str,
     pub scan_depth_one: &'static str,
     pub scan_depth_all: &'static str,
+
+    // File filter
+    pub file_filter_placeholder: &'static str,
+    pub file_filter_clear: &'static str,
+    pub files_filtered: &'static str, // "{} / {} files"
 }
 
 static EN: Strings = Strings {
@@ -320,6 +325,10 @@ static EN: Strings = Strings {
     scan_depth_flat: "This folder only",
     scan_depth_one: "One level deep",
     scan_depth_all: "All subdirectories",
+
+    file_filter_placeholder: "🔎 Filter by name or format…",
+    file_filter_clear: "✕",
+    files_filtered: "{} / {} files",
 };
 
 static ZH: Strings = Strings {
@@ -461,6 +470,10 @@ static ZH: Strings = Strings {
     scan_depth_flat: "仅当前目录",
     scan_depth_one: "包含一级子目录",
     scan_depth_all: "包含所有子目录",
+
+    file_filter_placeholder: "🔎 按文件名或格式筛选…",
+    file_filter_clear: "✕",
+    files_filtered: "{} / {} 个文件",
 };
 
 pub fn strings(lang: Language) -> &'static Strings {

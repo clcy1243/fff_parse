@@ -385,6 +385,9 @@ pub struct FffViewerApp {
     tag_filter: String,
     expanded_setting: Option<usize>,
 
+    // File list filter
+    file_filter: String,
+
     // Editing state
     export_state: ExportState,
 
@@ -540,6 +543,7 @@ impl FffViewerApp {
             info_panel: InfoPanel::Metadata,
             tag_filter: String::new(),
             expanded_setting: None,
+            file_filter: String::new(),
             export_state: ExportState::default(),
             available_profiles,
             available_presets,
@@ -1097,6 +1101,8 @@ impl eframe::App for FffViewerApp {
             if self.fff_files.is_empty() {
                 self.render_empty_state(ui);
             } else {
+                self.render_file_filter_bar(ui);
+                ui.separator();
                 match self.view_mode {
                     ViewMode::Grid => self.render_grid_view(ui, ctx),
                     ViewMode::Loupe => self.render_loupe_view(ui, ctx),
@@ -1359,6 +1365,71 @@ impl FffViewerApp {
 // ─── Grid View ──────────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    fn render_file_filter_bar(&mut self, ui: &mut egui::Ui) {
+        let s = i18n::strings(self.language);
+        ui.horizontal(|ui| {
+            // Stretch the search field to fill available space minus the clear button
+            let clear_width = 24.0;
+            let available = ui.available_width() - clear_width - ui.spacing().item_spacing.x * 2.0;
+            ui.add(
+                egui::TextEdit::singleline(&mut self.file_filter)
+                    .hint_text(s.file_filter_placeholder)
+                    .desired_width(available),
+            );
+            let clear_enabled = !self.file_filter.is_empty();
+            if ui
+                .add_enabled(
+                    clear_enabled,
+                    egui::Button::new(s.file_filter_clear).min_size(egui::vec2(clear_width, 0.0)),
+                )
+                .clicked()
+            {
+                self.file_filter.clear();
+            }
+            // Show match count when filter is active
+            if !self.file_filter.is_empty() {
+                let matched = self.filtered_indices().len();
+                let total = self.fff_files.len();
+                let label = s
+                    .files_filtered
+                    .replacen("{}", &matched.to_string(), 1)
+                    .replacen("{}", &total.to_string(), 1);
+                ui.label(egui::RichText::new(label).weak().small());
+            }
+        });
+    }
+
+    /// Returns indices into `self.fff_files` that match the current filter.
+    fn filtered_indices(&self) -> Vec<usize> {
+        if self.file_filter.is_empty() {
+            return (0..self.fff_files.len()).collect();
+        }
+        let query = self.file_filter.to_lowercase();
+        self.fff_files
+            .iter()
+            .enumerate()
+            .filter(|(_, path)| {
+                // Match against the full filename (name + extension)
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                // Also match against just the extension
+                let ext = path
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                // Fuzzy: all query chars must appear in order (subsequence match)
+                fn subsequence(haystack: &str, needle: &str) -> bool {
+                    let mut chars = haystack.chars();
+                    needle.chars().all(|nc| chars.any(|hc| hc == nc))
+                }
+                subsequence(&name, &query) || subsequence(&ext, &query)
+            })
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
     fn render_grid_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let thumb_size = 180.0_f32;
         let spacing = 8.0_f32;
@@ -1369,6 +1440,7 @@ impl FffViewerApp {
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 let files = self.fff_files.clone();
+                let indices = self.filtered_indices();
                 let selected = self.selected_index;
 
                 let mut new_selection: Option<usize> = None;
@@ -1377,7 +1449,9 @@ impl FffViewerApp {
                 egui::Grid::new("thumb_grid")
                     .spacing([spacing, spacing])
                     .show(ui, |ui| {
-                        for (idx, path) in files.iter().enumerate() {
+                        for (col_pos, idx) in indices.iter().enumerate() {
+                            let idx = *idx;
+                            let path = &files[idx];
                             let is_selected = selected == Some(idx);
 
                             let frame = egui::Frame::NONE
@@ -1459,7 +1533,7 @@ impl FffViewerApp {
                                 double_clicked = Some(idx);
                             }
 
-                            if (idx + 1) % cols == 0 {
+                            if (col_pos + 1) % cols == 0 {
                                 ui.end_row();
                             }
                         }
