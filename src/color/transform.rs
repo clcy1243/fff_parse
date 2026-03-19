@@ -1,6 +1,8 @@
+//! ICC 色彩空间转换，将图像从扫描仪输入色彩空间转换到目标色彩空间。
+
 // ─── ICC Color Transform ────────────────────────────────────────────────────
 
-/// Target (output) color space for ICC transforms.
+/// 目标（输出）色彩空间，用于 ICC 色彩转换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetColorSpace {
     ProPhotoRGB,
@@ -10,6 +12,7 @@ pub enum TargetColorSpace {
 }
 
 impl TargetColorSpace {
+    /// 所有支持的色彩空间列表。
     pub const ALL: &[TargetColorSpace] = &[
         Self::ProPhotoRGB,
         Self::SRGB,
@@ -17,6 +20,7 @@ impl TargetColorSpace {
         Self::DisplayP3,
     ];
 
+    /// 返回用于 UI 显示的色彩空间名称。
     pub fn label(&self) -> &'static str {
         match self {
             Self::SRGB => "sRGB",
@@ -26,6 +30,7 @@ impl TargetColorSpace {
         }
     }
 
+    /// 返回用于序列化/持久化的字符串标识。
     pub fn to_str(&self) -> &'static str {
         match self {
             Self::SRGB => "sRGB",
@@ -35,6 +40,7 @@ impl TargetColorSpace {
         }
     }
 
+    /// 从字符串解析色彩空间，无法识别时默认为 ProPhoto RGB。
     pub fn from_str(s: &str) -> Self {
         match s {
             "sRGB" => Self::SRGB,
@@ -51,7 +57,7 @@ impl Default for TargetColorSpace {
     }
 }
 
-/// Create an lcms2 output profile for a target color space.
+/// 根据目标色彩空间创建 lcms2 输出配置文件。
 fn create_output_profile(space: TargetColorSpace) -> Result<lcms2::Profile, String> {
     use lcms2::*;
 
@@ -96,10 +102,12 @@ fn create_output_profile(space: TargetColorSpace) -> Result<lcms2::Profile, Stri
     }
 }
 
-/// Apply ICC color transform to an image.
-/// `input_icc`: scanner/input ICC profile bytes
-/// `target`: output color space
-/// Returns transformed DynamicImage.
+/// 对图像应用 ICC 色彩转换。
+///
+/// - `input_icc`：扫描仪/输入设备的 ICC 配置文件数据
+/// - `target`：目标输出色彩空间
+///
+/// 保持原图位深（16-bit/8-bit），不支持的格式会先转为 RGB8 再处理。
 pub fn apply_icc_transform(
     img: &image::DynamicImage,
     input_icc: &[u8],

@@ -1,3 +1,8 @@
+//! 查看器核心类型定义
+//!
+//! 定义查看器的所有数据结构、枚举和状态类型，包括视图模式、
+//! 底片格式、分割区域、缩略图缓存、加载状态及主应用状态。
+
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -10,29 +15,35 @@ use fff_viewer::i18n::Language;
 use fff_viewer::sidecar::SidecarConfig;
 use fff_viewer::tiff::TiffFile;
 
-/// Maximum pixel dimension for display preview.
-/// Larger images are subsampled during decode for speed.
-/// 4096 gives good quality for typical screen sizes while being ~25× faster
-/// than full-resolution decode of large scanner images.
+/// 显示预览的最大像素尺寸。
+/// 超出此尺寸的图像在解码时进行降采样以提升速度。
+/// 4096 在典型屏幕上画质良好，同时比全分辨率解码快约 25 倍。
 pub(super) const DISPLAY_MAX_DIM: u32 = 4096;
 
-// ─── Enums ──────────────────────────────────────────────────────────────────
+// ─── 枚举 ───────────────────────────────────────────────────────────────────
 
+/// 视图模式：网格缩略图或放大镜单图查看
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum ViewMode {
+    /// 网格缩略图模式
     Grid,
+    /// 放大镜单图模式
     Loupe,
 }
 
-/// Per-directory subdirectory scan depth.
+/// 目录扫描深度，控制是否递归子目录查找图像文件
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum DirScanDepth {
-    Flat,     // 0 — current folder only
-    OneLevel, // 1 — one level of subdirectories
-    All,      // 2 — all subdirectories recursively
+    /// 仅当前目录
+    Flat,
+    /// 包含一级子目录
+    OneLevel,
+    /// 递归所有子目录
+    All,
 }
 
 impl DirScanDepth {
+    /// 从 u8 值构造扫描深度
     pub(super) fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::OneLevel,
@@ -40,6 +51,7 @@ impl DirScanDepth {
             _ => Self::Flat,
         }
     }
+    /// 转换为 u8 值用于持久化存储
     pub(super) fn to_u8(self) -> u8 {
         match self {
             Self::Flat => 0,
@@ -47,6 +59,7 @@ impl DirScanDepth {
             Self::All => 2,
         }
     }
+    /// 循环切换到下一个深度级别
     pub(super) fn cycle(self) -> Self {
         match self {
             Self::Flat => Self::OneLevel,
@@ -54,7 +67,7 @@ impl DirScanDepth {
             Self::All => Self::Flat,
         }
     }
-    /// Short label shown in the tree button
+    /// 目录树按钮上显示的简短标签
     pub(super) fn short_label(self) -> &'static str {
         match self {
             Self::Flat => "—",
@@ -64,19 +77,28 @@ impl DirScanDepth {
     }
 }
 
+/// 右侧信息面板类型
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum InfoPanel {
+    /// 元数据面板
     Metadata,
+    /// 编辑历史面板
     EditHistory,
+    /// 所有 TIFF 标签面板
     AllTags,
+    /// 手动色彩调整面板
     ColorAdjust,
+    /// ICC 色彩配置文件面板
     ColorProfile,
+    /// 底片分割导出面板
     Split,
+    /// 应用设置面板
     Settings,
 }
 
-// ─── Film split & export ────────────────────────────────────────────────────
+// ─── 底片格式与导出 ─────────────────────────────────────────────────────────
 
+/// 底片画幅格式，用于分割区域的宽高比约束
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum FilmFormat {
     Free,
@@ -91,6 +113,7 @@ pub(super) enum FilmFormat {
 }
 
 impl FilmFormat {
+    /// 所有支持的画幅格式列表
     pub(super) const ALL: &[Self] = &[
         Self::Free,
         Self::Full35mm,
@@ -103,6 +126,7 @@ impl FilmFormat {
         Self::LargeFormat4x5,
     ];
 
+    /// 返回格式的显示标签
     pub(super) fn label(&self) -> &'static str {
         match self {
             Self::Free => "Free",
@@ -117,7 +141,7 @@ impl FilmFormat {
         }
     }
 
-    /// Aspect ratio as width/height for landscape orientation. None for Free.
+    /// 返回横向宽高比（宽/高），自由格式返回 None
     pub(super) fn ratio(&self) -> Option<f32> {
         match self {
             Self::Free => None,
@@ -131,6 +155,7 @@ impl FilmFormat {
         }
     }
 
+    /// 序列化为字符串用于持久化
     pub(super) fn to_str(&self) -> &'static str {
         match self {
             Self::Free => "Free",
@@ -145,6 +170,7 @@ impl FilmFormat {
         }
     }
 
+    /// 从字符串反序列化，无法识别时返回 Free
     pub(super) fn from_str(s: &str) -> Self {
         match s {
             "Full35mm" => Self::Full35mm,
@@ -160,20 +186,23 @@ impl FilmFormat {
     }
 }
 
+/// 分割区域：描述图像上一个可旋转的矩形裁切框
 #[derive(Clone)]
 pub(super) struct SplitRegion {
-    /// Center coordinates (normalized 0.0–1.0 relative to image dimensions)
+    /// 中心点 X 坐标（归一化 0.0–1.0，相对于图像宽度）
     pub(super) cx: f32,
+    /// 中心点 Y 坐标（归一化 0.0–1.0，相对于图像高度）
     pub(super) cy: f32,
-    /// Half-extents (normalized)
+    /// 宽度（归一化）
     pub(super) w: f32,
+    /// 高度（归一化）
     pub(super) h: f32,
-    /// Rotation angle in radians (clockwise)
+    /// 旋转角度（弧度，顺时针）
     pub(super) angle: f32,
 }
 
 impl SplitRegion {
-    /// Get the 4 corners in screen coordinates [TL, TR, BR, BL]
+    /// 计算屏幕坐标下的 4 个角点 [左上, 右上, 右下, 左下]
     pub(super) fn corners_screen(&self, image_rect: egui::Rect) -> [egui::Pos2; 4] {
         let cx_s = image_rect.min.x + self.cx * image_rect.width();
         let cy_s = image_rect.min.y + self.cy * image_rect.height();
@@ -188,7 +217,7 @@ impl SplitRegion {
         })
     }
 
-    /// Rotation handle position: circle above top-center edge
+    /// 旋转手柄位置：位于顶部中心边缘上方的圆形
     pub(super) fn rotation_handle_screen(&self, image_rect: egui::Rect) -> egui::Pos2 {
         let cx_s = image_rect.min.x + self.cx * image_rect.width();
         let cy_s = image_rect.min.y + self.cy * image_rect.height();
@@ -199,7 +228,7 @@ impl SplitRegion {
         egui::pos2(cx_s + dist * sin_a, cy_s - dist * cos_a)
     }
 
-    /// Check if a screen-space point is inside the rotated region
+    /// 判断屏幕坐标点是否在旋转后的区域内
     pub(super) fn contains_screen_point(&self, point: egui::Pos2, image_rect: egui::Rect) -> bool {
         let cx_s = image_rect.min.x + self.cx * image_rect.width();
         let cy_s = image_rect.min.y + self.cy * image_rect.height();
@@ -213,6 +242,7 @@ impl SplitRegion {
         local_x.abs() <= hw && local_y.abs() <= hh
     }
 
+    /// 将区域约束在图像范围内，防止超出边界
     pub(super) fn clamp_to_image(&mut self) {
         self.w = self.w.clamp(0.01, 1.0);
         self.h = self.h.clamp(0.01, 1.0);
@@ -227,16 +257,24 @@ impl SplitRegion {
     }
 }
 
+/// 拖拽操作类型：移动、四角缩放、旋转
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum DragKind {
+    /// 整体移动
     Move,
+    /// 左上角缩放
     ResizeTopLeft,
+    /// 右上角缩放
     ResizeTopRight,
+    /// 左下角缩放
     ResizeBottomLeft,
+    /// 右下角缩放
     ResizeBottomRight,
+    /// 旋转
     Rotate,
 }
 
+/// 分割区域的预设颜色列表，按索引循环使用
 pub(super) const REGION_COLORS: &[egui::Color32] = &[
     egui::Color32::from_rgb(66, 133, 244),   // blue
     egui::Color32::from_rgb(234, 67, 53),    // red
@@ -246,12 +284,19 @@ pub(super) const REGION_COLORS: &[egui::Color32] = &[
     egui::Color32::from_rgb(0, 188, 212),    // cyan
 ];
 
+/// 底片分割状态：管理所有裁切区域及交互状态
 pub(super) struct SplitState {
+    /// 所有分割区域列表
     pub(super) regions: Vec<SplitRegion>,
+    /// 当前选择的底片画幅格式
     pub(super) format: FilmFormat,
+    /// 是否为竖向（纵向）
     pub(super) portrait: bool,
+    /// 导出文件命名模式
     pub(super) naming_pattern: String,
+    /// 当前正在拖拽的区域索引及拖拽类型
     pub(super) dragging: Option<(usize, DragKind)>,
+    /// 当前选中的区域索引
     pub(super) selected: Option<usize>,
 }
 
@@ -268,16 +313,18 @@ impl Default for SplitState {
     }
 }
 
-// ─── Thumbnail cache entry ──────────────────────────────────────────────────
+// ─── 缩略图缓存条目 ─────────────────────────────────────────────────────────
 
+/// 缩略图缓存条目：已上传到 GPU 的缩略图纹理及其尺寸
 pub(super) struct ThumbEntry {
     pub(super) texture: egui::TextureHandle,
     pub(super) width: u32,
     pub(super) height: u32,
 }
 
-// ─── Loaded detail for the selected file ────────────────────────────────────
+// ─── 选中文件的详细信息 ──────────────────────────────────────────────────────
 
+/// 已加载的文件详情：包含解析后的 TIFF 数据、元数据、纹理和色彩信息
 pub(super) struct LoadedDetail {
     pub(super) path: PathBuf,
     #[allow(dead_code)]
@@ -290,17 +337,23 @@ pub(super) struct LoadedDetail {
     pub(super) base_rgb: Option<image::RgbImage>,
 }
 
-// ─── Export state ───────────────────────────────────────────────────────────
+// ─── 导出状态 ───────────────────────────────────────────────────────────────
 
+/// 文件导出状态管理
 pub(super) struct ExportState {
     pub(super) status: ExportStatus,
 }
 
+/// 导出状态枚举
 #[derive(Debug, Clone)]
 pub(super) enum ExportStatus {
+    /// 空闲
     Idle,
+    /// 正在导出中
     Exporting { current: usize, total: usize, current_name: String },
+    /// 导出完成
     Done { count: usize, dir: PathBuf },
+    /// 导出出错
     Error(String),
 }
 
@@ -312,12 +365,17 @@ impl Default for ExportState {
     }
 }
 
-// ─── Loading status ─────────────────────────────────────────────────────────
+// ─── 加载状态 ───────────────────────────────────────────────────────────────
 
+/// 当前加载进度状态
 pub(super) enum LoadingStatus {
+    /// 空闲
     Idle,
+    /// 正在加载缩略图
     LoadingThumbnails,
-    LoadingFile(String),       // file name being loaded
+    /// 正在加载指定文件
+    LoadingFile(String),
+    /// 正在应用色彩配置
     ApplyingColorProfile,
 }
 
@@ -325,9 +383,9 @@ impl Default for LoadingStatus {
     fn default() -> Self { Self::Idle }
 }
 
-// ─── Background thread messages ─────────────────────────────────────────────
+// ─── 后台线程消息 ───────────────────────────────────────────────────────────
 
-/// Result of loading a thumbnail on a background thread.
+/// 后台线程加载缩略图的结果
 pub(super) struct ThumbResult {
     pub(super) path: PathBuf,
     pub(super) rgba: Vec<u8>,
@@ -335,54 +393,58 @@ pub(super) struct ThumbResult {
     pub(super) height: u32,
 }
 
-/// Result of loading a full detail file on a background thread.
-/// Textures cannot be created off the main thread, so we send raw image data.
+/// 后台线程加载文件详情的结果。
+/// 纹理无法在非主线程创建，因此传递原始图像数据。
 pub(super) struct DetailResult {
     pub(super) path: PathBuf,
     pub(super) tiff: TiffFile,
     pub(super) metadata: Vec<(String, String)>,
     pub(super) all_tags: Vec<(String, String, String, String)>,
     pub(super) edit_history: Option<EditHistory>,
-    pub(super) preview_rgba: Option<(Vec<u8>, u32, u32)>, // (pixels, width, height)
+    pub(super) preview_rgba: Option<(Vec<u8>, u32, u32)>, // (像素数据, 宽, 高)
     pub(super) embedded_icc: Option<Vec<u8>>,
-    pub(super) auto_corrected: bool, // true if embedded correction was auto-applied
-    pub(super) sidecar: Option<SidecarConfig>, // persisted settings from XML sidecar
+    pub(super) auto_corrected: bool, // 为 true 表示已自动应用嵌入的校正
+    pub(super) sidecar: Option<SidecarConfig>, // 从 XML sidecar 读取的持久化设置
 }
 
+/// 文件详情加载消息
 pub(super) enum DetailMsg {
+    /// 加载成功
     Loaded(DetailResult),
+    /// 加载失败
     Error(PathBuf, String),
 }
 
-// ─── App state ──────────────────────────────────────────────────────────────
+// ─── 主应用状态 ─────────────────────────────────────────────────────────────
 
+/// FFF 查看器主应用结构体，包含所有 UI 状态和数据
 pub struct FffViewerApp {
-    // Directory tree
+    // 目录树
     pub(super) current_dir: Option<PathBuf>,
     pub(super) expanded_dirs: HashSet<PathBuf>,
 
-    // Favorites (synced with app_config.favorites)
+    // 收藏夹（与 app_config.favorites 同步）
     pub(super) favorites: Vec<PathBuf>,
 
-    // File list in current directory
+    // 当前目录中的文件列表
     pub(super) fff_files: Vec<PathBuf>,
 
-    // Thumbnails cache
+    // 缩略图缓存
     pub(super) thumbnails: HashMap<PathBuf, ThumbEntry>,
     pub(super) thumb_rx: mpsc::Receiver<ThumbResult>,
     pub(super) thumb_tx: mpsc::Sender<ThumbResult>,
     pub(super) thumb_pending: usize,
 
-    // View state
+    // 视图状态
     pub(super) view_mode: ViewMode,
     pub(super) selected_index: Option<usize>,
 
-    // Detail of selected file
+    // 选中文件的详情
     pub(super) detail: Option<LoadedDetail>,
     pub(super) detail_rx: mpsc::Receiver<DetailMsg>,
     pub(super) detail_tx: mpsc::Sender<DetailMsg>,
 
-    // Right panel
+    // 右侧面板
     pub(super) info_panel: InfoPanel,
     pub(super) manual_adjust: color::ManualAdjust,
     pub(super) histogram: Option<Box<[[u32; 256]; 4]>>,
@@ -390,13 +452,13 @@ pub struct FffViewerApp {
     pub(super) tag_filter: String,
     pub(super) expanded_setting: Option<usize>,
 
-    // File list filter
+    // 文件列表过滤
     pub(super) file_filter: String,
 
-    // Editing state
+    // 编辑/导出状态
     pub(super) export_state: ExportState,
 
-    // Color management
+    // 色彩管理
     pub(super) available_profiles: Vec<IccProfileInfo>,
     pub(super) available_presets: Vec<SettingsPreset>,
     pub(super) selected_input_profile: Option<usize>,
@@ -407,28 +469,30 @@ pub struct FffViewerApp {
     pub(super) color_status: Option<String>,
     pub(super) target_color_space: TargetColorSpace,
 
-    // Split & export
+    // 底片分割与导出
     pub(super) split_state: SplitState,
 
-    // Loading progress
+    // 加载进度
     pub(super) loading_status: LoadingStatus,
 
-    // Error
+    // 错误信息
     pub(super) error_msg: Option<String>,
 
-    // UI toggles
+    // UI 开关
     pub(super) show_info_panel: bool,
 
-    // Language
+    // 界面语言
     pub(super) language: Language,
 
-    // App config (for settings panel)
+    // 应用配置（用于设置面板）
     pub(super) app_config: AppConfig,
     pub(super) settings_needs_restart: bool,
 }
 
-// ─── Font loading ───────────────────────────────────────────────────────────
+// ─── 字体加载 ───────────────────────────────────────────────────────────────
 
+/// 加载 CJK 字体，确保中日韩文字正常显示。
+/// 从系统字体路径查找并加载，作为 egui 的后备字体。
 pub(super) fn setup_cjk_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 

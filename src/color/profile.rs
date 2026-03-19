@@ -1,20 +1,23 @@
-/// ICC color management and FlexColor settings preset support.
+//! ICC 配置文件管理与 FlexColor 设置预设支持。
 
 use std::path::{Path, PathBuf};
 
 // ─── ICC Profile descriptor ────────────────────────────────────────────────
 
+/// ICC 配置文件的描述信息。
 #[derive(Debug, Clone)]
 pub struct IccProfileInfo {
+    /// 文件路径
     pub path: PathBuf,
+    /// 配置文件显示名称
     pub name: String,
-    /// Profile class: "scnr" (scanner/input), "mntr" (monitor), "prtr" (printer)
+    /// 设备类别："scnr"（扫描仪）、"mntr"（显示器）、"prtr"（打印机）
     pub class: String,
-    /// Color space: "RGB", "CMYK", "GRAY"
+    /// 色彩空间："RGB"、"CMYK"、"GRAY"
     pub color_space: String,
 }
 
-/// Scan a directory for .icc files and return descriptors.
+/// 扫描指定目录下的 .icc 文件，返回配置文件描述信息列表。
 pub fn scan_icc_profiles(dir: &Path) -> Vec<IccProfileInfo> {
     let mut profiles = Vec::new();
     let entries = match std::fs::read_dir(dir) {
@@ -34,7 +37,7 @@ pub fn scan_icc_profiles(dir: &Path) -> Vec<IccProfileInfo> {
     profiles
 }
 
-/// Read basic info from an ICC profile header (128 bytes).
+/// 从 ICC 文件头（128 字节）中读取基本信息。
 fn read_icc_info(path: &Path) -> Option<IccProfileInfo> {
     let data = std::fs::read(path).ok()?;
     if data.len() < 128 {
@@ -69,7 +72,7 @@ fn read_icc_info(path: &Path) -> Option<IccProfileInfo> {
     })
 }
 
-/// Extract the profile description string from the 'desc' tag.
+/// 从 'desc' 标签中提取配置文件描述字符串。
 fn extract_profile_description(data: &[u8]) -> Option<String> {
     if data.len() < 132 {
         return None;
@@ -107,7 +110,7 @@ fn extract_profile_description(data: &[u8]) -> Option<String> {
     None
 }
 
-/// Extract first string from an mluc (multi-localized Unicode) tag.
+/// 从 mluc（多语言 Unicode）标签中提取第一个字符串。
 fn extract_mluc_string(data: &[u8]) -> Option<String> {
     if data.len() < 20 {
         return None;
@@ -135,14 +138,18 @@ fn extract_mluc_string(data: &[u8]) -> Option<String> {
 
 // ─── Settings Preset ────────────────────────────────────────────────────────
 
+/// FlexColor 设置预设，包含处理参数的 XML 文件。
 #[derive(Debug, Clone)]
 pub struct SettingsPreset {
+    /// 预设文件路径
     pub path: PathBuf,
+    /// 预设名称（文件名去扩展名）
     pub name: String,
+    /// 分类（基于子目录结构）
     pub category: String,
 }
 
-/// Scan settings directory for XML preset files.
+/// 扫描设置目录下的 XML 预设文件，按分类和名称排序返回。
 pub fn scan_settings_presets(dir: &Path) -> Vec<SettingsPreset> {
     let mut presets = Vec::new();
     scan_settings_recursive(dir, dir, &mut presets);
@@ -150,6 +157,7 @@ pub fn scan_settings_presets(dir: &Path) -> Vec<SettingsPreset> {
     presets
 }
 
+/// 递归扫描目录树，收集 XML 预设文件。
 fn scan_settings_recursive(base: &Path, dir: &Path, out: &mut Vec<SettingsPreset>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,

@@ -1,14 +1,14 @@
-//! Global application configuration stored in `~/fff_parse/config/settings.xml`.
+//! 全局应用配置，存储于 `~/fff_parse/config/settings.xml`。
 //!
-//! The config file is created on first launch with sensible defaults.
-//! Settings include GPU acceleration, render thread count, and UI language.
+//! 首次启动时自动创建默认配置文件。
+//! 配置项包括 GPU 加速、渲染线程数和界面语言。
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 // ─── Directory layout ───────────────────────────────────────────────────────
 
-/// Root data directory: `~/fff_parse/`
+/// 根数据目录：`~/fff_parse/`
 pub fn app_data_dir() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -16,22 +16,22 @@ pub fn app_data_dir() -> PathBuf {
     home.join("fff_parse")
 }
 
-/// `~/fff_parse/logs/`
+/// 日志目录：`~/fff_parse/logs/`
 pub fn logs_dir() -> PathBuf {
     app_data_dir().join("logs")
 }
 
-/// `~/fff_parse/config/`
+/// 配置目录：`~/fff_parse/config/`
 pub fn config_dir() -> PathBuf {
     app_data_dir().join("config")
 }
 
-/// `~/fff_parse/sidecar/`
+/// Sidecar 目录：`~/fff_parse/sidecar/`
 pub fn sidecar_dir() -> PathBuf {
     app_data_dir().join("sidecar")
 }
 
-/// Ensure all data directories exist.
+/// 确保所有数据目录存在，不存在则自动创建。
 pub fn ensure_dirs() {
     for dir in [app_data_dir(), logs_dir(), config_dir(), sidecar_dir()] {
         if !dir.exists() {
@@ -40,7 +40,7 @@ pub fn ensure_dirs() {
     }
 }
 
-/// Path to the global settings file.
+/// 全局配置文件路径。
 fn settings_path() -> PathBuf {
     config_dir().join("settings.xml")
 }
@@ -48,18 +48,19 @@ fn settings_path() -> PathBuf {
 // ─── Configuration struct ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+/// 应用全局配置。
 pub struct AppConfig {
-    /// Enable GPU-accelerated rendering (default: true)
+    /// 是否启用 GPU 加速渲染（默认：true）
     pub gpu_enabled: bool,
-    /// Preferred GPU device name (empty = auto-select)
+    /// 首选 GPU 设备名称（空字符串表示自动选择）
     pub gpu_device: String,
-    /// Number of render/processing threads (default: num_cpus / 4, min 1)
+    /// 渲染/处理线程数（默认：CPU 核心数 / 4，最小为 1）
     pub render_threads: usize,
-    /// UI language: "en" or "zh"
+    /// 界面语言："en" 或 "zh"
     pub language: String,
-    /// Favorited directory paths (absolute paths, |-separated in XML)
+    /// 收藏的目录路径列表（绝对路径，XML 中以 `|` 分隔）
     pub favorites: Vec<String>,
-    /// Per-directory scan depth: path → 0 (flat), 1 (one level), 2 (all subdirs)
+    /// 各目录的扫描深度：路径 → 0（仅当前层）、1（一层子目录）、2（所有子目录）
     pub dir_scan_modes: std::collections::HashMap<String, u8>,
 }
 
@@ -76,7 +77,7 @@ impl Default for AppConfig {
     }
 }
 
-/// CPU cores / 4, minimum 1.
+/// 默认线程数：CPU 核心数 / 4，最小为 1。
 fn default_thread_count() -> usize {
     let cpus = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -84,7 +85,7 @@ fn default_thread_count() -> usize {
     (cpus / 4).max(1)
 }
 
-/// Detect system language. Returns "zh" if Chinese, otherwise "en".
+/// 检测系统语言。若为中文环境则返回 "zh"，否则返回 "en"。
 fn detect_system_language() -> String {
     // macOS: check LANG, LC_ALL, then `defaults read`
     for var in ["LANG", "LC_ALL", "LC_MESSAGES"] {
@@ -118,7 +119,7 @@ fn detect_system_language() -> String {
 
 // ─── Load / Save ────────────────────────────────────────────────────────────
 
-/// Load config from disk, or create default if missing.
+/// 从磁盘加载配置，若文件不存在或损坏则创建默认配置。
 pub fn load_or_create() -> AppConfig {
     ensure_dirs();
     let path = settings_path();
@@ -133,7 +134,7 @@ pub fn load_or_create() -> AppConfig {
     config
 }
 
-/// Save config to disk.
+/// 将配置保存到磁盘。
 pub fn save(config: &AppConfig) -> Result<(), String> {
     ensure_dirs();
     let path = settings_path();
@@ -141,6 +142,7 @@ pub fn save(config: &AppConfig) -> Result<(), String> {
     std::fs::write(&path, xml.as_bytes()).map_err(|e| format!("{}: {}", path.display(), e))
 }
 
+/// 从指定文件路径加载配置。
 fn load_from_file(path: &Path) -> Option<AppConfig> {
     let xml = std::fs::read_to_string(path).ok()?;
     parse_xml(&xml)
@@ -148,6 +150,7 @@ fn load_from_file(path: &Path) -> Option<AppConfig> {
 
 // ─── XML serialization ─────────────────────────────────────────────────────
 
+/// 将配置序列化为 XML 字符串。
 fn to_xml(c: &AppConfig) -> String {
     let mut s = String::with_capacity(512);
     s.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -167,6 +170,7 @@ fn to_xml(c: &AppConfig) -> String {
     s
 }
 
+/// 解析 XML 字符串为配置结构体。
 fn parse_xml(xml: &str) -> Option<AppConfig> {
     if !xml.contains("<fff_viewer_config>") {
         return None;
@@ -208,6 +212,7 @@ fn parse_xml(xml: &str) -> Option<AppConfig> {
     Some(config)
 }
 
+/// 转义 XML 特殊字符（`&`、`<`、`>`、`"`）。
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -215,6 +220,7 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// 还原 XML 转义实体为原始字符。
 fn xml_unescape(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -222,6 +228,7 @@ fn xml_unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// 提取 XML 标签之间的文本内容。
 fn tag_content(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);

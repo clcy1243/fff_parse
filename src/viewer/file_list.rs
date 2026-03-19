@@ -1,12 +1,18 @@
+//! 文件列表与网格视图模块
+//!
+//! 实现文件过滤搜索栏和缩略图网格视图的渲染，
+//! 支持模糊搜索和双击进入放大镜模式。
+
 use super::types::*;
 
 use eframe::egui;
 
 use fff_viewer::i18n;
 
-// ─── Grid View ──────────────────────────────────────────────────────────────
+// ─── 网格视图 ───────────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    /// 渲染文件过滤搜索栏，支持模糊匹配和清除按钮
     pub(super) fn render_file_filter_bar(&mut self, ui: &mut egui::Ui) {
         let s = i18n::strings(self.language);
         ui.horizontal(|ui| {
@@ -41,7 +47,7 @@ impl FffViewerApp {
         });
     }
 
-    /// Returns indices into `self.fff_files` that match the current filter.
+    /// 返回匹配当前过滤条件的文件索引列表（子序列模糊匹配）
     pub(super) fn filtered_indices(&self) -> Vec<usize> {
         if self.file_filter.is_empty() {
             return (0..self.fff_files.len()).collect();
@@ -51,17 +57,17 @@ impl FffViewerApp {
             .iter()
             .enumerate()
             .filter(|(_, path)| {
-                // Match against the full filename (name + extension)
+                // 匹配完整文件名（名称+扩展名）
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
-                // Also match against just the extension
+                // 也匹配扩展名
                 let ext = path
                     .extension()
                     .map(|e| e.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
-                // Fuzzy: all query chars must appear in order (subsequence match)
+                // 模糊匹配：查询字符必须按顺序出现（子序列匹配）
                 pub(super) fn subsequence(haystack: &str, needle: &str) -> bool {
                     let mut chars = haystack.chars();
                     needle.chars().all(|nc| chars.any(|hc| hc == nc))
@@ -72,6 +78,7 @@ impl FffViewerApp {
             .collect()
     }
 
+    /// 渲染缩略图网格视图，支持选择和双击进入放大镜模式
     pub(super) fn render_grid_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let thumb_size = 180.0_f32;
         let spacing = 8.0_f32;

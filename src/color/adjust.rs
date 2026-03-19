@@ -1,20 +1,33 @@
-/// Manual image adjustment parameters applied after the color profile pipeline.
+//! 手动图像调整：曝光、对比度、高光/阴影、饱和度、色彩平衡和色阶。
+
+/// 手动图像调整参数，在色彩管道之后应用。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManualAdjust {
     pub enabled: bool,
-    pub exposure: f32,      // stops: -3.0..3.0
-    pub contrast: f32,      // -100..100
-    pub highlights: f32,    // -100..100
-    pub shadows: f32,       // -100..100
-    pub saturation: f32,    // -100..100
-    pub r_shift: f32,       // color balance red:   -100..100
-    pub g_shift: f32,       // color balance green: -100..100
-    pub b_shift: f32,       // color balance blue:  -100..100
+    /// 曝光补偿（档位）：-3.0 ~ 3.0
+    pub exposure: f32,
+    /// 对比度：-100 ~ 100
+    pub contrast: f32,
+    /// 高光：-100 ~ 100
+    pub highlights: f32,
+    /// 阴影：-100 ~ 100
+    pub shadows: f32,
+    /// 饱和度：-100 ~ 100
+    pub saturation: f32,
+    /// 红色通道色彩平衡：-100 ~ 100
+    pub r_shift: f32,
+    /// 绿色通道色彩平衡：-100 ~ 100
+    pub g_shift: f32,
+    /// 蓝色通道色彩平衡：-100 ~ 100
+    pub b_shift: f32,
 
-    // Levels (input range): index 0=master, 1=R, 2=G, 3=B
-    pub levels_black: [f32; 4],  // input black point: 0-255
-    pub levels_gamma: [f32; 4],  // midtone gamma: 0.10-9.99 (1.0=neutral)
-    pub levels_white: [f32; 4],  // input white point: 0-255
+    // 色阶（输入范围）：索引 0=总通道, 1=R, 2=G, 3=B
+    /// 输入黑点：0-255
+    pub levels_black: [f32; 4],
+    /// 中间调 Gamma：0.10-9.99（1.0 为中性）
+    pub levels_gamma: [f32; 4],
+    /// 输入白点：0-255
+    pub levels_white: [f32; 4],
 }
 
 impl Default for ManualAdjust {
@@ -31,6 +44,7 @@ impl Default for ManualAdjust {
 }
 
 impl ManualAdjust {
+    /// 判断当前调整参数是否为恒等变换（即不产生任何效果）。
     pub fn is_identity(&self) -> bool {
         !self.enabled
             || (self.exposure.abs() < 0.001
@@ -47,8 +61,9 @@ impl ManualAdjust {
     }
 }
 
-/// Apply manual adjustments (exposure, contrast, shadows/highlights, saturation, color balance)
-/// to an 8-bit image. Uses per-channel LUTs for performance.
+/// 对 8-bit 图像应用手动调整（曝光、对比度、阴影/高光、饱和度、色彩平衡、色阶）。
+///
+/// 使用逐通道 LUT 提升性能，处理流程：色阶 → 曝光/色彩平衡 → 阴影/高光 → 对比度 → 饱和度。
 pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> image::DynamicImage {
     if adj.is_identity() {
         return img.clone();
@@ -147,7 +162,9 @@ pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> ima
     image::DynamicImage::ImageRgb8(buf)
 }
 
-/// Extract embedded ICC profile data from FFF tag 0xC51A.
+/// 从 FFF 文件的 TIFF 标签 0xC51A（ImaconProfileData）中提取嵌入的 ICC 配置文件。
+///
+/// 验证数据是否为有效的 ICC 配置文件（偏移 36 处应为 "acsp" 签名）。
 pub fn extract_embedded_icc(tiff_data: &[u8], tags: &[(String, String, String, String)]) -> Option<Vec<u8>> {
     // Look for tag 0xC51A (ImaconProfileData)
     for (_, tag_hex, _, _value) in tags {
@@ -171,7 +188,7 @@ pub fn extract_embedded_icc(tiff_data: &[u8], tags: &[(String, String, String, S
     None
 }
 
-/// Read raw bytes for a given TIFF tag from the file data.
+/// 从 TIFF 文件数据中读取指定标签的原始字节。
 fn extract_tag_data(data: &[u8], target_tag: u16) -> Option<Vec<u8>> {
     if data.len() < 8 {
         return None;

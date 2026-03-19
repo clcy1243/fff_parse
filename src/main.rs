@@ -1,9 +1,12 @@
+//! FFF Viewer 应用程序入口，基于 egui/eframe 构建的 Flextight X5 扫描仪文件查看器。
+
 mod viewer;
 
 use std::io::Write;
 
 use fff_viewer::config;
 
+/// 初始化日志系统，创建带时间戳的日志文件并清理过期日志。
 fn setup_logging() {
     let log_dir = config::logs_dir();
     config::ensure_dirs();
@@ -64,7 +67,7 @@ fn setup_logging() {
     log::info!("=== FFF Viewer started === (log: {})", log_path.display());
 }
 
-/// Remove fff_viewer_*.log files older than `days` from `dir`
+/// 从 `dir` 目录中删除超过 `days` 天的 fff_viewer_*.log 日志文件。
 fn cleanup_old_logs(dir: &std::path::Path, days: u64) {
     let cutoff = std::time::SystemTime::now()
         - std::time::Duration::from_secs(days * 24 * 60 * 60);
@@ -86,6 +89,7 @@ fn cleanup_old_logs(dir: &std::path::Path, days: u64) {
     }
 }
 
+/// 从内嵌的 PNG 资源加载应用程序图标。
 fn load_app_icon() -> Option<egui::IconData> {
     let png_bytes = include_bytes!("../icons/icon_256.png");
     let img = image::load_from_memory(png_bytes).ok()?.into_rgba8();
@@ -97,6 +101,7 @@ fn load_app_icon() -> Option<egui::IconData> {
     })
 }
 
+/// 应用程序主函数，初始化日志、加载配置、设置窗口并启动 eframe 图形界面。
 fn main() {
     setup_logging();
 

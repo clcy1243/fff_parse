@@ -1,11 +1,18 @@
+//! 工具函数模块
+//!
+//! 提供文件扫描、目录获取、名称缩短、资源查找、
+//! 图像位深转换和 GPU 纹理尺寸限制等辅助功能。
+
 use super::types::*;
 
 use std::path::Path;
 use std::path::PathBuf;
 
-// ─── Utility functions ──────────────────────────────────────────────────────
+// ─── 工具函数 ───────────────────────────────────────────────────────────────
 
+/// 扫描目录中的图像文件（FFF/3FR/TIFF），按指定深度递归子目录
 pub(super) fn scan_fff_files(dir: &Path, depth: DirScanDepth) -> Vec<PathBuf> {
+    /// 判断文件是否为支持的图像格式
     fn is_image_file(path: &Path) -> bool {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some(ext) => matches!(ext.to_lowercase().as_str(), "fff" | "3fr" | "tif" | "tiff"),
@@ -13,6 +20,7 @@ pub(super) fn scan_fff_files(dir: &Path, depth: DirScanDepth) -> Vec<PathBuf> {
         }
     }
 
+    /// 递归收集文件
     fn collect(dir: &Path, remaining: Option<usize>, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
         for entry in entries.filter_map(|e| e.ok()) {
@@ -43,6 +51,7 @@ pub(super) fn scan_fff_files(dir: &Path, depth: DirScanDepth) -> Vec<PathBuf> {
     files
 }
 
+/// 获取根目录列表：用户主目录 + 外接卷宗 + 系统根目录
 pub(super) fn get_root_dirs() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
@@ -86,12 +95,13 @@ pub(super) fn get_root_dirs() -> Vec<PathBuf> {
     roots
 }
 
+/// 获取用户主目录路径
 pub(super) fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Shorten verbose directory names for cleaner display in the tree.
-/// Full name is still shown on hover tooltip.
+/// 缩短冗长的目录名以便在树形视图中展示。
+/// 完整名称仍会在悬停提示中显示。
 pub(super) fn shorten_dir_name(name: &str) -> String {
     // Adobe Creative Cloud sync folders contain long personal-info paths
     // e.g. "Creative Cloud Files - john.doe@email.com"
@@ -142,8 +152,8 @@ pub(super) fn shorten_dir_name(name: &str) -> String {
     result
 }
 
-/// Find a resource directory (profiles/ or settings/) relative to the executable
-/// or the project source directory.
+/// 查找资源目录（profiles/ 或 settings/），依次检查可执行文件旁、
+/// 当前工作目录和 CARGO_MANIFEST_DIR。
 pub(super) fn find_resource_dir(name: &str, exe_dir: Option<&Path>) -> Option<PathBuf> {
     // 1. Check next to the executable (for .app bundles: Contents/MacOS/../Resources/)
     if let Some(dir) = exe_dir {
@@ -177,12 +187,9 @@ pub(super) fn find_resource_dir(name: &str, exe_dir: Option<&Path>) -> Option<Pa
     None
 }
 
-/// Downscale an image if either dimension exceeds the GPU max texture size (16384).
-/// This prevents panics in egui_glow's texture upload.
-/// Convert a 16-bit image to 8-bit for display.
-/// Scanner raw data is already gamma-encoded, so a simple right-shift is correct.
-/// 8-bit images pass through unchanged.
-/// Uses rayon parallelism for speed on large images.
+/// 将 16 位图像转换为 8 位用于显示。
+/// 扫描仪原始数据已经过伽马编码，简单右移即可。
+/// 8 位图像直接返回。使用 rayon 并行加速处理大图像。
 pub(super) fn convert_16_to_8_for_display(img: image::DynamicImage) -> image::DynamicImage {
     use rayon::prelude::*;
 
@@ -211,6 +218,7 @@ pub(super) fn convert_16_to_8_for_display(img: image::DynamicImage) -> image::Dy
     }
 }
 
+/// 缩放超出 GPU 最大纹理尺寸 (16384) 的图像，防止上传纹理时崩溃
 pub(super) fn clamp_image_for_gpu(img: image::DynamicImage) -> image::DynamicImage {
     const MAX_TEX: u32 = 16384;
     let (w, h) = (img.width(), img.height());

@@ -1,15 +1,18 @@
+//! TIFF 标签 ID 到可读名称的映射，包含标准 TIFF 标签和哈苏 MakerNote 标签。
+
 use std::collections::HashMap;
 
-/// Standard TIFF tag ID → human-readable name
+/// 根据标准 TIFF 标签 ID 查找对应的可读名称
 pub fn standard_tag_name(tag: u16) -> Option<&'static str> {
     STANDARD_TAGS.get(&tag).copied()
 }
 
-/// Hasselblad makernote tag ID → human-readable name
+/// 根据哈苏 MakerNote 标签 ID 查找对应的可读名称
 pub fn makernote_tag_name(tag: u16) -> Option<&'static str> {
     MAKERNOTE_TAGS.get(&tag).copied()
 }
 
+/// 将方向值转换为可读名称
 pub fn orientation_name(v: u32) -> &'static str {
     match v {
         1 => "Normal",
@@ -24,6 +27,7 @@ pub fn orientation_name(v: u32) -> &'static str {
     }
 }
 
+/// 将压缩类型值转换为可读名称
 pub fn compression_name(v: u32) -> &'static str {
     match v {
         1 => "Uncompressed",
@@ -41,6 +45,7 @@ pub fn compression_name(v: u32) -> &'static str {
     }
 }
 
+/// 将光度解释值转换为可读名称
 pub fn photometric_name(v: u32) -> &'static str {
     match v {
         0 => "WhiteIsZero",
@@ -57,6 +62,7 @@ pub fn photometric_name(v: u32) -> &'static str {
     }
 }
 
+/// 将测光模式值转换为可读名称
 pub fn metering_mode_name(v: u32) -> &'static str {
     match v {
         0 => "Unknown",
@@ -71,6 +77,7 @@ pub fn metering_mode_name(v: u32) -> &'static str {
     }
 }
 
+/// 将白平衡值转换为可读名称
 pub fn white_balance_name(v: u32) -> &'static str {
     match v {
         1 => "Auto",
@@ -87,6 +94,7 @@ pub fn white_balance_name(v: u32) -> &'static str {
 
 use std::sync::LazyLock;
 
+/// 标准 TIFF 标签 ID 到名称的映射表
 static STANDARD_TAGS: LazyLock<HashMap<u16, &'static str>> = LazyLock::new(|| {
     HashMap::from([
         // Basic TIFF tags
@@ -170,6 +178,7 @@ static STANDARD_TAGS: LazyLock<HashMap<u16, &'static str>> = LazyLock::new(|| {
     ])
 });
 
+/// 哈苏 MakerNote 标签 ID 到名称的映射表
 static MAKERNOTE_TAGS: LazyLock<HashMap<u16, &'static str>> = LazyLock::new(|| {
     HashMap::from([
         (0x0005, "WhiteBalance"),

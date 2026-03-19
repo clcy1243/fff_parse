@@ -1,3 +1,8 @@
+//! 底片分割与导出模块
+//!
+//! 实现底片分割功能：分割面板 UI、区域交互（移动/缩放/旋转）、
+//! 分割区域叠加绘制、裁切导出及双线性插值采样。
+
 use super::types::*;
 
 use eframe::egui;
@@ -7,8 +12,9 @@ use fff_viewer::tiff::TiffFile;
 
 impl FffViewerApp {
 
-    // ── Export ────────────────────────────────────────────────────────
+    // ── 导出 ─────────────────────────────────────────────────────────
 
+    /// 导出当前选中的单个文件为标准 TIFF
     pub(super) fn export_current_file(&mut self) {
         let Some(detail) = &self.detail else { return };
         let src_path = detail.path.clone();
@@ -40,6 +46,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 批量导出当前目录下所有文件为标准 TIFF
     pub(super) fn export_all_files(&mut self) {
         if self.fff_files.is_empty() {
             return;
@@ -84,9 +91,8 @@ impl FffViewerApp {
         };
     }
 
-    /// Export a single FFF file to standard TIFF.
-    /// Reads the full-resolution image (preserving 16-bit) and writes a standard TIFF.
-    /// The source file is never modified — export always writes to a new file.
+    /// 将单个 FFF 文件导出为标准 TIFF。
+    /// 读取全分辨率图像（保留 16 位）并写入新文件，不修改源文件。
     pub(super) fn export_fff_to_tiff(src: &Path, dst: &Path) -> Result<(), String> {
         // Guard: never overwrite the source file
         if let (Ok(src_canon), Ok(dst_canon)) = (src.canonicalize(), dst.canonicalize()) {
@@ -118,11 +124,9 @@ impl FffViewerApp {
         Ok(())
     }
 
-    // ── Settings ──────────────────────────────────────────────────────
+    // ── 分割与导出 ─────────────────────────────────────────────────
 
-
-    // ── Split & Export ────────────────────────────────────────────────
-
+    /// 渲染分割面板：画幅选择、区域列表、命名模式和导出按钮
     pub(super) fn render_split_panel(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
         let s = self.s();
         ui.heading(s.split_export);
@@ -309,6 +313,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 添加一个新的分割区域，根据画幅格式计算初始大小
     pub(super) fn add_split_region(&mut self) {
         let effective_ratio = self.split_state.format.ratio().map(|r| {
             if self.split_state.portrait { 1.0 / r } else { r }
@@ -341,6 +346,7 @@ impl FffViewerApp {
         self.split_state.regions.push(region);
     }
 
+    /// 处理分割区域的鼠标交互：悬停光标、拖拽开始/进行/结束
     pub(super) fn handle_split_interactions(&mut self, response: &egui::Response, image_rect: egui::Rect, ctx: &egui::Context) {
         let handle_radius = 10.0_f32;
         let rot_handle_radius = 8.0_f32;
@@ -481,6 +487,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 调整分割区域大小，支持宽高比锁定和旋转坐标变换
     pub(super) fn resize_region(
         &mut self,
         idx: usize,
@@ -538,6 +545,7 @@ impl FffViewerApp {
         region.clamp_to_image();
     }
 
+    /// 导出所有分割区域为独立的 TIFF 文件
     pub(super) fn export_split_regions(&mut self) {
         let s = self.s();
         let Some(detail) = &self.detail else { return };
@@ -611,8 +619,9 @@ impl FffViewerApp {
 
 }
 
-// ─── Split overlay rendering ────────────────────────────────────────────────
+// ─── 分割叠加层绘制 ─────────────────────────────────────────────────────────
 
+/// 在图像上绘制所有分割区域的叠加层（边框、角点手柄、旋转手柄、编号标签）
 pub(super) fn draw_split_overlays(
     painter: &egui::Painter,
     image_rect: egui::Rect,
@@ -703,7 +712,7 @@ pub(super) fn draw_split_overlays(
     }
 }
 
-/// Choose resize cursor based on the corner index and region rotation angle
+/// 根据角点索引和区域旋转角度选择合适的缩放光标图标
 fn resize_cursor_for_corner(corner_idx: usize, angle: f32) -> egui::CursorIcon {
     // Base diagonal angles for corners [TL, TR, BR, BL]
     let base_deg = [-135.0_f32, -45.0, 45.0, 135.0];
@@ -721,7 +730,7 @@ fn resize_cursor_for_corner(corner_idx: usize, angle: f32) -> egui::CursorIcon {
     }
 }
 
-/// Crop a rotated region from the source image using bilinear interpolation
+/// 从源图像中裁切旋转区域，使用双线性插值保证质量
 fn crop_rotated_region(
     img: &image::DynamicImage,
     region: &SplitRegion,
@@ -782,6 +791,7 @@ fn crop_rotated_region(
     }
 }
 
+/// 16 位 RGB 图像的双线性插值采样
 pub(super) fn bilinear_sample_rgb16(
     img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
     x: f32,
@@ -815,6 +825,7 @@ pub(super) fn bilinear_sample_rgb16(
     image::Rgb(out)
 }
 
+/// 8 位 RGB 图像的双线性插值采样
 pub(super) fn bilinear_sample_rgb8(
     img: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>,
     x: f32,

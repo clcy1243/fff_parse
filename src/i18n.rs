@@ -1,5 +1,6 @@
-/// Localization support for FFF Viewer
+//! FFF Viewer 的本地化支持
 
+/// 支持的界面语言
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     English,
@@ -7,6 +8,7 @@ pub enum Language {
 }
 
 impl Language {
+    /// 返回该语言的显示名称
     pub fn label(self) -> &'static str {
         match self {
             Self::English => "English",
@@ -14,10 +16,12 @@ impl Language {
         }
     }
 
+    /// 从配置字符串解析语言
     pub fn from_config(s: &str) -> Self {
         if s.starts_with("zh") { Self::Chinese } else { Self::English }
     }
 
+    /// 将语言转换为配置字符串
     pub fn to_config(self) -> &'static str {
         match self {
             Self::English => "en",
@@ -26,7 +30,7 @@ impl Language {
     }
 }
 
-/// All translatable UI strings
+/// 所有可翻译的界面文本
 pub struct Strings {
     // Toolbar
     pub open_folder: &'static str,
@@ -202,6 +206,7 @@ pub struct Strings {
     pub hist_b: &'static str,
 }
 
+/// 英文字符串表
 static EN: Strings = Strings {
     open_folder: "📂 Open Folder…",
     grid: "Grid",
@@ -361,6 +366,7 @@ static EN: Strings = Strings {
     hist_b: "B",
 };
 
+/// 中文字符串表
 static ZH: Strings = Strings {
     open_folder: "📂 打开文件夹…",
     grid: "网格",
@@ -520,6 +526,7 @@ static ZH: Strings = Strings {
     hist_b: "蓝",
 };
 
+/// 根据语言获取对应的字符串表
 pub fn strings(lang: Language) -> &'static Strings {
     match lang {
         Language::English => &EN,

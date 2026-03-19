@@ -1,3 +1,8 @@
+//! 目录导航模块
+//!
+//! 实现左侧面板的收藏夹管理和目录树浏览功能，
+//! 支持目录扫描深度控制和文件列表刷新。
+
 use super::types::*;
 use super::helpers::*;
 
@@ -8,9 +13,10 @@ use fff_viewer::config;
 use fff_viewer::i18n;
 use fff_viewer::tiff::TiffFile;
 
-// ─── Directory tree ─────────────────────────────────────────────────────────
+// ─── 目录树 ─────────────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    /// 渲染收藏夹列表，支持点击导航和移除收藏
     pub(super) fn render_favorites(&mut self, ui: &mut egui::Ui) {
         let s = i18n::strings(self.language);
         if self.favorites.is_empty() {
@@ -58,11 +64,13 @@ impl FffViewerApp {
         }
     }
 
+    /// 将收藏夹列表保存到应用配置文件
     pub(super) fn save_favorites(&mut self) {
         self.app_config.favorites = self.favorites.iter().map(|p| p.to_string_lossy().to_string()).collect();
         let _ = config::save(&self.app_config);
     }
 
+    /// 获取指定目录的扫描深度设置
     pub(super) fn dir_scan_depth(&self, dir: &Path) -> DirScanDepth {
         let key = dir.to_string_lossy();
         DirScanDepth::from_u8(
@@ -70,6 +78,7 @@ impl FffViewerApp {
         )
     }
 
+    /// 设置指定目录的扫描深度并保存配置
     pub(super) fn set_dir_scan_depth(&mut self, dir: &Path, depth: DirScanDepth) {
         let key = dir.to_string_lossy().to_string();
         if depth == DirScanDepth::Flat {
@@ -80,6 +89,7 @@ impl FffViewerApp {
         let _ = config::save(&self.app_config);
     }
 
+    /// 渲染目录树根节点列表
     pub(super) fn render_dir_tree(&mut self, ui: &mut egui::Ui) {
         let roots = get_root_dirs();
         for root in &roots {
@@ -87,6 +97,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 渲染单个目录节点：包含展开/收起、收藏、扫描深度和文件夹名称
     pub(super) fn render_dir_node(&mut self, ui: &mut egui::Ui, path: &Path, depth: usize) {
         let is_expanded = self.expanded_dirs.contains(path);
         let is_selected = self.current_dir.as_deref() == Some(path);

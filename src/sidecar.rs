@@ -1,8 +1,8 @@
-//! Sidecar XML file: persists color settings and split regions per source file.
+//! Sidecar XML 文件：为每个源文件持久化颜色设置和分割区域。
 //!
-//! For each source file, the sidecar is stored at
-//! `~/fff_parse/sidecar/{sha256_of_absolute_path}.xml`.
-//! The sidecar is never written back into the source file.
+//! 每个源文件对应的 sidecar 存储在
+//! `~/fff_parse/sidecar/{路径哈希}.xml`。
+//! Sidecar 不会写回源文件本身。
 
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::color;
 use crate::config;
 
-/// All per-file settings that should persist across sessions.
+/// 需要跨会话持久化的单文件配置。
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
     // Color settings
@@ -30,6 +30,7 @@ pub struct SidecarConfig {
     pub manual_adjust: color::ManualAdjust,
 }
 
+/// 分割区域，包含中心坐标、尺寸和旋转角度。
 #[derive(Debug, Clone)]
 pub struct SidecarRegion {
     pub cx: f32,
@@ -39,8 +40,8 @@ pub struct SidecarRegion {
     pub angle: f32,
 }
 
-/// Compute the sidecar path: `~/fff_parse/sidecar/{hash}.xml`
-/// where hash is derived from the source file's absolute path.
+/// 计算 sidecar 路径：`~/fff_parse/sidecar/{hash}.xml`，
+/// 其中哈希值由源文件的绝对路径生成。
 pub fn sidecar_path(source: &Path) -> PathBuf {
     let abs = std::fs::canonicalize(source)
         .unwrap_or_else(|_| source.to_path_buf());
@@ -50,14 +51,14 @@ pub fn sidecar_path(source: &Path) -> PathBuf {
     config::sidecar_dir().join(format!("{:016x}.xml", hash))
 }
 
-/// Load a sidecar config from disk. Returns `None` if file doesn't exist or is invalid.
+/// 从磁盘加载 sidecar 配置。文件不存在或格式无效时返回 `None`。
 pub fn load(source: &Path) -> Option<SidecarConfig> {
     let path = sidecar_path(source);
     let xml = std::fs::read_to_string(&path).ok()?;
     parse_xml(&xml)
 }
 
-/// Save a sidecar config to disk in the sidecar directory.
+/// 将 sidecar 配置保存到磁盘的 sidecar 目录中。
 pub fn save(source: &Path, config: &SidecarConfig) -> Result<(), String> {
     crate::config::ensure_dirs();
     let path = sidecar_path(source);
@@ -67,6 +68,7 @@ pub fn save(source: &Path, config: &SidecarConfig) -> Result<(), String> {
 
 // ─── XML serialization ─────────────────────────────────────────────────────
 
+/// 将 `SidecarConfig` 序列化为 XML 字符串。
 fn to_xml(c: &SidecarConfig) -> String {
     let mut s = String::with_capacity(1024);
     s.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -127,6 +129,7 @@ fn to_xml(c: &SidecarConfig) -> String {
     s
 }
 
+/// 对字符串进行 XML 转义（`&`、`<`、`>`、`"`）。
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -134,6 +137,7 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// 对 XML 转义字符串进行反转义。
 fn xml_unescape(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -143,6 +147,7 @@ fn xml_unescape(s: &str) -> String {
 
 // ─── XML parsing ────────────────────────────────────────────────────────────
 
+/// 将 XML 字符串解析为 `SidecarConfig`，格式无效时返回 `None`。
 fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     // Validate root element
     if !xml.contains("<fff_viewer>") {
@@ -252,7 +257,7 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     Some(config)
 }
 
-/// Extract text content between `<tag>` and `</tag>`.
+/// 提取 `<tag>` 与 `</tag>` 之间的文本内容。
 fn tag_content<'a>(xml: &'a str, tag: &str) -> Option<String> {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);
@@ -261,7 +266,7 @@ fn tag_content<'a>(xml: &'a str, tag: &str) -> Option<String> {
     Some(xml[start..start + end].trim().to_string())
 }
 
-/// Parse a self-closing `<region ... />` tag.
+/// 解析自闭合的 `<region ... />` 标签。
 fn parse_region_tag(tag: &str) -> Option<SidecarRegion> {
     Some(SidecarRegion {
         cx: attr_f32(tag, "cx")?,
@@ -272,7 +277,7 @@ fn parse_region_tag(tag: &str) -> Option<SidecarRegion> {
     })
 }
 
-/// Extract a float attribute value: `name="1.234"`.
+/// 提取浮点属性值，如 `name="1.234"`。
 fn attr_f32(tag: &str, name: &str) -> Option<f32> {
     let pattern = format!("{}=\"", name);
     let start = tag.find(&pattern)? + pattern.len();

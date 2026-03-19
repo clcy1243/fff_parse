@@ -1,11 +1,17 @@
+//! 放大镜视图模块
+//!
+//! 实现单图放大查看，包含主图显示、底部胶片条导航、
+//! 键盘左右箭头切换及分割区域叠加显示。
+
 use super::types::*;
 use super::split::draw_split_overlays;
 
 use eframe::egui;
 
-// ─── Loupe View ─────────────────────────────────────────────────────────────
+// ─── 放大镜视图 ─────────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    /// 渲染放大镜视图：主图 + 底部胶片条
     pub(super) fn render_loupe_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if self.selected_index.is_none() && !self.fff_files.is_empty() {
             self.select_file(0, ctx);
@@ -30,6 +36,7 @@ impl FffViewerApp {
             });
     }
 
+    /// 渲染放大镜主图区域，处理分割叠加和键盘导航
     pub(super) fn render_loupe_image(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if let Some(ref error) = self.error_msg {
             ui.centered_and_justified(|ui| {
@@ -57,7 +64,7 @@ impl FffViewerApp {
                     },
                 );
 
-                // Center the image within the allocated area
+                // 在全部分配区域内居中绘制图像
                 let image_rect =
                     egui::Align2::CENTER_CENTER.align_size_within_rect(display_size, full_rect);
 
@@ -92,7 +99,7 @@ impl FffViewerApp {
             });
         }
 
-        // Keyboard navigation
+        // 键盘导航
         let (left, right, delete) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowLeft),
@@ -112,7 +119,7 @@ impl FffViewerApp {
                 self.select_file(next, ctx);
             }
         }
-        // Delete selected split region with Delete/Backspace key
+        // Delete/Backspace 键删除选中的分割区域
         if delete && self.info_panel == InfoPanel::Split {
             if let Some(idx) = self.split_state.selected {
                 if idx < self.split_state.regions.len() {
@@ -125,6 +132,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 渲染底部胶片条，显示所有文件的缩略图并支持点击选择
     pub(super) fn render_filmstrip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let strip_h = ui.available_height() - 4.0;
         let _thumb_w = (strip_h * 0.75).max(60.0);

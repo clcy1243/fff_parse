@@ -1,3 +1,8 @@
+//! 信息面板模块
+//!
+//! 实现右侧所有信息面板的渲染：元数据、编辑历史、标签浏览、
+//! 色彩调整、ICC 色彩配置、分割导出和应用设置面板。
+
 use super::types::*;
 use super::helpers::*;
 
@@ -10,9 +15,10 @@ use fff_viewer::flexcolor;
 use fff_viewer::i18n::{self, Language};
 use fff_viewer::sidecar::{self, SidecarConfig, SidecarRegion as SidecarRegionData};
 
-// ─── Empty state ────────────────────────────────────────────────────────────
+// ─── 空状态 ─────────────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    /// 渲染无文件时的空状态页面：应用标题、打开文件夹按钮和拖放提示
     pub(super) fn render_empty_state(&mut self, ui: &mut egui::Ui) {
         let s = self.s();
         ui.centered_and_justified(|ui| {
@@ -44,9 +50,10 @@ impl FffViewerApp {
     }
 }
 
-// ─── Right info panels ─────────────────────────────────────────────────────
+// ─── 右侧信息面板 ──────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    /// 渲染元数据面板：显示选中文件的关键 TIFF/EXIF 元数据
     pub(super) fn render_metadata_panel(&mut self, ui: &mut egui::Ui) {
         let s = self.s();
         ui.heading(s.metadata_heading);
@@ -86,6 +93,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 渲染编辑历史面板：展示 FlexColor 的编辑设置记录
     pub(super) fn render_edit_history_panel(&mut self, ui: &mut egui::Ui) {
         let s = self.s();
         ui.heading(s.edit_history_heading);
@@ -209,6 +217,7 @@ impl FffViewerApp {
             });
     }
 
+    /// 渲染所有标签面板：可搜索过滤的完整 TIFF/IFD 标签表
     pub(super) fn render_all_tags_panel(&mut self, ui: &mut egui::Ui) {
         let s = self.s();
         ui.heading(s.all_tags_heading);
@@ -271,8 +280,9 @@ impl FffViewerApp {
             });
     }
 
-    // ── Color Profile Panel ─────────────────────────────────────────
+    // ── ICC 色彩配置面板 ──────────────────────────────────────────
 
+    /// 渲染色彩配置面板：输入 ICC 配置文件、目标色彩空间、预设和应用/重置按钮
     pub(super) fn render_color_profile_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let s = self.s();
         ui.heading(s.color_profile);
@@ -597,7 +607,7 @@ impl FffViewerApp {
         }
     }
 
-    /// Apply saved sidecar configuration to current state
+    /// 从 sidecar XML 恢复保存的配置到当前状态
     pub(super) fn apply_sidecar(&mut self, config: &SidecarConfig, ctx: &egui::Context) {
         log::info!("Applying sidecar config");
         self.use_embedded_correction = config.use_embedded_correction;
@@ -636,7 +646,7 @@ impl FffViewerApp {
         }
     }
 
-    /// Save current state to sidecar XML file
+    /// 将当前状态保存为 sidecar XML 文件
     pub(super) fn save_sidecar(&self) {
         let path = match &self.detail {
             Some(d) => &d.path,
@@ -672,7 +682,7 @@ impl FffViewerApp {
         }
     }
 
-    /// Auto-select input ICC profile based on the embedded correction's InputProfile field
+    /// 根据嵌入校正的 InputProfile 字段自动选择输入 ICC 配置文件
     pub(super) fn auto_select_input_profile(&mut self) {
         let profile_name = self.detail.as_ref()
             .and_then(|d| d.edit_history.as_ref())
@@ -694,6 +704,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 应用色彩配置：先做底片处理（负片反转+色阶），再做 ICC 色彩空间转换
     pub(super) fn apply_color_profile(&mut self, ctx: &egui::Context) {
         let s = self.s();
 
@@ -753,9 +764,9 @@ impl FffViewerApp {
 
         let mut result = preview_img;
 
-        // Step 1: Apply film processing FIRST (negative inversion + levels).
-        // This must happen before ICC because the scanner ICC profile expects
-        // positive/scene-referred data, not raw negative scan data with orange mask.
+        // 第1步：先应用底片处理（负片反转+色阶）。
+        // 必须在 ICC 转换之前执行，因为扫描仪 ICC 配置文件预期
+        // 正片/场景参考数据，而非带橙色底色的原始负片扫描数据。
         if let Some(ref correction) = preset_correction {
             let film_type = correction.film_type;
             log::info!(
@@ -773,8 +784,8 @@ impl FffViewerApp {
             result = color::apply_film_processing(&result, correction);
         }
 
-        // Step 2: Apply ICC color space transform (scanner RGB → output RGB).
-        // Now operating on positive/corrected data after film processing.
+        // 第2步：应用 ICC 色彩空间转换（扫描仪 RGB → 输出 RGB）。
+        // 此时已是正片/校正后的数据。
         if let Some(icc_data) = &input_icc {
             log::info!(
                 "Applying ICC transform: input={} bytes, image={}x{}",
@@ -794,7 +805,7 @@ impl FffViewerApp {
             }
         }
 
-        // Step 3: Convert to display-ready 8-bit, clamp for GPU, store base + upload texture
+        // 第3步：转换为显示用 8 位、限制 GPU 纹理尺寸、保存基准图像并上传纹理
         let result = convert_16_to_8_for_display(result);
         let result = clamp_image_for_gpu(result);
         if let Some(detail) = &mut self.detail {
@@ -819,6 +830,7 @@ impl FffViewerApp {
         log::info!("Color profile applied: {}", status_parts.join(" + "));
     }
 
+    /// 重置色彩配置到默认状态，重新解码预览并应用嵌入校正
     pub(super) fn reset_color_profile(&mut self, ctx: &egui::Context) {
         self.selected_input_profile = None;
         self.selected_preset = None;
@@ -853,6 +865,7 @@ impl FffViewerApp {
         log::info!("Color profile reset");
     }
 
+    /// 根据基准 RGB 图像和手动调整参数重建显示纹理
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
         let Some(ref base) = detail.base_rgb else { return };
@@ -871,6 +884,7 @@ impl FffViewerApp {
         // Histogram shows base_rgb (input distribution), no update needed on re-adjust
     }
 
+    /// 从基准 RGB 图像计算 RGBL 四通道直方图
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
             self.histogram = None;
@@ -881,8 +895,8 @@ impl FffViewerApp {
             return;
         };
 
-        // Compute histogram from base_rgb (pre-adjustment) so it shows input distribution.
-        // histogram[0..2] = R,G,B; histogram[3] = luminance (for "RGB" combined view).
+        // 从 base_rgb（调整前）计算直方图，显示输入分布。
+        // histogram[0..2] = R,G,B；histogram[3] = 亮度（用于 RGB 合并视图）。
         let mut hist = Box::new([[0u32; 256]; 4]);
         for pixel in base.pixels() {
             let [r, g, b] = pixel.0;
@@ -896,6 +910,7 @@ impl FffViewerApp {
         self.histogram_needs_update = false;
     }
 
+    /// 渲染 RGB 三通道叠加直方图
     pub(super) fn render_histogram(&self, ui: &mut egui::Ui) {
         let Some(ref hist) = self.histogram else { return };
 
@@ -932,7 +947,7 @@ impl FffViewerApp {
         }
     }
 
-    /// Computes black/white points at 0.5%/99.5% percentile of a histogram.
+    /// 根据直方图 0.5%/99.5% 百分位计算黑白点
     pub(super) fn auto_percentile_levels(hist: &[u32; 256]) -> (f32, f32) {
         let total: u32 = hist.iter().sum();
         if total == 0 { return (0.0, 255.0); }
@@ -955,8 +970,8 @@ impl FffViewerApp {
         (b, w.max(b + 1.0))
     }
 
-    /// Renders one histogram + gradient track + draggable triangle handles for black/gamma/white.
-    /// Returns true if any value was changed.
+    /// 渲染单通道色阶区段：直方图 + 渐变轨道 + 可拖拽黑/灰/白三角手柄。
+    /// 返回 true 表示有值被修改。
     pub(super) fn render_levels_section(
         ui: &mut egui::Ui,
         section_id: egui::Id,
@@ -1162,6 +1177,7 @@ impl FffViewerApp {
         changed
     }
 
+    /// 渲染手动色彩调整面板：四通道色阶 + 曝光/对比度/高光/阴影/饱和度/色彩平衡滑块
     pub(super) fn render_color_adjust_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let s = self.s();
 
@@ -1293,11 +1309,9 @@ impl FffViewerApp {
         }
     }
 
-    // ── Export ────────────────────────────────────────────────────────
+    // ── 设置 ─────────────────────────────────────────────────────────
 
-
-    // ── Settings ──────────────────────────────────────────────────────
-
+    /// 渲染应用设置面板：GPU 加速、渲染线程数、界面语言
     pub(super) fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         let s = self.s();
         ui.heading(s.settings_heading);
@@ -1395,8 +1409,9 @@ impl FffViewerApp {
         );
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────
+    // ── 辅助函数 ─────────────────────────────────────────────────────
 
+    /// 渲染参数标签芯片（label:value 格式），已修改时高亮显示
     pub(super) fn param_chip(ui: &mut egui::Ui, label: &str, value: &str, modified: bool) {
         let color = if modified {
             if ui.visuals().dark_mode {
@@ -1415,6 +1430,7 @@ impl FffViewerApp {
         );
     }
 
+    /// 渲染 FlexColor ImageCorrection 的详细参数：调整、胶片、锐化、处理标志等
     pub(super) fn render_correction_details(
         ui: &mut egui::Ui,
         corr: &flexcolor::ImageCorrection,
@@ -1607,12 +1623,14 @@ impl FffViewerApp {
         }
     }
 
+    /// 渲染一行参数详情（标签 + 值）
     pub(super) fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
         ui.label(egui::RichText::new(label).small());
         ui.label(egui::RichText::new(value).small().monospace());
         ui.end_row();
     }
 
+    /// 布尔值转图标：✅ 或 —
     pub(super) fn bool_icon(v: bool) -> String {
         if v { "✅".into() } else { "—".into() }
     }

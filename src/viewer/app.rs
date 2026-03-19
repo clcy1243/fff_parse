@@ -1,3 +1,8 @@
+//! 应用核心逻辑模块
+//!
+//! 实现应用初始化、目录切换、文件选择、后台任务轮询、
+//! 拖放处理及主界面布局（工具栏、左侧目录树、右侧面板、中央视图）。
+
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use super::types::*;
@@ -13,9 +18,10 @@ use fff_viewer::i18n::{self, Language, Strings};
 use fff_viewer::sidecar;
 use fff_viewer::tiff::TiffFile;
 
-// ─── App impl ───────────────────────────────────────────────────────────────
+// ─── 应用实现 ───────────────────────────────────────────────────────────────
 
 impl FffViewerApp {
+    /// 创建应用实例，初始化字体、扫描资源目录、设置初始目录
     pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>, app_config: AppConfig) -> Self {
         log::info!("Initializing FffViewerApp");
         setup_cjk_fonts(&cc.egui_ctx);
@@ -104,10 +110,12 @@ impl FffViewerApp {
         app
     }
 
+    /// 获取当前语言的国际化字符串
     pub(super) fn s(&self) -> &'static Strings {
         i18n::strings(self.language)
     }
 
+    /// 切换当前目录：展开祖先节点、扫描文件、启动缩略图加载线程
     pub(super) fn set_directory(&mut self, dir: PathBuf) {
         log::info!("set_directory: {}", dir.display());
         self.current_dir = Some(dir.clone());
@@ -176,6 +184,7 @@ impl FffViewerApp {
         });
     }
 
+    /// 选择指定索引的文件，启动后台线程加载详情
     pub(super) fn select_file(&mut self, index: usize, _ctx: &egui::Context) {
         if index >= self.fff_files.len() {
             log::warn!("select_file: index {} out of range ({})", index, self.fff_files.len());
@@ -284,7 +293,7 @@ impl FffViewerApp {
         });
     }
 
-    /// Poll background thread results for thumbnails and detail files.
+    /// 轮询后台线程的缩略图和文件详情加载结果
     pub(super) fn poll_background_results(&mut self, ctx: &egui::Context) {
         // Poll thumbnail results
         while let Ok(result) = self.thumb_rx.try_recv() {
@@ -374,6 +383,7 @@ impl FffViewerApp {
         }
     }
 
+    /// 打开目录选择对话框
     pub(super) fn open_directory_dialog(&mut self) {
         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
             self.set_directory(dir);
@@ -381,9 +391,10 @@ impl FffViewerApp {
     }
 }
 
-// ─── eframe::App ────────────────────────────────────────────────────────────
+// ─── eframe::App 实现 ───────────────────────────────────────────────────────
 
 impl eframe::App for FffViewerApp {
+    /// 主界面更新：处理拖放、渲染工具栏、目录树、信息面板和中央视图
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_background_results(ctx);
 

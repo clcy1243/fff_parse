@@ -1,17 +1,22 @@
-// ===== Simple XML plist parser =====
-// We use a minimal approach since these plists have a predictable structure.
+//! Apple plist XML 简易解析器
+//!
+//! 使用最小化方式解析 FlexColor 生成的 plist，因为这些文件结构可预测。
 
 use super::model::{ImageSetting, DateTime, ImageCorrection};
 
+/// XML 节点，表示元素或文本
 #[derive(Debug, Clone)]
 pub(super) enum XmlNode {
+    /// XML 元素节点，包含标签名和子节点
     Element {
         name: String,
         children: Vec<XmlNode>,
     },
+    /// 纯文本节点
     Text(String),
 }
 
+/// 解析 plist XML 字符串，返回顶层节点列表
 pub(super) fn parse_plist_nodes(xml: &str) -> Option<Vec<XmlNode>> {
     // Strip XML declaration and DOCTYPE
     let body = xml
@@ -23,8 +28,8 @@ pub(super) fn parse_plist_nodes(xml: &str) -> Option<Vec<XmlNode>> {
     Some(nodes)
 }
 
-/// Recursive XML parser that returns (nodes, bytes_consumed).
-/// Stops when it encounters a closing tag `</...>`, leaving it for the parent to consume.
+/// 递归 XML 解析器，返回 (节点列表, 已消费字节数)。
+/// 遇到闭合标签 `</...>` 时停止，交由父级处理。
 fn parse_xml_fragment(s: &str) -> (Vec<XmlNode>, usize) {
     let mut nodes = Vec::new();
     let mut pos = 0;
@@ -112,6 +117,7 @@ fn parse_xml_fragment(s: &str) -> (Vec<XmlNode>, usize) {
     (nodes, pos)
 }
 
+/// 解码 XML 转义字符（如 `&amp;` → `&`）
 fn decode_xml_entities(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")
@@ -120,6 +126,7 @@ fn decode_xml_entities(s: &str) -> String {
         .replace("&apos;", "'")
 }
 
+/// 在节点列表中递归查找指定名称的子元素
 pub(super) fn find_child_element<'a>(nodes: &'a [XmlNode], name: &str) -> Option<&'a XmlNode> {
     for node in nodes {
         match node {
@@ -141,6 +148,7 @@ pub(super) fn find_child_element<'a>(nodes: &'a [XmlNode], name: &str) -> Option
     None
 }
 
+/// 获取元素节点的所有子节点引用
 pub(super) fn element_children(node: &XmlNode) -> Vec<&XmlNode> {
     match node {
         XmlNode::Element { children, .. } => children.iter().collect(),
@@ -148,6 +156,7 @@ pub(super) fn element_children(node: &XmlNode) -> Vec<&XmlNode> {
     }
 }
 
+/// 获取元素节点的文本内容，`<true/>`/`<false/>` 返回标签名本身
 pub(super) fn get_element_text(node: &XmlNode) -> Option<String> {
     match node {
         XmlNode::Element { name, children } => {
@@ -168,6 +177,7 @@ pub(super) fn get_element_text(node: &XmlNode) -> Option<String> {
     }
 }
 
+/// 获取元素节点的标签名
 fn get_element_name(node: &XmlNode) -> Option<&str> {
     match node {
         XmlNode::Element { name, .. } => Some(name),
@@ -175,8 +185,8 @@ fn get_element_name(node: &XmlNode) -> Option<&str> {
     }
 }
 
-/// Extract the "Name" string from a profile dict node (InputProfile/RGBProfile).
-/// These are stored as: <dict><key>Name</key><string>...</string>...</dict>
+/// 从配置文件 dict 节点（InputProfile/RGBProfile）中提取 "Name" 字符串。
+/// 格式为：`<dict><key>Name</key><string>...</string>...</dict>`
 fn get_profile_name_from_dict(dict_node: &XmlNode) -> Option<String> {
     if get_element_name(dict_node) != Some("dict") {
         return None;
@@ -192,6 +202,7 @@ fn get_profile_name_from_dict(dict_node: &XmlNode) -> Option<String> {
     None
 }
 
+/// 解析图像设置数组节点，返回所有设置条目
 pub(super) fn parse_image_settings_array(array_node: &XmlNode) -> Option<Vec<ImageSetting>> {
     let children = element_children(array_node);
     let mut settings = Vec::new();
@@ -207,6 +218,7 @@ pub(super) fn parse_image_settings_array(array_node: &XmlNode) -> Option<Vec<Ima
     Some(settings)
 }
 
+/// 解析单条图像设置的 dict 节点
 fn parse_single_setting(dict_node: &XmlNode) -> Option<ImageSetting> {
     let children = element_children(dict_node);
     let mut name = String::new();
@@ -244,6 +256,7 @@ fn parse_single_setting(dict_node: &XmlNode) -> Option<ImageSetting> {
     })
 }
 
+/// 解析日期时间 dict 节点
 fn parse_datetime_dict(dict_node: &XmlNode) -> DateTime {
     let children = element_children(dict_node);
     let mut dt = DateTime::default();
@@ -271,6 +284,7 @@ fn parse_datetime_dict(dict_node: &XmlNode) -> DateTime {
     dt
 }
 
+/// 解析图像校正参数 dict 节点
 fn parse_image_correction(dict_node: &XmlNode) -> ImageCorrection {
     let children = element_children(dict_node);
     let mut corr = ImageCorrection::default();
@@ -378,6 +392,7 @@ fn parse_image_correction(dict_node: &XmlNode) -> ImageCorrection {
     corr
 }
 
+/// 解析各通道色调曲线数据
 fn parse_gradations(array_node: &XmlNode) -> Vec<Vec<(i64, i64, i64)>> {
     let mut channels = Vec::new();
     for channel_dict in element_children(array_node) {
@@ -398,6 +413,7 @@ fn parse_gradations(array_node: &XmlNode) -> Vec<Vec<(i64, i64, i64)>> {
     channels
 }
 
+/// 解析单通道色调曲线的控制点列表
 fn parse_gradation_points(array_node: &XmlNode) -> Vec<(i64, i64, i64)> {
     let mut points = Vec::new();
     for point_dict in element_children(array_node) {
@@ -427,7 +443,7 @@ fn parse_gradation_points(array_node: &XmlNode) -> Vec<(i64, i64, i64)> {
     points
 }
 
-/// Parse an <array> of <integer> values into a Vec<i64>
+/// 将 `<array>` 中的 `<integer>` 元素解析为 `Vec<i64>`
 fn parse_int_array(array_node: &XmlNode) -> Vec<i64> {
     element_children(array_node)
         .iter()
@@ -435,7 +451,7 @@ fn parse_int_array(array_node: &XmlNode) -> Vec<i64> {
         .collect()
 }
 
-/// Parse an <array> of 4 integers into [i64; 4] (for Shadow/Gray/Highlight)
+/// 将 `<array>` 中的 4 个整数解析为 `[i64; 4]`（用于暗部/中间调/高光色阶）
 fn parse_int_array_4(array_node: &XmlNode) -> [i64; 4] {
     let vals = parse_int_array(array_node);
     [
@@ -446,9 +462,8 @@ fn parse_int_array_4(array_node: &XmlNode) -> [i64; 4] {
     ]
 }
 
-/// Parse a FlexColor settings XML preset file and extract ImageCorrection.
-/// These files have the same plist format as embedded edit history,
-/// with structure: dict > ImageSetting > dict > ImageCorrection > dict
+/// 解析 FlexColor 设置 XML 预设文件，提取图像校正参数。
+/// 文件格式与嵌入的编辑历史相同，结构为：dict > ImageSetting > dict > ImageCorrection > dict
 pub fn parse_settings_xml(xml_str: &str) -> Option<ImageCorrection> {
     let nodes = parse_plist_nodes(xml_str)?;
     let root_dict = find_child_element(&nodes, "dict")?;

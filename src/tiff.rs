@@ -1,17 +1,25 @@
+//! TIFF/FFF 文件解析器。
+//!
+//! 解析 Imacon/Hasselblad Flextight X5 扫描仪产出的 TIFF 和 FFF 文件。
+//! 支持标准 TIFF（magic 0x2A）和 Imacon FFF（magic 0x55）两种格式，
+//! 可读取 IFD 链、EXIF、MakerNote，并提取预览图像。
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 
-/// Byte order of the TIFF file
+/// TIFF 文件的字节序
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ByteOrder {
+    /// 小端序
     LittleEndian,
+    /// 大端序
     BigEndian,
 }
 
-/// TIFF data types
+/// TIFF 数据类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum TiffType {
@@ -30,6 +38,7 @@ pub enum TiffType {
 }
 
 impl TiffType {
+    /// 将 u16 值转换为对应的 TiffType，无效值返回 None
     pub fn from_u16(v: u16) -> Option<Self> {
         match v {
             1 => Some(Self::Byte),
@@ -48,6 +57,7 @@ impl TiffType {
         }
     }
 
+    /// 返回该类型单个值占用的字节数
     pub fn size(self) -> usize {
         match self {
             Self::Byte | Self::Ascii | Self::SByte | Self::Undefined => 1,
@@ -58,7 +68,7 @@ impl TiffType {
     }
 }
 
-/// Parsed tag value
+/// 已解析的 TIFF 标签值，每种变体对应一种 TIFF 数据类型
 #[derive(Debug, Clone)]
 pub enum TagValue {
     Byte(Vec<u8>),
@@ -76,6 +86,7 @@ pub enum TagValue {
 }
 
 impl TagValue {
+    /// 取第一个值并转换为 u32，不适用的类型返回 None
     pub fn as_u32(&self) -> Option<u32> {
         match self {
             TagValue::Byte(v) => v.first().map(|&x| x as u32),
@@ -85,6 +96,7 @@ impl TagValue {
         }
     }
 
+    /// 将所有值转换为 u32 向量，不适用的类型返回空向量
     pub fn as_u32_vec(&self) -> Vec<u32> {
         match self {
             TagValue::Byte(v) => v.iter().map(|&x| x as u32).collect(),
@@ -94,6 +106,7 @@ impl TagValue {
         }
     }
 
+    /// 转换为字符串，仅 Ascii 类型有效
     pub fn as_string(&self) -> Option<String> {
         match self {
             TagValue::Ascii(s) => Some(s.clone()),
@@ -101,6 +114,7 @@ impl TagValue {
         }
     }
 
+    /// 取第一个无符号有理数值 (分子, 分母)
     pub fn as_rational(&self) -> Option<(u32, u32)> {
         match self {
             TagValue::Rational(v) => v.first().copied(),
@@ -108,6 +122,7 @@ impl TagValue {
         }
     }
 
+    /// 取第一个有符号有理数值 (分子, 分母)
     #[allow(dead_code)]
     pub fn as_srational(&self) -> Option<(i32, i32)> {
         match self {
@@ -116,6 +131,7 @@ impl TagValue {
         }
     }
 
+    /// 将第一个值转换为 f64，支持整型、有理数和浮点类型
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             TagValue::Byte(v) => v.first().map(|&x| x as f64),
@@ -141,6 +157,7 @@ impl TagValue {
         }
     }
 
+    /// 获取原始字节切片，仅 Byte 和 Undefined 类型有效
     #[allow(dead_code)]
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
@@ -240,60 +257,74 @@ impl fmt::Display for TagValue {
     }
 }
 
-/// A single IFD entry
+/// 单个 IFD 条目，包含标签号、类型、计数和解析后的值
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct IfdEntry {
+    /// 标签编号
     pub tag: u16,
+    /// TIFF 数据类型编号
     pub tiff_type: u16,
+    /// 值的数量
     pub count: u32,
+    /// 已解析的标签值
     pub value: TagValue,
 }
 
-/// An Image File Directory
+/// 图像文件目录 (IFD)，包含目录名称和所有条目
 #[derive(Debug, Clone)]
 pub struct Ifd {
+    /// 目录名称（如 "IFD#0"、"EXIF"、"MakerNote"）
     pub name: String,
+    /// 按标签号排序的条目映射
     pub entries: BTreeMap<u16, IfdEntry>,
 }
 
 impl Ifd {
+    /// 根据标签号获取标签值的引用
     pub fn get(&self, tag: u16) -> Option<&TagValue> {
         self.entries.get(&tag).map(|e| &e.value)
     }
 
+    /// 根据标签号获取值并转换为 u32
     pub fn get_u32(&self, tag: u16) -> Option<u32> {
         self.get(tag).and_then(|v| v.as_u32())
     }
 
+    /// 根据标签号获取值并转换为字符串
     pub fn get_string(&self, tag: u16) -> Option<String> {
         self.get(tag).and_then(|v| v.as_string())
     }
 }
 
-/// Top-level parsed TIFF/FFF file
+/// 顶层 TIFF/FFF 文件结构，包含字节序、IFD 列表和预览图像
 #[derive(Debug, Clone)]
 pub struct TiffFile {
+    /// 文件字节序
     pub byte_order: ByteOrder,
+    /// 魔数（0x2A 为标准 TIFF，0x55 为 Imacon FFF）
     pub magic: u16,
+    /// 所有解析出的 IFD（含子 IFD、EXIF、MakerNote）
     pub ifds: Vec<Ifd>,
-    /// Extracted preview JPEG bytes (if found)
+    /// 提取的预览 JPEG 数据（如存在）
     pub preview_jpeg: Option<Vec<u8>>,
-    /// The raw file data (for extracting image regions)
+    /// 原始文件数据（用于提取图像区域）
     data: Vec<u8>,
 }
 
-/// Binary reader with configurable byte order
+/// 支持可配置字节序的二进制读取器
 struct TiffReader<R: Read + Seek> {
     reader: R,
     byte_order: ByteOrder,
 }
 
 impl<R: Read + Seek> TiffReader<R> {
+    /// 创建指定字节序的读取器
     fn new(reader: R, byte_order: ByteOrder) -> Self {
         Self { reader, byte_order }
     }
 
+    /// 读取一个 u8 值
     #[allow(dead_code)]
     fn read_u8(&mut self) -> io::Result<u8> {
         let mut buf = [0u8; 1];
@@ -301,6 +332,7 @@ impl<R: Read + Seek> TiffReader<R> {
         Ok(buf[0])
     }
 
+    /// 按当前字节序读取一个 u16 值
     fn read_u16(&mut self) -> io::Result<u16> {
         let mut buf = [0u8; 2];
         self.reader.read_exact(&mut buf)?;
@@ -310,6 +342,7 @@ impl<R: Read + Seek> TiffReader<R> {
         })
     }
 
+    /// 按当前字节序读取一个 u32 值
     fn read_u32(&mut self) -> io::Result<u32> {
         let mut buf = [0u8; 4];
         self.reader.read_exact(&mut buf)?;
@@ -319,6 +352,7 @@ impl<R: Read + Seek> TiffReader<R> {
         })
     }
 
+    /// 按当前字节序读取一个 i16 值
     fn read_i16(&mut self) -> io::Result<i16> {
         let mut buf = [0u8; 2];
         self.reader.read_exact(&mut buf)?;
@@ -328,6 +362,7 @@ impl<R: Read + Seek> TiffReader<R> {
         })
     }
 
+    /// 按当前字节序读取一个 i32 值
     fn read_i32(&mut self) -> io::Result<i32> {
         let mut buf = [0u8; 4];
         self.reader.read_exact(&mut buf)?;
@@ -337,6 +372,7 @@ impl<R: Read + Seek> TiffReader<R> {
         })
     }
 
+    /// 按当前字节序读取一个 f32 值
     fn read_f32(&mut self) -> io::Result<f32> {
         let mut buf = [0u8; 4];
         self.reader.read_exact(&mut buf)?;
@@ -346,6 +382,7 @@ impl<R: Read + Seek> TiffReader<R> {
         })
     }
 
+    /// 按当前字节序读取一个 f64 值
     fn read_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; 8];
         self.reader.read_exact(&mut buf)?;
@@ -355,20 +392,25 @@ impl<R: Read + Seek> TiffReader<R> {
         })
     }
 
+    /// 读取指定长度的字节数组
     fn read_bytes(&mut self, count: usize) -> io::Result<Vec<u8>> {
         let mut buf = vec![0u8; count];
         self.reader.read_exact(&mut buf)?;
         Ok(buf)
     }
 
+    /// 跳转到指定的绝对位置
     fn seek(&mut self, pos: u64) -> io::Result<u64> {
         self.reader.seek(SeekFrom::Start(pos))
     }
 
+    /// 获取当前读取位置
     fn position(&mut self) -> io::Result<u64> {
         self.reader.seek(SeekFrom::Current(0))
     }
 
+    /// 根据 TIFF 类型和数量读取标签值，内联值（≤4字节）直接从当前位置读取，
+    /// 否则跳转到 value_offset 指定的偏移量处读取
     fn read_value(
         &mut self,
         tiff_type: TiffType,
@@ -469,13 +511,13 @@ impl<R: Read + Seek> TiffReader<R> {
 }
 
 impl TiffFile {
-    /// Open and parse a TIFF/FFF file (read-only).
-    /// The file is read entirely into memory; the original file is never modified.
+    /// 打开并解析 TIFF/FFF 文件（只读），文件内容全部读入内存
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let data = fs::read(path)?;
         Self::parse(&data)
     }
 
+    /// 从字节切片解析 TIFF/FFF 数据，检测字节序和魔数后遍历 IFD 链
     pub fn parse(data: &[u8]) -> io::Result<Self> {
         if data.len() < 8 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "File too small"));
@@ -581,6 +623,7 @@ impl TiffFile {
         })
     }
 
+    /// 解析指定偏移量处的单个 IFD，返回 (IFD, 下一个IFD偏移量)
     fn parse_ifd(
         reader: &mut TiffReader<Cursor<&[u8]>>,
         offset: u32,
@@ -648,6 +691,7 @@ impl TiffFile {
         ))
     }
 
+    /// 解析 Hasselblad MakerNote 子 IFD，处理可能存在的 "HASSELBLAD" 头部前缀
     fn parse_makernote(mn_data: &[u8], byte_order: ByteOrder, _file_data: &[u8]) -> io::Result<Ifd> {
         // Hasselblad MakerNote is typically a standard TIFF IFD structure
         // Sometimes it has an "HASSELBLAD\0" header prefix
@@ -751,6 +795,8 @@ impl TiffFile {
         })
     }
 
+    /// 从文件数据中提取预览 JPEG，依次尝试 JPEGInterchangeFormat、
+    /// JPEG 压缩的 Strip 数据、以及扫描嵌入的 JPEG 标记
     fn extract_preview(data: &[u8], ifds: &[Ifd]) -> Option<Vec<u8>> {
         // Strategy 1: Look for JPEGInterchangeFormat in any IFD
         for ifd in ifds {
@@ -801,6 +847,7 @@ impl TiffFile {
         Self::find_embedded_jpeg(data)
     }
 
+    /// 扫描字节数据查找嵌入的 JPEG（SOI + APP0/APP1/DQT），返回最大的一个
     fn find_embedded_jpeg(data: &[u8]) -> Option<Vec<u8>> {
         // Look for JPEG SOI marker (0xFF 0xD8) followed by APP0/APP1
         let mut pos = 0;
@@ -830,6 +877,7 @@ impl TiffFile {
         best.map(|(offset, size)| data[offset..offset + size].to_vec())
     }
 
+    /// 从指定起始位置查找 JPEG EOI 标记 (0xFF 0xD9) 的位置
     fn find_jpeg_end(data: &[u8], start: usize) -> Option<usize> {
         let mut pos = start + 2;
         while pos + 1 < data.len() {
@@ -841,17 +889,18 @@ impl TiffFile {
         None
     }
 
+    /// 获取文件大小（字节数）
     #[allow(dead_code)]
     pub fn file_size(&self) -> usize {
         self.data.len()
     }
 
-    /// Access the raw file data (for external parsers like FlexColor history)
+    /// 获取原始文件数据的引用（供外部解析器使用）
     pub fn raw_data(&self) -> &[u8] {
         &self.data
     }
 
-    /// Get a summary of all metadata as key-value pairs
+    /// 汇总所有元数据为键值对列表（格式、字节序、尺寸、EXIF 等）
     pub fn metadata_summary(&self) -> Vec<(String, String)> {
         use crate::tags::*;
 
@@ -1012,7 +1061,7 @@ impl TiffFile {
         result
     }
 
-    /// Get all IFD entries as displayable list (for detail view)
+    /// 获取所有 IFD 条目用于详情展示，返回 (IFD名, 标签hex, 标签名, 值) 列表
     pub fn all_tags(&self) -> Vec<(String, String, String, String)> {
         use crate::tags::*;
 
@@ -1039,6 +1088,7 @@ impl TiffFile {
         result
     }
 
+    /// 在所有 IFD 中查找指定标签的值
     fn find_tag_value(&self, tag: u16) -> Option<&TagValue> {
         for ifd in &self.ifds {
             if let Some(v) = ifd.get(tag) {
@@ -1048,14 +1098,17 @@ impl TiffFile {
         None
     }
 
+    /// 在所有 IFD 中查找指定标签并转换为 u32
     fn find_tag_u32(&self, tag: u16) -> Option<u32> {
         self.find_tag_value(tag).and_then(|v| v.as_u32())
     }
 
+    /// 在所有 IFD 中查找指定标签并转换为字符串
     fn find_tag_string(&self, tag: u16) -> Option<String> {
         self.find_tag_value(tag).and_then(|v| v.as_string())
     }
 
+    /// 查找所有 IFD 中像素数最多的图像尺寸
     fn best_dimensions(&self) -> (u32, u32) {
         let mut best_w = 0u32;
         let mut best_h = 0u32;
@@ -1070,8 +1123,8 @@ impl TiffFile {
         (best_w, best_h)
     }
 
-    /// Try to decode the raw image data as an image::DynamicImage
-    /// Falls back to preview JPEG if raw decoding fails
+    /// 解码预览图像为 DynamicImage，优先使用预览 JPEG，
+    /// 其次尝试未压缩 RGB 数据，最后尝试 image crate 直接解码
     pub fn decode_preview_image(&self) -> Option<image::DynamicImage> {
         // First try: use preview JPEG
         if let Some(jpeg_data) = &self.preview_jpeg {
@@ -1116,9 +1169,8 @@ impl TiffFile {
         None
     }
 
-    /// Decode the largest preview image, subsampled to fit within `max_dim` pixels.
-    /// Reads directly from file data without intermediate full-resolution buffers.
-    /// Returns a 16-bit or 8-bit image at reduced resolution for fast display.
+    /// 解码最大的预览图像并降采样到 `max_dim` 像素内，
+    /// 直接从文件数据读取，避免中间全分辨率缓冲区
     pub fn decode_preview_downscaled(&self, max_dim: u32) -> Option<image::DynamicImage> {
         // First try: use preview JPEG (already small)
         if let Some(jpeg_data) = &self.preview_jpeg {
@@ -1150,9 +1202,8 @@ impl TiffFile {
         self.decode_ifd_downscaled(&self.ifds[idx], max_dim)
     }
 
-    /// Decode an IFD's uncompressed RGB data, subsampled by a nearest-neighbor factor
-    /// to fit within `max_dim`. Reads directly from `self.data` to avoid copying
-    /// the full strip data into an intermediate buffer.
+    /// 解码指定 IFD 的未压缩 RGB 数据，通过最近邻降采样到 `max_dim` 像素内，
+    /// 直接从 `self.data` 读取以避免拷贝完整 Strip 数据
     fn decode_ifd_downscaled(&self, ifd: &Ifd, max_dim: u32) -> Option<image::DynamicImage> {
         let width = ifd.get_u32(0x0100)? as usize;
         let height = ifd.get_u32(0x0101)? as usize;
@@ -1281,11 +1332,9 @@ impl TiffFile {
         None
     }
 
-    /// Decode the smallest available thumbnail for grid/filmstrip display.
-    /// Prefers IFD with NewSubfileType=1 (thumbnail), then the smallest IFD.
-    /// Decode the FlexColor pre-rendered 8-bit thumbnail (NewSubfileType=1).
-    /// This thumbnail has full FlexColor processing baked in (ICC, saturation,
-    /// curves, levels) and is the authoritative "correct" look.
+    /// 解码用于网格/胶片条显示的缩略图。
+    /// 优先使用预览 JPEG，其次选择 FlexColor 预渲染的 8 位缩略图
+    /// （NewSubfileType=1），该缩略图包含完整的 FlexColor 处理效果。
     pub fn decode_thumbnail(&self) -> Option<image::DynamicImage> {
         if let Some(jpeg_data) = &self.preview_jpeg {
             if let Ok(img) =
@@ -1324,6 +1373,7 @@ impl TiffFile {
         None
     }
 
+    /// 解码指定 IFD 的未压缩 RGB 数据为 DynamicImage，支持 8 位和 16 位
     fn decode_uncompressed_rgb(&self, ifd: &Ifd) -> Option<image::DynamicImage> {
         let width = ifd.get_u32(0x0100)? as u32;
         let height = ifd.get_u32(0x0101)? as u32;
@@ -1393,8 +1443,7 @@ impl TiffFile {
         None
     }
 
-    /// Decode the full-resolution image for TIFF export.
-    /// Preserves 16-bit data as Rgb16 when possible (no downscale to 8-bit).
+    /// 解码全分辨率图像用于 TIFF 导出，保留 16 位数据不降级为 8 位
     pub fn decode_for_export(&self) -> Option<image::DynamicImage> {
         // Find the largest uncompressed RGB IFD (the main raw image)
         let mut best: Option<(usize, u64)> = None;
@@ -1473,6 +1522,7 @@ impl TiffFile {
     }
 }
 
+/// 将字节数格式化为人类可读的文件大小字符串（B/KB/MB/GB）
 fn format_file_size(bytes: usize) -> String {
     if bytes < 1024 {
         format!("{} B", bytes)

@@ -1,3 +1,5 @@
+//! 色彩管理模块：ICC 配置文件、色彩空间转换、胶片处理和手动调整。
+
 mod profile;
 mod transform;
 mod processing;

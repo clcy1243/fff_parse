@@ -1,13 +1,13 @@
+//! 胶片类型处理：负片反转、逐通道色阶调整和胶片曲线应用。
+
 // ─── Film Type Processing ───────────────────────────────────────────────────
 
 use crate::flexcolor::ImageCorrection;
 
-/// Compute per-channel auto shadow/highlight for negative film by analyzing
-/// the raw image histogram. Excludes saturated pixels (film borders, sprocket
-/// holes) to find the actual image content range per channel.
+/// 分析负片原始图像直方图，自动计算逐通道阴影/高光值。
 ///
-/// Returns per-channel (shadow, highlight) in 16-bit scale for the INVERTED
-/// (positive) data space.
+/// 排除饱和像素（片基边框、齿孔）以找到每个通道的实际图像内容范围。
+/// 返回反转（正片）空间中的逐通道 (shadow, highlight)，16-bit 尺度。
 fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32; 3], [f32; 3]) {
     use rayon::prelude::*;
 
@@ -98,17 +98,16 @@ fn compute_neg_auto_levels_16(src: &[u16], width: usize, height: usize) -> ([f32
     (shadow, highlight)
 }
 
-// ─── Film curve LUT ─────────────────────────────────────────────────────────
-// Empirical per-channel tone curves for FlexColor FilmCurve=4, Gamma=2.
-// These were reverse-engineered from pixel-level comparison of the 16-bit raw
-// processing pipeline against FlexColor's pre-rendered 8-bit thumbnails across
-// multiple Portra 160 scans on a Flextight X5.
+// ─── 胶片曲线 LUT ─────────────────────────────────────────────────────────
+// 经验性逐通道色调曲线，适用于 FlexColor FilmCurve=4、Gamma=2 的配置。
+// 通过像素级对比 16-bit 原始处理管道与 FlexColor 预渲染 8-bit 缩略图逆向工程得出，
+// 测试素材为 Flextight X5 扫描的多卷 Portra 160。
 //
-// Maps linear per-channel levels output [0.0–1.0] → display value [0–255].
-// Encapsulates: film response curve + ICC transform (Flextight Input → sRGB) +
-// Gamma encoding.  Applied AFTER shadow/highlight levels but WITHOUT per-channel
-// gray midtone gamma (the gray shift is minor and already baked into the average).
+// 将线性逐通道色阶输出 [0.0–1.0] 映射为显示值 [0–255]。
+// 封装了：胶片响应曲线 + ICC 转换（Flextight 输入 → sRGB）+ Gamma 编码。
+// 在阴影/高光色阶之后应用，不含逐通道灰度中间调 Gamma。
 
+/// 红色通道胶片曲线 LUT。
 const FILM_CURVE_LUT_R: [u8; 256] = [
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
@@ -128,6 +127,7 @@ const FILM_CURVE_LUT_R: [u8; 256] = [
     216, 217, 219, 220, 221, 223, 225, 227, 228, 230, 233, 236, 237, 238, 244, 253,
 ];
 
+/// 绿色通道胶片曲线 LUT。
 const FILM_CURVE_LUT_G: [u8; 256] = [
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
@@ -147,6 +147,7 @@ const FILM_CURVE_LUT_G: [u8; 256] = [
     254, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
 ];
 
+/// 蓝色通道胶片曲线 LUT。
 const FILM_CURVE_LUT_B: [u8; 256] = [
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
@@ -166,8 +167,7 @@ const FILM_CURVE_LUT_B: [u8; 256] = [
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
 ];
 
-/// Linearly interpolate a 256-entry LUT for a floating-point input in [0, 1].
-/// Returns 16-bit value (0–65535).
+/// 对 256 项 LUT 进行线性插值，输入 [0, 1]，返回 16-bit 值（0–65535）。
 #[inline]
 fn lut_interp_16(val: f32, lut: &[u8; 256]) -> f32 {
     let x = val * 255.0;
@@ -178,8 +178,7 @@ fn lut_interp_16(val: f32, lut: &[u8; 256]) -> f32 {
     out * 257.0 // scale 0-255 → 0-65535
 }
 
-/// Linearly interpolate a 256-entry LUT for a floating-point input in [0, 1].
-/// Returns 8-bit value (0–255) as f32.
+/// 对 256 项 LUT 进行线性插值，输入 [0, 1]，返回 8-bit 值（0–255）。
 #[inline]
 fn lut_interp_8(val: f32, lut: &[u8; 256]) -> f32 {
     let x = val * 255.0;
@@ -189,21 +188,19 @@ fn lut_interp_8(val: f32, lut: &[u8; 256]) -> f32 {
     lut[lo] as f32 * (1.0 - frac) + lut[hi] as f32 * frac
 }
 
-/// Apply film type processing: negative inversion + per-channel levels.
+/// 应用胶片类型处理：负片反转 + 逐通道色阶调整。
 ///
-/// For negative film (FilmType=1, C-41): invert pixels then remap per-channel.
-/// When `remove_cast_shadow`/`remove_cast_highlight` are enabled, automatically
-/// computes per-channel shadow/highlight from the image histogram to remove the
-/// orange mask color cast. The preset's Gray values still control midtone gamma.
+/// - 彩色负片（FilmType=1, C-41）：反转像素后逐通道重映射。
+///   当启用 `remove_cast_shadow`/`remove_cast_highlight` 时，自动计算逐通道
+///   阴影/高光以去除橙色底色色偏。预设的 Gray 值仍控制中间调 Gamma。
+/// - 黑白负片（FilmType=2）：反转后转为灰度。
+/// - 正片（FilmType=0）：仅应用预设中的色阶调整。
 ///
-/// For B&W negative (FilmType=2): same inversion + convert to grayscale.
-/// For positive film (FilmType=0): only apply levels adjustment using preset values.
+/// 当 FilmCurve=4 且 Gamma=2（典型彩色负片设置）时，应用经验性逐通道色调曲线
+/// 以匹配 FlexColor 的渲染效果。
 ///
-/// When FilmCurve=4 and Gamma=2 (typical Portra/color negative), applies an
-/// empirical per-channel tone curve that matches FlexColor's rendering.
-///
-/// Preserves bit depth: 16-bit input → 16-bit output, 8-bit → 8-bit.
-/// Uses rayon for parallel row processing on large images.
+/// 保持位深：16-bit 输入 → 16-bit 输出，8-bit → 8-bit。
+/// 使用 rayon 对大图进行逐行并行处理。
 pub fn apply_film_processing(
     img: &image::DynamicImage,
     correction: &ImageCorrection,

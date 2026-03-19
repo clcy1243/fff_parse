@@ -1,21 +1,30 @@
-/// FlexColor edit history parser
-/// Parses the XML plist stored in Imacon FFF tag 0xC519
+//! FlexColor 数据模型定义
+//!
+//! 定义解析 Imacon FFF 标签 0xC519 中 XML plist 所需的数据结构，
+//! 包括图像设置、日期时间、图像校正参数和编辑历史。
+
 use std::fmt;
 
 use super::parser;
 
-/// A single image setting (edit history entry)
+/// 单条图像设置（编辑历史条目）
 #[derive(Debug, Clone)]
 pub struct ImageSetting {
+    /// 设置名称
     pub name: String,
+    /// 附加信息
     pub info: String,
+    /// 标志位
     pub flags: i64,
+    /// 创建时间
     pub created: DateTime,
+    /// 修改时间
     pub modified: DateTime,
+    /// 图像校正参数
     pub correction: ImageCorrection,
 }
 
-/// Date-time from the plist
+/// plist 中的日期时间
 #[derive(Debug, Clone, Default)]
 pub struct DateTime {
     pub year: i32,
@@ -27,6 +36,7 @@ pub struct DateTime {
 }
 
 impl DateTime {
+    /// 判断日期是否有效（年份大于 0）
     pub fn is_valid(&self) -> bool {
         self.year > 0
     }
@@ -46,76 +56,116 @@ impl fmt::Display for DateTime {
     }
 }
 
-/// Image correction parameters
+/// 图像校正参数
 #[derive(Debug, Clone, Default)]
 pub struct ImageCorrection {
+    /// 对比度
     pub contrast: i64,
+    /// 亮度
     pub brightness: i64,
+    /// 伽马值
     pub gamma: f64,
+    /// 明度
     pub lightness: i64,
+    /// 饱和度
     pub saturation: i64,
+    /// 色温
     pub color_temperature: i64,
+    /// 色调偏移
     pub tint: i64,
+    /// 曝光补偿值
     pub ev: f64,
+    /// 胶片曲线类型
     pub film_curve: i64,
+    /// 胶片类型
     pub film_type: i64,
+    /// 颜色模型
     pub color_model: i64,
+    /// 是否应用滑块调整
     pub apply_sliders: bool,
+    /// 是否应用曲线调整
     pub apply_curves: bool,
+    /// 是否应用直方图调整
     pub apply_histogram: bool,
+    /// 是否应用 USM 锐化
     pub apply_usm: bool,
+    /// 是否应用除尘
     pub apply_dust: bool,
+    /// 是否应用色彩校正
     pub apply_cc: bool,
+    /// 是否应用色彩噪声滤镜
     pub apply_cn_filter: bool,
+    /// USM 锐化强度
     pub usm_amount: i64,
+    /// USM 锐化半径
     pub usm_radius: i64,
+    /// USM 暗部限制
     pub usm_dark_limit: i64,
+    /// USM 噪声限制
     pub usm_noise_limit: i64,
+    /// 阈值
     pub threshold: i64,
+    /// 除尘级别
     pub dust_level: i64,
+    /// 色彩噪声半径
     pub color_noise_radius: i64,
+    /// 噪声滤镜偏移
     pub noise_filter_bias: i64,
+    /// 镜头校正
     pub lens_correction: i64,
+    /// 暗角校正量
     pub vignette_amount: i64,
+    /// 是否增强阴影
     pub enhanced_shadow: bool,
+    /// 是否去除高光色偏
     pub remove_cast_highlight: bool,
+    /// 是否去除阴影色偏
     pub remove_cast_shadow: bool,
+    /// 是否嵌入 ICC 配置文件
     pub embed_profile: bool,
+    /// 是否转换色彩空间
     pub convert: bool,
+    /// 是否启用软打样
     pub soft_proof: bool,
+    /// 自动高光值
     pub auto_highlight: i64,
+    /// 自动阴影值
     pub auto_shadow: i64,
+    /// 处理模式
     pub mode: i64,
+    /// USM 色彩因子
     pub usm_col_factor: i64,
-    /// Histogram levels: Shadow per channel [RGB, R, G, B]
+    /// 直方图色阶：暗部，按通道 [RGB, R, G, B]
     pub shadow: [i64; 4],
-    /// Histogram levels: Gray (midtone) per channel [RGB, R, G, B]
+    /// 直方图色阶：中间调，按通道 [RGB, R, G, B]
     pub gray: [i64; 4],
-    /// Histogram levels: Highlight per channel [RGB, R, G, B]
+    /// 直方图色阶：高光，按通道 [RGB, R, G, B]
     pub highlight: [i64; 4],
-    /// Color correction matrix: 36 values (channel × component)
+    /// 色彩校正矩阵：36 个值（通道 × 分量）
     pub color_corr: Vec<i64>,
-    /// Gradation sliders [Contrast, Brightness, ShadowDepth]
+    /// 色调滑块 [对比度, 亮度, 阴影深度]
     pub gradation_sliders: [i64; 3],
-    /// Gradation curve points per channel: [master, R, G, B, ...] each with [(x,y,dy), ...]
+    /// 各通道色调曲线控制点：[主通道, R, G, B, ...] 每个含 [(x, y, dy), ...]
     pub gradations: Vec<Vec<(i64, i64, i64)>>,
-    /// Input ICC profile name (e.g. "Flextight Input")
+    /// 输入 ICC 配置文件名称（如 "Flextight Input"）
     pub input_profile_name: Option<String>,
-    /// Output RGB profile name (e.g. "sRGB Color Space Profile.icm")
+    /// 输出 RGB 配置文件名称（如 "sRGB Color Space Profile.icm"）
     pub rgb_profile_name: Option<String>,
-    /// All raw key-value pairs (for display of unknown fields)
+    /// 所有原始键值对（用于展示未知字段）
     pub raw_params: Vec<(String, String)>,
 }
 
-/// Parsed FlexColor edit history
+/// 已解析的 FlexColor 编辑历史
 #[derive(Debug, Clone)]
 pub struct EditHistory {
+    /// 所有图像设置条目
     pub settings: Vec<ImageSetting>,
+    /// 当前选中的设置索引
     pub current_index: usize,
 }
 
 impl EditHistory {
-    /// Parse edit history from the raw bytes of tag 0xC519
+    /// 从标签 0xC519 的原始字节数据中解析编辑历史
     pub fn parse(data: &[u8]) -> Option<Self> {
         // Find the XML plist within the data
         let xml_start = find_subsequence(data, b"<?xml")?;
@@ -128,11 +178,12 @@ impl EditHistory {
         Self::parse_xml(xml_str)
     }
 
-    /// Parse from the full file data (searches for the XML plist)
+    /// 从完整文件数据中解析编辑历史（自动查找 XML plist）
     pub fn parse_from_file(data: &[u8]) -> Option<Self> {
         Self::parse(data)
     }
 
+    /// 解析 Apple plist XML 字符串
     fn parse_xml(xml: &str) -> Option<Self> {
         // Simple XML parser for Apple plist format
         let nodes = parser::parse_plist_nodes(xml)?;
@@ -178,13 +229,14 @@ impl EditHistory {
     }
 }
 
+/// 在字节序列中查找子序列的起始位置
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|w| w == needle)
 }
 
-/// Human-readable name for film curve type
+/// 获取胶片曲线类型的可读名称
 pub fn film_curve_name(v: i64) -> &'static str {
     match v {
         0 => "Linear",
@@ -196,7 +248,7 @@ pub fn film_curve_name(v: i64) -> &'static str {
     }
 }
 
-/// Human-readable name for film type
+/// 获取胶片类型的可读名称
 pub fn film_type_name(v: i64) -> &'static str {
     match v {
         0 => "Positive E-6",
@@ -206,7 +258,7 @@ pub fn film_type_name(v: i64) -> &'static str {
     }
 }
 
-/// Human-readable name for color model
+/// 获取颜色模型的可读名称
 pub fn color_model_name(v: i64) -> &'static str {
     match v {
         0 => "RGB",
