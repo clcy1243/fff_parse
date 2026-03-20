@@ -1881,7 +1881,7 @@ impl FffViewerApp {
             )
             .default_open(false)
             .show(ui, |ui| {
-                let channel_names = ["Master", "Red", "Green", "Blue"];
+                let channel_names = ["RGB", "R", "G", "B", "C", "M", "Y"];
                 for (ch_idx, points) in corr.gradations.iter().enumerate() {
                     let ch_name = channel_names.get(ch_idx).unwrap_or(&"?");
                     let points_str: Vec<String> = points
