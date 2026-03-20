@@ -74,6 +74,7 @@ impl FffViewerApp {
             manual_adjust: color::ManualAdjust::default(),
             histogram: None,
             histogram_needs_update: false,
+            histogram_source: HistogramSource::Processed,
             tag_filter: String::new(),
             expanded_setting: None,
             file_filter: String::new(),
@@ -239,9 +240,14 @@ impl FffViewerApp {
                     });
 
                     // Decode preview with downsampling for fast display
-                    let (preview_rgba, auto_corrected) = if let Some(img) = tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
+                    let (preview_rgba, raw_preview_rgb, auto_corrected) = if let Some(img) = tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
                         log::info!("Decoded downscaled preview: {}x{} {:?}",
                             img.width(), img.height(), img.color());
+
+                        // 保存未经色彩处理的原始 8-bit 图像（用于原始直方图显示）
+                        let raw_8bit = convert_16_to_8_for_display(img.clone());
+                        let raw_8bit = clamp_image_for_gpu(raw_8bit);
+                        let raw_rgb = raw_8bit.to_rgb8();
 
                         // Auto-apply embedded correction if available
                         let (processed, corrected) = if let Some(ref correction) = embedded_correction {
@@ -258,10 +264,10 @@ impl FffViewerApp {
                         let rgba = processed.to_rgba8();
                         let w = rgba.width();
                         let h = rgba.height();
-                        (Some((rgba.into_raw(), w, h)), corrected)
+                        (Some((rgba.into_raw(), w, h)), Some(raw_rgb), corrected)
                     } else {
                         log::warn!("No preview decoded for {}", path.display());
-                        (None, false)
+                        (None, None, false)
                     };
 
                     let embedded_icc = color::extract_embedded_icc(tiff.raw_data(), &all_tags);
@@ -281,6 +287,7 @@ impl FffViewerApp {
                         all_tags,
                         edit_history,
                         preview_rgba,
+                        raw_preview_rgb,
                         embedded_icc,
                         auto_corrected,
                         sidecar: sidecar_config,
@@ -349,6 +356,7 @@ impl FffViewerApp {
                         texture,
                         embedded_icc: result.embedded_icc,
                         base_rgb,
+                        raw_rgb: result.raw_preview_rgb,
                     });
 
                     if has_sidecar {

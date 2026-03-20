@@ -204,6 +204,9 @@ pub struct Strings {
     pub hist_r: &'static str,
     pub hist_g: &'static str,
     pub hist_b: &'static str,
+    // Histogram source toggle
+    pub hist_source_raw: &'static str,
+    pub hist_source_processed: &'static str,
 }
 
 /// 英文字符串表
@@ -364,6 +367,8 @@ static EN: Strings = Strings {
     hist_r: "R",
     hist_g: "G",
     hist_b: "B",
+    hist_source_raw: "Raw",
+    hist_source_processed: "Processed",
 };
 
 /// 中文字符串表
@@ -524,6 +529,8 @@ static ZH: Strings = Strings {
     hist_r: "红",
     hist_g: "绿",
     hist_b: "蓝",
+    hist_source_raw: "原始",
+    hist_source_processed: "处理后",
 };
 
 /// 根据语言获取对应的字符串表

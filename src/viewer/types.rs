@@ -31,6 +31,15 @@ pub(super) enum ViewMode {
     Loupe,
 }
 
+/// 直方图数据源：原始（未处理）或当前（已加载色彩方案后）
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum HistogramSource {
+    /// 已加载色彩方案后的图像
+    Processed,
+    /// 未经任何色彩处理的原始图像
+    Raw,
+}
+
 /// 目录扫描深度，控制是否递归子目录查找图像文件
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum DirScanDepth {
@@ -334,7 +343,10 @@ pub(super) struct LoadedDetail {
     pub(super) edit_history: Option<EditHistory>,
     pub(super) texture: Option<egui::TextureHandle>,
     pub(super) embedded_icc: Option<Vec<u8>>,
+    /// 已处理的 8-bit 基准图像（色彩方案应用后），用于直方图计算和手动调整
     pub(super) base_rgb: Option<image::RgbImage>,
+    /// 未经色彩处理的 8-bit 原始图像（仅 16→8 位转换），用于原始直方图
+    pub(super) raw_rgb: Option<image::RgbImage>,
 }
 
 // ─── 导出状态 ───────────────────────────────────────────────────────────────
@@ -402,6 +414,7 @@ pub(super) struct DetailResult {
     pub(super) all_tags: Vec<(String, String, String, String)>,
     pub(super) edit_history: Option<EditHistory>,
     pub(super) preview_rgba: Option<(Vec<u8>, u32, u32)>, // (像素数据, 宽, 高)
+    pub(super) raw_preview_rgb: Option<image::RgbImage>,  // 未经色彩处理的原始 8-bit 预览
     pub(super) embedded_icc: Option<Vec<u8>>,
     pub(super) auto_corrected: bool, // 为 true 表示已自动应用嵌入的校正
     pub(super) sidecar: Option<SidecarConfig>, // 从 XML sidecar 读取的持久化设置
@@ -449,6 +462,7 @@ pub struct FffViewerApp {
     pub(super) manual_adjust: color::ManualAdjust,
     pub(super) histogram: Option<Box<[[u32; 256]; 4]>>,
     pub(super) histogram_needs_update: bool,
+    pub(super) histogram_source: HistogramSource,
     pub(super) tag_filter: String,
     pub(super) expanded_setting: Option<usize>,
 

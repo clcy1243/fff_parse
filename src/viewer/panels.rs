@@ -884,18 +884,25 @@ impl FffViewerApp {
         // Histogram shows base_rgb (input distribution), no update needed on re-adjust
     }
 
-    /// 从基准 RGB 图像计算 RGBL 四通道直方图
+    /// 从基准 RGB 图像计算 RGBL 四通道直方图。
+    /// 根据 `histogram_source` 选择数据源：Processed 使用处理后的图像，Raw 使用原始图像。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
             self.histogram = None;
             return;
         };
-        let Some(ref base) = detail.base_rgb else {
+
+        let source_img = match self.histogram_source {
+            HistogramSource::Raw => detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref()),
+            HistogramSource::Processed => detail.base_rgb.as_ref(),
+        };
+
+        let Some(base) = source_img else {
             self.histogram = None;
             return;
         };
 
-        // 从 base_rgb（调整前）计算直方图，显示输入分布。
+        // 统计 R/G/B 三通道及亮度通道的分布。
         // histogram[0..2] = R,G,B；histogram[3] = 亮度（用于 RGB 合并视图）。
         let mut hist = Box::new([[0u32; 256]; 4]);
         for pixel in base.pixels() {
@@ -1201,6 +1208,8 @@ impl FffViewerApp {
         let hist_r = s.hist_r;
         let hist_g = s.hist_g;
         let hist_b = s.hist_b;
+        let hist_source_raw = s.hist_source_raw;
+        let hist_source_processed = s.hist_source_processed;
 
         // Clone histogram data to avoid borrow conflicts when mutating manual_adjust
         let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
@@ -1223,6 +1232,23 @@ impl FffViewerApp {
         });
 
         ui.add_space(4.0);
+
+        // ── 直方图数据源切换 ────────────────────────────────────────────
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("📊").small());
+            let is_raw = self.histogram_source == HistogramSource::Raw;
+            if ui.selectable_label(!is_raw, hist_source_processed).clicked() && is_raw {
+                self.histogram_source = HistogramSource::Processed;
+                self.histogram_needs_update = true;
+            }
+            ui.label("|");
+            if ui.selectable_label(is_raw, hist_source_raw).clicked() && !is_raw {
+                self.histogram_source = HistogramSource::Raw;
+                self.histogram_needs_update = true;
+            }
+        });
+
+        ui.add_space(2.0);
 
         // ── 4 histogram sections (outside ScrollArea so scrollbar can't overlap) ──
         let sections: [(&str, usize, egui::Color32); 4] = [
