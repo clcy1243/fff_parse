@@ -465,7 +465,7 @@ impl FffViewerApp {
                 self.color_status = None;
             }
 
-            // Show the embedded correction name and details
+            // Show the embedded correction name
             if use_embedded {
                 if let Some(ref detail) = self.detail {
                     if let Some(ref history) = detail.edit_history {
@@ -481,15 +481,6 @@ impl FffViewerApp {
                                 .small()
                                 .color(ui.visuals().weak_text_color()),
                         );
-                        let lang = self.language;
-                        let corr = setting.correction.clone();
-                        egui::CollapsingHeader::new(
-                            egui::RichText::new("ℹ Details").small()
-                        )
-                        .id_salt("embedded_correction_detail")
-                        .show(ui, |ui| {
-                            Self::render_correction_details(ui, &corr, lang);
-                        });
                     }
                 }
             }
@@ -639,34 +630,49 @@ impl FffViewerApp {
             ui.label(egui::RichText::new(status).color(color));
         }
 
-        // ── Show preset details if selected ──
-        if let Some(idx) = self.selected_preset {
-            if let Some(preset) = self.available_presets.get(idx) {
-                ui.add_space(12.0);
-                ui.separator();
-                ui.add_space(4.0);
-                ui.strong(
-                    egui::RichText::new(format!("📋 {}", preset.name))
-                        .color(ui.visuals().hyperlink_color),
-                );
+        // ── Show correction details: embedded or selected preset ──
+        let active_correction: Option<(String, flexcolor::ImageCorrection)> = if self.use_embedded_correction {
+            self.detail.as_ref()
+                .and_then(|d| d.edit_history.as_ref())
+                .and_then(|h| {
+                    let idx = h.current_index.min(h.settings.len().saturating_sub(1));
+                    let setting = &h.settings[idx];
+                    let label = if setting.name.is_empty() {
+                        format!("📎 #{}", idx)
+                    } else {
+                        format!("📎 {}", setting.name)
+                    };
+                    Some((label, setting.correction.clone()))
+                })
+        } else if let Some(idx) = self.selected_preset {
+            self.available_presets.get(idx).and_then(|preset| {
+                std::fs::read_to_string(&preset.path).ok().and_then(|xml_data| {
+                    flexcolor::parse_settings_xml(&xml_data)
+                        .map(|corr| (format!("📋 {}", preset.name), corr))
+                })
+            })
+        } else {
+            None
+        };
 
-                // Parse and show preset details
-                if let Ok(xml_data) = std::fs::read_to_string(&preset.path) {
-                    if let Some(correction) =
-                        flexcolor::parse_settings_xml(&xml_data)
-                    {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false; 2])
-                            .show(ui, |ui| {
-                                Self::render_correction_details(
-                                    ui,
-                                    &correction,
-                                    self.language,
-                                );
-                            });
-                    }
-                }
-            }
+        if let Some((title, correction)) = active_correction {
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.strong(
+                egui::RichText::new(&title)
+                    .color(ui.visuals().hyperlink_color),
+            );
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    Self::render_correction_details(
+                        ui,
+                        &correction,
+                        self.language,
+                    );
+                });
         }
     }
 
