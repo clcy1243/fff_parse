@@ -402,6 +402,18 @@ impl Default for ExportState {
     }
 }
 
+/// 导出处理管线参数：封装导出时需要应用的色彩处理步骤
+pub(super) struct ExportPipeline {
+    /// 胶片处理校正（负片反转 + 色阶）
+    pub(super) correction: Option<fff_viewer::flexcolor::ImageCorrection>,
+    /// ICC 配置文件数据
+    pub(super) icc_data: Option<Vec<u8>>,
+    /// 目标色彩空间
+    pub(super) target_color_space: TargetColorSpace,
+    /// 手动调整参数
+    pub(super) manual_adjust: color::ManualAdjust,
+}
+
 // ─── 加载状态 ───────────────────────────────────────────────────────────────
 
 /// 当前加载进度状态

@@ -8,13 +8,15 @@ use super::types::*;
 use eframe::egui;
 use std::path::Path;
 
+use fff_viewer::color::{self, ManualAdjust, TargetColorSpace};
+use fff_viewer::flexcolor::{self, ImageCorrection};
 use fff_viewer::tiff::TiffFile;
 
 impl FffViewerApp {
 
     // ── 导出 ─────────────────────────────────────────────────────────
 
-    /// 导出当前选中的单个文件为标准 TIFF
+    /// 导出当前选中的单个文件为标准 TIFF（应用当前色彩调整）
     pub(super) fn export_current_file(&mut self) {
         let Some(detail) = &self.detail else { return };
         let src_path = detail.path.clone();
@@ -24,13 +26,15 @@ impl FffViewerApp {
             .map(|n| format!("{}.tiff", n.to_string_lossy()))
             .unwrap_or_else(|| "export.tiff".to_string());
 
+        let pipeline = self.build_export_pipeline();
+
         if let Some(save_path) = rfd::FileDialog::new()
             .set_file_name(&default_name)
             .add_filter("TIFF", &["tiff", "tif"])
             .save_file()
         {
             log::info!("Exporting to: {}", save_path.display());
-            match Self::export_fff_to_tiff(&src_path, &save_path) {
+            match Self::export_fff_to_tiff(&src_path, &save_path, &pipeline) {
                 Ok(()) => {
                     log::info!("Export OK: {}", save_path.display());
                     self.export_state.status = ExportStatus::Done {
@@ -46,7 +50,7 @@ impl FffViewerApp {
         }
     }
 
-    /// 批量导出当前目录下所有文件为标准 TIFF
+    /// 批量导出当前目录下所有文件为标准 TIFF（应用当前色彩调整）
     pub(super) fn export_all_files(&mut self) {
         if self.fff_files.is_empty() {
             return;
@@ -59,6 +63,7 @@ impl FffViewerApp {
             return;
         };
 
+        let pipeline = self.build_export_pipeline();
         let files = self.fff_files.clone();
         let total = files.len();
         log::info!("Export all: {} files → {}", total, out_dir.display());
@@ -77,7 +82,7 @@ impl FffViewerApp {
 
             let dst = out_dir.join(&name);
             log::info!("Batch export [{}/{}]: {} → {}", i + 1, total, src_path.display(), dst.display());
-            if let Err(e) = Self::export_fff_to_tiff(src_path, &dst) {
+            if let Err(e) = Self::export_fff_to_tiff(&src_path, &dst, &pipeline) {
                 log::error!("Batch export failed at [{}/{}]: {}", i + 1, total, e);
                 self.export_state.status = ExportStatus::Error(format!("{}: {}", src_path.display(), e));
                 return;
@@ -91,9 +96,59 @@ impl FffViewerApp {
         };
     }
 
+    /// 构建当前色彩处理管线参数，供导出使用
+    fn build_export_pipeline(&self) -> ExportPipeline {
+        // 胶片处理校正参数
+        let correction = if self.use_embedded_correction {
+            // 使用嵌入的编辑历史校正
+            self.detail.as_ref().and_then(|d| {
+                d.edit_history.as_ref().and_then(|h| {
+                    if h.settings.is_empty() {
+                        None
+                    } else {
+                        let idx = h.current_index.min(h.settings.len() - 1);
+                        Some(h.settings[idx].correction.clone())
+                    }
+                })
+            })
+        } else {
+            self.selected_preset.and_then(|idx| {
+                self.available_presets.get(idx).and_then(|p| {
+                    std::fs::read_to_string(&p.path)
+                        .ok()
+                        .and_then(|xml| flexcolor::parse_settings_xml(&xml))
+                })
+            })
+        };
+
+        // ICC 配置文件数据
+        let icc_data = if self.use_embedded_icc {
+            self.detail
+                .as_ref()
+                .and_then(|d| d.embedded_icc.clone())
+        } else if let Some(idx) = self.selected_input_profile {
+            self.available_profiles
+                .get(idx)
+                .and_then(|p| std::fs::read(&p.path).ok())
+        } else {
+            None
+        };
+
+        ExportPipeline {
+            correction,
+            icc_data,
+            target_color_space: self.target_color_space,
+            manual_adjust: self.manual_adjust.clone(),
+        }
+    }
+
     /// 将单个 FFF 文件导出为标准 TIFF。
-    /// 读取全分辨率图像（保留 16 位）并写入新文件，不修改源文件。
-    pub(super) fn export_fff_to_tiff(src: &Path, dst: &Path) -> Result<(), String> {
+    /// 解码全分辨率 16-bit 图像，应用与预览相同的色彩处理管线，写入新文件。
+    pub(super) fn export_fff_to_tiff(
+        src: &Path,
+        dst: &Path,
+        pipeline: &ExportPipeline,
+    ) -> Result<(), String> {
         // Guard: never overwrite the source file
         if let (Ok(src_canon), Ok(dst_canon)) = (src.canonicalize(), dst.canonicalize()) {
             if src_canon == dst_canon {
@@ -107,14 +162,40 @@ impl FffViewerApp {
             e.to_string()
         })?;
 
-        let img = tiff
+        let mut img = tiff
             .decode_for_export()
             .ok_or_else(|| {
                 log::error!("export: failed to decode {}", src.display());
                 "Failed to decode image data".to_string()
             })?;
 
-        log::info!("export: decoded {}x{}, saving...", img.width(), img.height());
+        log::info!("export: decoded {}x{} {:?}", img.width(), img.height(), img.color());
+
+        // 应用与预览相同的色彩处理管线（全分辨率）
+
+        // 1. 胶片处理（负片反转 + 色阶校正）
+        if let Some(ref correction) = pipeline.correction {
+            log::info!("export: applying film processing (film_type={})", correction.film_type);
+            img = color::apply_film_processing(&img, correction);
+        }
+
+        // 2. ICC 色彩空间转换
+        if let Some(ref icc_data) = pipeline.icc_data {
+            log::info!("export: applying ICC transform ({} bytes)", icc_data.len());
+            match color::apply_icc_transform(&img, icc_data, pipeline.target_color_space) {
+                Ok(transformed) => img = transformed,
+                Err(e) => {
+                    log::warn!("export: ICC transform failed ({}), exporting without ICC", e);
+                }
+            }
+        }
+
+        // 3. 手动调整（色阶/曝光/对比度/饱和度等）
+        if !pipeline.manual_adjust.is_identity() {
+            log::info!("export: applying manual adjustments");
+            img = color::apply_manual_adjust(&img, &pipeline.manual_adjust);
+        }
+
         img.save(dst).map_err(|e| {
             log::error!("export: failed to save {}: {}", dst.display(), e);
             e.to_string()
@@ -545,7 +626,7 @@ impl FffViewerApp {
         region.clamp_to_image();
     }
 
-    /// 导出所有分割区域为独立的 TIFF 文件
+    /// 导出所有分割区域为独立的 TIFF 文件（应用当前色彩调整）
     pub(super) fn export_split_regions(&mut self) {
         let s = self.s();
         let Some(detail) = &self.detail else { return };
@@ -566,13 +647,28 @@ impl FffViewerApp {
             .unwrap_or_else(|| "file".to_string());
 
         // Decode full-resolution image for export
-        let img = match detail.tiff.decode_for_export() {
+        let mut img = match detail.tiff.decode_for_export() {
             Some(img) => img,
             None => {
                 self.export_state.status = ExportStatus::Error("Failed to decode image".into());
                 return;
             }
         };
+
+        // 应用色彩处理管线（全分辨率）
+        let pipeline = self.build_export_pipeline();
+
+        if let Some(ref correction) = pipeline.correction {
+            img = color::apply_film_processing(&img, correction);
+        }
+        if let Some(ref icc_data) = pipeline.icc_data {
+            if let Ok(transformed) = color::apply_icc_transform(&img, icc_data, pipeline.target_color_space) {
+                img = transformed;
+            }
+        }
+        if !pipeline.manual_adjust.is_identity() {
+            img = color::apply_manual_adjust(&img, &pipeline.manual_adjust);
+        }
 
         let img_w = img.width();
         let img_h = img.height();
