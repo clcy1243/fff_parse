@@ -184,10 +184,14 @@ impl FffViewerApp {
             }
         }
 
-        // 2. 胶片处理（负片反转 + 色阶校正）
+        // 2. 胶片处理（负片反转，不含色阶——色阶在 manual_adjust 中）
         if let Some(ref correction) = pipeline.correction {
             log::info!("export: applying film processing (film_type={})", correction.film_type);
-            img = color::apply_film_processing(&img, correction);
+            let mut film_corr = correction.clone();
+            film_corr.shadow = [0; 4];
+            film_corr.highlight = [16383; 4];
+            film_corr.gray = [128; 4];
+            img = color::apply_film_processing(&img, &film_corr);
         }
 
         // 3. 手动调整（色阶/曝光/对比度/饱和度等）
@@ -664,7 +668,11 @@ impl FffViewerApp {
             }
         }
         if let Some(ref correction) = pipeline.correction {
-            img = color::apply_film_processing(&img, correction);
+            let mut film_corr = correction.clone();
+            film_corr.shadow = [0; 4];
+            film_corr.highlight = [16383; 4];
+            film_corr.gray = [128; 4];
+            img = color::apply_film_processing(&img, &film_corr);
         }
         if !pipeline.manual_adjust.is_identity() {
             img = color::apply_manual_adjust(&img, &pipeline.manual_adjust);

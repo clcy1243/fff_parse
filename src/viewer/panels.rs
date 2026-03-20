@@ -864,7 +864,7 @@ impl FffViewerApp {
         // ICC 转换后保存为 raw_rgb（Raw 模式的基准：ICC 校正后、无胶片处理）
         let raw_after_icc = to_rgb16(&result);
 
-        // 第2步：应用底片处理（负片反转+色阶）。
+        // 第2步：应用底片处理（负片反转，不含色阶——色阶由手柄控制）。
         if let Some(ref correction) = preset_correction {
             let film_type = correction.film_type;
             log::info!(
@@ -879,7 +879,32 @@ impl FffViewerApp {
                 correction.remove_cast_shadow,
                 correction.gamma,
             );
-            result = color::apply_film_processing(&result, correction);
+
+            // 将色阶从 correction 提取到 UI 手柄，film processing 使用中性色阶
+            let mut film_correction = correction.clone();
+            film_correction.shadow = [0; 4];
+            film_correction.highlight = [16383; 4]; // 16383 × 4 ≈ 65535
+            film_correction.gray = [128; 4]; // 128 = gamma 1.0
+
+            result = color::apply_film_processing(&result, &film_correction);
+
+            // 将 correction 的色阶映射到 0-255 手柄值
+            for i in 0..4 {
+                let s_val = (correction.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                let h_val = (correction.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                let g_val = 1.0 / (correction.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+                self.manual_adjust.levels_black[i] = s_val;
+                self.manual_adjust.levels_white[i] = h_val;
+                self.manual_adjust.levels_gamma[i] = g_val;
+            }
+            self.manual_adjust.enabled = true;
+            // 同步到两组手柄状态
+            self.levels_processed = HistogramLevels {
+                black: self.manual_adjust.levels_black,
+                gamma: self.manual_adjust.levels_gamma,
+                white: self.manual_adjust.levels_white,
+            };
+            self.levels_raw = self.levels_processed.clone();
         }
 
         // 第3步：保存 16-bit 基准图像并更新 raw_rgb
