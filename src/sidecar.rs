@@ -18,6 +18,8 @@ pub struct SidecarConfig {
     // Color settings
     pub use_embedded_correction: bool,
     pub use_embedded_icc: bool,
+    /// 选中的内嵌编辑历史索引
+    pub embedded_correction_index: Option<usize>,
     pub input_profile_name: Option<String>,
     pub preset_name: Option<String>,
     pub target_color_space: String,
@@ -78,6 +80,9 @@ fn to_xml(c: &SidecarConfig) -> String {
     s.push_str("  <color>\n");
     let _ = writeln!(s, "    <use_embedded_correction>{}</use_embedded_correction>", c.use_embedded_correction);
     let _ = writeln!(s, "    <use_embedded_icc>{}</use_embedded_icc>", c.use_embedded_icc);
+    if let Some(idx) = c.embedded_correction_index {
+        let _ = writeln!(s, "    <embedded_correction_index>{}</embedded_correction_index>", idx);
+    }
     if let Some(ref name) = c.input_profile_name {
         let _ = writeln!(s, "    <input_profile>{}</input_profile>", xml_escape(name));
     }
@@ -91,6 +96,7 @@ fn to_xml(c: &SidecarConfig) -> String {
     let a = &c.manual_adjust;
     s.push_str("  <adjust>\n");
     let _ = writeln!(s, "    <adj_enabled>{}</adj_enabled>", a.enabled);
+    let _ = writeln!(s, "    <adj_film_type>{}</adj_film_type>", a.film_type);
     let _ = writeln!(s, "    <adj_exposure>{}</adj_exposure>", a.exposure);
     let _ = writeln!(s, "    <adj_brightness>{}</adj_brightness>", a.brightness);
     let _ = writeln!(s, "    <adj_lightness>{}</adj_lightness>", a.lightness);
@@ -159,6 +165,7 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     let mut config = SidecarConfig {
         use_embedded_correction: false,
         use_embedded_icc: false,
+        embedded_correction_index: None,
         input_profile_name: None,
         preset_name: None,
         target_color_space: "ProPhotoRGB".to_string(),
@@ -175,6 +182,11 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     }
     if let Some(v) = tag_content(xml, "use_embedded_icc") {
         config.use_embedded_icc = v == "true";
+    }
+    if let Some(v) = tag_content(xml, "embedded_correction_index") {
+        if let Ok(idx) = v.parse::<usize>() {
+            config.embedded_correction_index = Some(idx);
+        }
     }
     if let Some(v) = tag_content(xml, "input_profile") {
         config.input_profile_name = Some(xml_unescape(&v));
@@ -197,6 +209,9 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
 
     if let Some(v) = tag_content(xml, "adj_enabled") {
         config.manual_adjust.enabled = v == "true";
+    }
+    if let Some(v) = tag_content(xml, "adj_film_type") {
+        if let Ok(ft) = v.parse::<i64>() { config.manual_adjust.film_type = ft; }
     }
     if let Some(v) = tag_content(xml, "adj_exposure") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.exposure = f; }
@@ -302,6 +317,7 @@ mod tests {
         let config = SidecarConfig {
             use_embedded_correction: true,
             use_embedded_icc: false,
+            embedded_correction_index: Some(2),
             input_profile_name: Some("Scanner RGB".to_string()),
             preset_name: None,
             target_color_space: "AdobeRGB".to_string(),
@@ -320,6 +336,7 @@ mod tests {
 
         assert_eq!(parsed.use_embedded_correction, true);
         assert_eq!(parsed.use_embedded_icc, false);
+        assert_eq!(parsed.embedded_correction_index, Some(2));
         assert_eq!(parsed.input_profile_name.as_deref(), Some("Scanner RGB"));
         assert_eq!(parsed.preset_name, None);
         assert_eq!(parsed.target_color_space, "AdobeRGB");
@@ -341,6 +358,7 @@ mod tests {
         let config = SidecarConfig {
             use_embedded_correction: false,
             use_embedded_icc: false,
+            embedded_correction_index: None,
             input_profile_name: Some("Profile <special> & \"quoted\"".to_string()),
             preset_name: None,
             target_color_space: "sRGB".to_string(),

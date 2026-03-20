@@ -88,9 +88,13 @@ impl FffViewerApp {
             selected_preset: None,
             use_embedded_icc: false,
             use_embedded_correction: false,
+            embedded_correction_index: None,
             preset_category_filter: String::new(),
             color_status: None,
             target_color_space: TargetColorSpace::default(),
+            baseline_adjust: color::ManualAdjust::default(),
+            baseline_levels_processed: HistogramLevels::default(),
+            baseline_levels_raw: HistogramLevels::default(),
             split_state: SplitState::default(),
             loading_status: LoadingStatus::Idle,
             error_msg: None,
@@ -198,6 +202,7 @@ impl FffViewerApp {
         self.expanded_setting = None;
         self.error_msg = None;
         self.use_embedded_correction = false;
+        self.embedded_correction_index = None;
         self.use_embedded_icc = false;
         self.color_status = None;
 
@@ -359,6 +364,16 @@ impl FffViewerApp {
                         // 内嵌校正已在后台线程预览中应用，这里需要重新通过完整管线处理
                         // 以正确提取色阶/饱和度等参数到 UI 手柄
                         self.use_embedded_correction = true;
+                        // 自动选中当前编辑历史索引
+                        if let Some(ref detail) = self.detail {
+                            if let Some(ref history) = detail.edit_history {
+                                if !history.settings.is_empty() {
+                                    self.embedded_correction_index = Some(
+                                        history.current_index.min(history.settings.len() - 1)
+                                    );
+                                }
+                            }
+                        }
                         self.apply_color_profile(ctx);
                     } else {
                         self.histogram_needs_update = true;

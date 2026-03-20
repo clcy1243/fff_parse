@@ -4,6 +4,8 @@
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManualAdjust {
     pub enabled: bool,
+    /// 胶片类型：0=正片, 1=彩色负片, 2=黑白负片
+    pub film_type: i64,
     /// 曝光补偿（档位）：-3.0 ~ 3.0
     pub exposure: f32,
     /// 亮度：-100 ~ 100
@@ -38,6 +40,7 @@ impl Default for ManualAdjust {
     fn default() -> Self {
         Self {
             enabled: false,
+            film_type: 0,
             exposure: 0.0, brightness: 0.0, lightness: 0.0, contrast: 0.0,
             highlights: 0.0, shadows: 0.0,
             saturation: 0.0, r_shift: 0.0, g_shift: 0.0, b_shift: 0.0,

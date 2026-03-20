@@ -523,9 +523,16 @@ pub struct FffViewerApp {
     pub(super) selected_preset: Option<usize>,
     pub(super) use_embedded_icc: bool,
     pub(super) use_embedded_correction: bool,
+    /// 选中的内嵌编辑历史索引（替代 use_embedded_correction 的粗放开关）
+    pub(super) embedded_correction_index: Option<usize>,
     pub(super) preset_category_filter: String,
     pub(super) color_status: Option<String>,
     pub(super) target_color_space: TargetColorSpace,
+    /// 应用色彩方案后的调整基线（重置按钮恢复到此状态）
+    pub(super) baseline_adjust: color::ManualAdjust,
+    /// 应用色彩方案后的色阶基线
+    pub(super) baseline_levels_processed: HistogramLevels,
+    pub(super) baseline_levels_raw: HistogramLevels,
 
     // 底片分割与导出
     pub(super) split_state: SplitState,

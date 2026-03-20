@@ -292,119 +292,134 @@ impl FffViewerApp {
         ui.strong(s.input_profile);
         ui.add_space(2.0);
 
-        let profile_names: Vec<String> = self
-            .available_profiles
-            .iter()
-            .map(|p| format!("{} ({})", p.name, p.color_space))
-            .collect();
-
-        let current_label = self
-            .selected_input_profile
-            .and_then(|i| profile_names.get(i))
-            .cloned()
-            .unwrap_or_else(|| "—".to_string());
-
-        egui::ComboBox::from_id_salt("input_profile_combo")
-            .selected_text(&current_label)
-            .width(ui.available_width() - 16.0)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_value(&mut self.selected_input_profile, None, "— None —")
-                    .clicked()
-                {
-                    self.color_status = None;
-                }
-                for (i, name) in profile_names.iter().enumerate() {
-                    let cs = &self.available_profiles[i].color_space;
-                    let is_rgb = cs == "RGB" || cs == "RGB ";
-                    // Only allow RGB profiles as input (CMYK/GRAY incompatible with RGB images)
-                    ui.add_enabled_ui(is_rgb, |ui| {
-                        let label = if is_rgb {
-                            name.clone()
-                        } else {
-                            format!("{} ⛔", name)
-                        };
-                        if ui
-                            .selectable_value(
-                                &mut self.selected_input_profile,
-                                Some(i),
-                                label,
-                            )
-                            .clicked()
-                        {
-                            self.color_status = None;
-                        }
-                    });
-                }
-            });
-
-        ui.add_space(8.0);
-
-        // ── Use Embedded ICC (only shown when file has embedded ICC) ──
-        let has_embedded = self
+        let has_embedded_icc = self
             .detail
             .as_ref()
             .and_then(|d| d.embedded_icc.as_ref())
             .map(|d| !d.is_empty())
             .unwrap_or(false);
 
-        if has_embedded {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.use_embedded_icc, s.use_embedded_icc);
-            });
+        let profile_names: Vec<String> = self
+            .available_profiles
+            .iter()
+            .map(|p| format!("{} ({})", p.name, p.color_space))
+            .collect();
 
-            // Show embedded ICC profile details in a collapsible section
-            if let Some(icc_bytes) = self.detail.as_ref().and_then(|d| d.embedded_icc.as_ref()) {
-                if let Some(detail) = color::parse_icc_detail(icc_bytes) {
-                    egui::CollapsingHeader::new(
-                        egui::RichText::new(if detail.description.is_empty() {
-                            format!("ℹ ICC ({} {})", detail.color_space, detail.device_class_name)
+        // 当前选中标签：内嵌 ICC、外部配置文件或无
+        let current_label = if self.use_embedded_icc && has_embedded_icc {
+            format!("📎 {}", s.use_embedded_icc)
+        } else {
+            self.selected_input_profile
+                .and_then(|i| profile_names.get(i))
+                .cloned()
+                .unwrap_or_else(|| "—".to_string())
+        };
+
+        egui::ComboBox::from_id_salt("input_profile_combo")
+            .selected_text(&current_label)
+            .width(ui.available_width() - 16.0)
+            .show_ui(ui, |ui| {
+                // "— None —" 选项
+                let is_none = !self.use_embedded_icc && self.selected_input_profile.is_none();
+                if ui.selectable_label(is_none, "— None —").clicked() && !is_none {
+                    self.selected_input_profile = None;
+                    self.use_embedded_icc = false;
+                    self.color_status = None;
+                }
+                // 📎 内嵌 ICC 选项（仅当文件有内嵌 ICC 时显示）
+                if has_embedded_icc {
+                    if ui.selectable_label(
+                        self.use_embedded_icc,
+                        format!("📎 {}", s.use_embedded_icc),
+                    ).clicked() && !self.use_embedded_icc {
+                        self.use_embedded_icc = true;
+                        self.selected_input_profile = None;
+                        self.color_status = None;
+                    }
+                }
+                // 外部 ICC 配置文件
+                for (i, name) in profile_names.iter().enumerate() {
+                    let cs = &self.available_profiles[i].color_space;
+                    let is_rgb = cs == "RGB" || cs == "RGB ";
+                    ui.add_enabled_ui(is_rgb, |ui| {
+                        let label = if is_rgb {
+                            name.clone()
                         } else {
-                            format!("ℹ {}", detail.description)
-                        }).small()
-                    )
-                    .id_salt("embedded_icc_detail")
-                    .show(ui, |ui| {
-                        egui::Grid::new("embedded_icc_grid")
-                            .num_columns(2)
-                            .spacing([8.0, 2.0])
-                            .show(ui, |ui| {
-                                let row = |ui: &mut egui::Ui, label: &str, value: &str| {
-                                    ui.label(egui::RichText::new(label).small());
-                                    ui.label(egui::RichText::new(value).small().monospace());
-                                    ui.end_row();
-                                };
-                                if !detail.description.is_empty() {
-                                    row(ui, s.icc_detail_name, &detail.description);
-                                }
-                                row(ui, s.icc_detail_version, &detail.version);
-                                row(ui, s.icc_detail_class,
-                                    &format!("{} ({})", detail.device_class_name, detail.device_class));
-                                row(ui, s.icc_detail_color_space, &detail.color_space);
-                                row(ui, s.icc_detail_pcs, &detail.pcs);
-                                row(ui, s.icc_detail_intent, &detail.rendering_intent);
-                                row(ui, s.icc_detail_date, &detail.date_time);
-                                if !detail.cmm_type.is_empty() {
-                                    row(ui, s.icc_detail_cmm, &detail.cmm_type);
-                                }
-                                row(ui, s.icc_detail_illuminant, &detail.illuminant);
-                                row(ui, s.icc_detail_size,
-                                    &format!("{} bytes", detail.size));
-                                row(ui, s.icc_detail_tags, &detail.tag_count.to_string());
-                            });
-
-                        // Show tag list
-                        if !detail.tags.is_empty() {
-                            ui.add_space(4.0);
-                            ui.label(egui::RichText::new(
-                                detail.tags.iter()
-                                    .map(|(sig, _, sz)| format!("{sig}({sz})"))
-                                    .collect::<Vec<_>>()
-                                    .join("  ")
-                            ).small().weak());
+                            format!("{} ⛔", name)
+                        };
+                        let is_selected = !self.use_embedded_icc
+                            && self.selected_input_profile == Some(i);
+                        if ui.selectable_label(is_selected, label).clicked() && !is_selected {
+                            self.selected_input_profile = Some(i);
+                            self.use_embedded_icc = false;
+                            self.color_status = None;
                         }
                     });
                 }
+            });
+
+        // 显示选中的 ICC 配置详情（内嵌或外部）
+        {
+            let icc_detail = if self.use_embedded_icc {
+                self.detail.as_ref()
+                    .and_then(|d| d.embedded_icc.as_ref())
+                    .and_then(|bytes| color::parse_icc_detail(bytes))
+            } else if let Some(idx) = self.selected_input_profile {
+                self.available_profiles.get(idx)
+                    .and_then(|p| std::fs::read(&p.path).ok())
+                    .and_then(|bytes| color::parse_icc_detail(&bytes))
+            } else {
+                None
+            };
+
+            if let Some(detail) = icc_detail {
+                egui::CollapsingHeader::new(
+                    egui::RichText::new(if detail.description.is_empty() {
+                        format!("ℹ ICC ({} {})", detail.color_space, detail.device_class_name)
+                    } else {
+                        format!("ℹ {}", detail.description)
+                    }).small()
+                )
+                .id_salt("input_icc_detail")
+                .show(ui, |ui| {
+                    egui::Grid::new("input_icc_grid")
+                        .num_columns(2)
+                        .spacing([8.0, 2.0])
+                        .show(ui, |ui| {
+                            let row = |ui: &mut egui::Ui, label: &str, value: &str| {
+                                ui.label(egui::RichText::new(label).small());
+                                ui.label(egui::RichText::new(value).small().monospace());
+                                ui.end_row();
+                            };
+                            if !detail.description.is_empty() {
+                                row(ui, s.icc_detail_name, &detail.description);
+                            }
+                            row(ui, s.icc_detail_version, &detail.version);
+                            row(ui, s.icc_detail_class,
+                                &format!("{} ({})", detail.device_class_name, detail.device_class));
+                            row(ui, s.icc_detail_color_space, &detail.color_space);
+                            row(ui, s.icc_detail_pcs, &detail.pcs);
+                            row(ui, s.icc_detail_intent, &detail.rendering_intent);
+                            row(ui, s.icc_detail_date, &detail.date_time);
+                            if !detail.cmm_type.is_empty() {
+                                row(ui, s.icc_detail_cmm, &detail.cmm_type);
+                            }
+                            row(ui, s.icc_detail_illuminant, &detail.illuminant);
+                            row(ui, s.icc_detail_size,
+                                &format!("{} bytes", detail.size));
+                            row(ui, s.icc_detail_tags, &detail.tag_count.to_string());
+                        });
+
+                    if !detail.tags.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(
+                            detail.tags.iter()
+                                .map(|(sig, _, sz)| format!("{sig}({sz})"))
+                                .collect::<Vec<_>>()
+                                .join("  ")
+                        ).small().weak());
+                    }
+                });
             }
         }
 
@@ -443,52 +458,22 @@ impl FffViewerApp {
         ui.strong(s.settings_preset);
         ui.add_space(2.0);
 
-        // Embedded correction option (only shown if file has edit history)
-        let has_embedded_correction = self
-            .detail
-            .as_ref()
+        // 收集内嵌编辑历史条目
+        let embedded_entries: Vec<(usize, String)> = self.detail.as_ref()
             .and_then(|d| d.edit_history.as_ref())
-            .map(|h| !h.settings.is_empty())
-            .unwrap_or(false);
+            .map(|h| {
+                h.settings.iter().enumerate().map(|(i, setting)| {
+                    let label = if setting.name.is_empty() {
+                        format!("📎 #{}", i)
+                    } else {
+                        format!("📎 {}", setting.name)
+                    };
+                    (i, label)
+                }).collect()
+            })
+            .unwrap_or_default();
 
-        if has_embedded_correction {
-            let mut use_embedded = self.use_embedded_correction;
-            if ui
-                .checkbox(&mut use_embedded, s.use_embedded_correction)
-                .changed()
-            {
-                self.use_embedded_correction = use_embedded;
-                if use_embedded {
-                    // Deselect preset when using embedded correction
-                    self.selected_preset = None;
-                }
-                self.color_status = None;
-            }
-
-            // Show the embedded correction name
-            if use_embedded {
-                if let Some(ref detail) = self.detail {
-                    if let Some(ref history) = detail.edit_history {
-                        let idx = history.current_index.min(history.settings.len().saturating_sub(1));
-                        let setting = &history.settings[idx];
-                        let label = if setting.name.is_empty() {
-                            format!("#{}", idx)
-                        } else {
-                            setting.name.clone()
-                        };
-                        ui.label(
-                            egui::RichText::new(format!("  📎 {}", label))
-                                .small()
-                                .color(ui.visuals().weak_text_color()),
-                        );
-                    }
-                }
-            }
-            ui.add_space(4.0);
-        }
-
-        // Category filter (disabled when using embedded correction)
-        let preset_enabled = !self.use_embedded_correction;
+        // Category filter
         let categories: Vec<String> = {
             let mut cats: Vec<String> = self
                 .available_presets
@@ -502,32 +487,30 @@ impl FffViewerApp {
         };
 
         if !categories.is_empty() {
-            ui.add_enabled_ui(preset_enabled, |ui| {
-                egui::ComboBox::from_id_salt("preset_category_combo")
-                    .selected_text(if self.preset_category_filter.is_empty() {
-                        s.category_all
-                    } else {
-                        &self.preset_category_filter
-                    })
-                    .width(ui.available_width() - 16.0)
-                    .show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("preset_category_combo")
+                .selected_text(if self.preset_category_filter.is_empty() {
+                    s.category_all
+                } else {
+                    &self.preset_category_filter
+                })
+                .width(ui.available_width() - 16.0)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(self.preset_category_filter.is_empty(), s.category_all)
+                        .clicked()
+                    {
+                        self.preset_category_filter.clear();
+                    }
+                    for cat in &categories {
+                        let label = if cat.is_empty() { "Standard" } else { cat.as_str() };
                         if ui
-                            .selectable_label(self.preset_category_filter.is_empty(), s.category_all)
+                            .selectable_label(self.preset_category_filter == *cat, label)
                             .clicked()
                         {
-                            self.preset_category_filter.clear();
+                            self.preset_category_filter = cat.clone();
                         }
-                        for cat in &categories {
-                            let label = if cat.is_empty() { "Standard" } else { cat.as_str() };
-                            if ui
-                                .selectable_label(self.preset_category_filter == *cat, label)
-                                .clicked()
-                            {
-                                self.preset_category_filter = cat.clone();
-                            }
-                        }
-                    });
-            });
+                    }
+                });
 
             ui.add_space(4.0);
         }
@@ -543,44 +526,67 @@ impl FffViewerApp {
             })
             .collect();
 
-        let preset_label = self
-            .selected_preset
-            .and_then(|i| self.available_presets.get(i))
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "—".to_string());
+        // 当前选中标签
+        let preset_label = if self.use_embedded_correction {
+            self.embedded_correction_index
+                .and_then(|idx| embedded_entries.iter().find(|(i, _)| *i == idx))
+                .map(|(_, label)| label.clone())
+                .unwrap_or_else(|| format!("📎 #{}", self.embedded_correction_index.unwrap_or(0)))
+        } else {
+            self.selected_preset
+                .and_then(|i| self.available_presets.get(i))
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "—".to_string())
+        };
 
-        ui.add_enabled_ui(preset_enabled, |ui| {
-            egui::ComboBox::from_id_salt("preset_combo")
-                .selected_text(&preset_label)
-                .width(ui.available_width() - 16.0)
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_value(&mut self.selected_preset, None, "— None —")
-                        .clicked()
-                    {
-                        self.use_embedded_correction = false;
-                        self.color_status = None;
-                    }
-                    for (global_idx, preset) in &filtered_presets {
-                        let label = if preset.category.is_empty() {
-                            preset.name.clone()
-                        } else {
-                            format!("{}/{}", preset.category, preset.name)
-                        };
-                        if ui
-                            .selectable_value(
-                                &mut self.selected_preset,
-                                Some(*global_idx),
-                                &label,
-                            )
-                            .clicked()
-                        {
-                            self.use_embedded_correction = false;
+        egui::ComboBox::from_id_salt("preset_combo")
+            .selected_text(&preset_label)
+            .width(ui.available_width() - 16.0)
+            .show_ui(ui, |ui| {
+                // "— None —" 选项
+                let is_none = !self.use_embedded_correction && self.selected_preset.is_none();
+                if ui.selectable_label(is_none, "— None —").clicked() && !is_none {
+                    self.selected_preset = None;
+                    self.use_embedded_correction = false;
+                    self.embedded_correction_index = None;
+                    self.color_status = None;
+                }
+
+                // 内嵌编辑历史条目
+                if !embedded_entries.is_empty() {
+                    ui.separator();
+                    for (idx, label) in &embedded_entries {
+                        let is_selected = self.use_embedded_correction
+                            && self.embedded_correction_index == Some(*idx);
+                        if ui.selectable_label(is_selected, label).clicked() && !is_selected {
+                            self.use_embedded_correction = true;
+                            self.embedded_correction_index = Some(*idx);
+                            self.selected_preset = None;
                             self.color_status = None;
                         }
                     }
-                });
-        });
+                    if !filtered_presets.is_empty() {
+                        ui.separator();
+                    }
+                }
+
+                // 外部预设
+                for (global_idx, preset) in &filtered_presets {
+                    let label = if preset.category.is_empty() {
+                        preset.name.clone()
+                    } else {
+                        format!("{}/{}", preset.category, preset.name)
+                    };
+                    let is_selected = !self.use_embedded_correction
+                        && self.selected_preset == Some(*global_idx);
+                    if ui.selectable_label(is_selected, &label).clicked() && !is_selected {
+                        self.selected_preset = Some(*global_idx);
+                        self.use_embedded_correction = false;
+                        self.embedded_correction_index = None;
+                        self.color_status = None;
+                    }
+                }
+            });
 
         ui.add_space(12.0);
         ui.separator();
@@ -632,17 +638,21 @@ impl FffViewerApp {
 
         // ── Show correction details: embedded or selected preset ──
         let active_correction: Option<(String, flexcolor::ImageCorrection)> = if self.use_embedded_correction {
+            let emb_idx = self.embedded_correction_index;
             self.detail.as_ref()
                 .and_then(|d| d.edit_history.as_ref())
                 .and_then(|h| {
-                    let idx = h.current_index.min(h.settings.len().saturating_sub(1));
-                    let setting = &h.settings[idx];
-                    let label = if setting.name.is_empty() {
-                        format!("📎 #{}", idx)
-                    } else {
-                        format!("📎 {}", setting.name)
-                    };
-                    Some((label, setting.correction.clone()))
+                    let idx = emb_idx.unwrap_or(
+                        h.current_index.min(h.settings.len().saturating_sub(1))
+                    );
+                    h.settings.get(idx).map(|setting| {
+                        let label = if setting.name.is_empty() {
+                            format!("📎 #{}", idx)
+                        } else {
+                            format!("📎 {}", setting.name)
+                        };
+                        (label, setting.correction.clone())
+                    })
                 })
         } else if let Some(idx) = self.selected_preset {
             self.available_presets.get(idx).and_then(|preset| {
@@ -681,6 +691,7 @@ impl FffViewerApp {
         log::info!("Applying sidecar config");
         self.use_embedded_correction = config.use_embedded_correction;
         self.use_embedded_icc = config.use_embedded_icc;
+        self.embedded_correction_index = config.embedded_correction_index;
         self.target_color_space = TargetColorSpace::from_str(&config.target_color_space);
 
         // Look up profile by name
@@ -739,6 +750,7 @@ impl FffViewerApp {
         let config = SidecarConfig {
             use_embedded_correction: self.use_embedded_correction,
             use_embedded_icc: self.use_embedded_icc,
+            embedded_correction_index: self.embedded_correction_index,
             input_profile_name,
             preset_name,
             target_color_space: self.target_color_space.to_str().to_string(),
@@ -799,13 +811,16 @@ impl FffViewerApp {
 
         // Load preset correction: either from embedded edit history or from selected preset file
         let preset_correction = if self.use_embedded_correction {
+            let emb_idx = self.embedded_correction_index;
             self.detail.as_ref().and_then(|d| {
                 d.edit_history.as_ref().and_then(|h| {
                     if h.settings.is_empty() {
                         None
                     } else {
-                        let idx = h.current_index.min(h.settings.len() - 1);
-                        Some(h.settings[idx].correction.clone())
+                        let idx = emb_idx.unwrap_or(
+                            h.current_index.min(h.settings.len() - 1)
+                        );
+                        h.settings.get(idx).map(|s| s.correction.clone())
                     }
                 })
             })
@@ -901,7 +916,10 @@ impl FffViewerApp {
                 }
             }
 
-            // 将滑块参数（饱和度/EV/对比度/亮度）映射到手柄
+            // 提取胶片类型
+            self.manual_adjust.film_type = correction.film_type;
+
+            // 将滑块参数（饱和度/EV/对比度/亮度/明度）映射到手柄
             if correction.apply_sliders {
                 self.manual_adjust.saturation = correction.saturation as f32;
                 if (correction.ev - 1.0).abs() > 0.001 {
@@ -935,6 +953,11 @@ impl FffViewerApp {
             detail.raw_rgb = Some(raw_after_icc);
         }
 
+        // 保存当前调整状态为基线（重置按钮恢复到此状态）
+        self.baseline_adjust = self.manual_adjust.clone();
+        self.baseline_levels_processed = self.levels_processed.clone();
+        self.baseline_levels_raw = self.levels_raw.clone();
+
         self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
 
@@ -959,25 +982,27 @@ impl FffViewerApp {
         self.selected_input_profile = None;
         self.selected_preset = None;
         self.use_embedded_icc = false;
+        self.embedded_correction_index = None;
         self.color_status = None;
 
         // Re-decode preview with downscaling, auto-apply embedded correction if available
         if let Some(detail) = &mut self.detail {
             if let Some(img) = detail.tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
                 // Auto-apply embedded correction (same as initial load)
-                let (processed, corrected) = if let Some(ref eh) = detail.edit_history {
+                let (processed, corrected, emb_idx) = if let Some(ref eh) = detail.edit_history {
                     if !eh.settings.is_empty() {
                         let idx = eh.current_index.min(eh.settings.len() - 1);
                         let correction = &eh.settings[idx].correction;
                         log::info!("Reset: re-applying embedded correction");
-                        (color::apply_film_processing(&img, correction), true)
+                        (color::apply_film_processing(&img, correction), true, Some(idx))
                     } else {
-                        (img, false)
+                        (img, false, None)
                     }
                 } else {
-                    (img, false)
+                    (img, false, None)
                 };
                 self.use_embedded_correction = corrected;
+                self.embedded_correction_index = emb_idx;
 
                 detail.base_rgb = Some(to_rgb16(&processed));
             }
@@ -985,6 +1010,67 @@ impl FffViewerApp {
         self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
         log::info!("Color profile reset");
+    }
+
+    /// 当用户更改胶片类型时，使用新的 film_type 重新处理管线。
+    /// 从 raw_rgb（ICC 校正后）重新开始胶片处理。
+    pub(super) fn reprocess_with_film_type(&mut self, ctx: &egui::Context) {
+        let new_film_type = self.manual_adjust.film_type;
+        log::info!("Reprocessing with film_type={}", new_film_type);
+
+        let Some(detail) = &self.detail else { return };
+        let Some(raw_rgb) = detail.raw_rgb.as_ref() else {
+            // 没有 raw_rgb，尝试直接重新处理
+            self.apply_color_profile(ctx);
+            return;
+        };
+
+        let mut result = image::DynamicImage::ImageRgb16(raw_rgb.clone());
+
+        // 构建临时 correction，使用新的 film_type
+        let correction = if self.use_embedded_correction {
+            let emb_idx = self.embedded_correction_index;
+            detail.edit_history.as_ref().and_then(|h| {
+                if h.settings.is_empty() { return None; }
+                let idx = emb_idx.unwrap_or(h.current_index.min(h.settings.len() - 1));
+                h.settings.get(idx).map(|s| {
+                    let mut c = s.correction.clone();
+                    c.film_type = new_film_type;
+                    c
+                })
+            })
+        } else {
+            self.selected_preset.and_then(|idx| {
+                self.available_presets.get(idx).and_then(|p| {
+                    std::fs::read_to_string(&p.path)
+                        .ok()
+                        .and_then(|xml| flexcolor::parse_settings_xml(&xml))
+                        .map(|mut c| { c.film_type = new_film_type; c })
+                })
+            })
+        };
+
+        if let Some(ref correction) = correction {
+            let mut film_corr = correction.clone();
+            film_corr.shadow = [0; 4];
+            film_corr.highlight = [16383; 4];
+            film_corr.gray = [128; 4];
+            film_corr.saturation = 0;
+            result = color::apply_film_processing(&result, &film_corr);
+
+            // 应用渐变曲线
+            if correction.apply_curves && !correction.gradations.is_empty() {
+                result = color::apply_gradation_curves(&result, &correction.gradations);
+            }
+        }
+
+        let rgb16 = to_rgb16(&result);
+        if let Some(detail) = &mut self.detail {
+            detail.base_rgb = Some(rgb16);
+        }
+
+        self.histogram_needs_update = true;
+        self.rebuild_texture_from_base(ctx);
     }
 
     /// 根据当前直方图数据源选择对应的 16-bit 基准图像，应用手动调整后重建显示纹理。
@@ -1384,14 +1470,46 @@ impl FffViewerApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(reset_adjust).clicked() {
+                    // 重置到色彩方案加载后的基线状态（而非全部清零）
                     let enabled = self.manual_adjust.enabled;
-                    self.manual_adjust = color::ManualAdjust { enabled, ..Default::default() };
-                    self.levels_processed = HistogramLevels::default();
-                    self.levels_raw = HistogramLevels::default();
+                    self.manual_adjust = color::ManualAdjust { enabled, ..self.baseline_adjust.clone() };
+                    self.levels_processed = self.baseline_levels_processed.clone();
+                    self.levels_raw = self.baseline_levels_raw.clone();
                     rebuild = true;
                 }
             });
         });
+
+        ui.add_space(4.0);
+
+        // ── 胶片类型选择 ────────────────────────────────────────────────
+        {
+            let film_type_label = match self.manual_adjust.film_type {
+                0 => s.film_type_positive,
+                1 => s.film_type_negative,
+                2 => s.film_type_bw_negative,
+                _ => "?",
+            };
+            ui.horizontal(|ui| {
+                ui.label(s.film_type_label);
+                egui::ComboBox::from_id_salt("film_type_combo")
+                    .selected_text(film_type_label)
+                    .width(ui.available_width() - 16.0)
+                    .show_ui(ui, |ui| {
+                        for (val, label) in [
+                            (0i64, s.film_type_positive),
+                            (1, s.film_type_negative),
+                            (2, s.film_type_bw_negative),
+                        ] {
+                            if ui.selectable_value(&mut self.manual_adjust.film_type, val, label).clicked() {
+                                // 胶片类型变更需要重新处理整个管线
+                                self.reprocess_with_film_type(ctx);
+                                rebuild = false; // reprocess 已经重建纹理
+                            }
+                        }
+                    });
+            });
+        }
 
         ui.add_space(4.0);
 
