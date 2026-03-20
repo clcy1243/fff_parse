@@ -1520,6 +1520,44 @@ impl FffViewerApp {
         );
     }
 
+    /// 文件右键菜单：复制路径、复制文件名、在 Finder 中显示、用默认应用打开。
+    pub(super) fn file_context_menu(&self, ui: &mut egui::Ui, path: &std::path::Path) {
+        let s = self.s();
+
+        if ui.button(s.ctx_copy_path).clicked() {
+            ui.ctx().copy_text(path.to_string_lossy().into_owned());
+            ui.close_menu();
+        }
+        if ui.button(s.ctx_copy_filename).clicked() {
+            let name = path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            ui.ctx().copy_text(name);
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button(s.ctx_reveal_in_finder).clicked() {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open")
+                    .arg("-R")
+                    .arg(path)
+                    .spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(dir) = path.parent() {
+                    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                }
+            }
+            ui.close_menu();
+        }
+        if ui.button(s.ctx_open_default).clicked() {
+            let _ = std::process::Command::new("open").arg(path).spawn();
+            ui.close_menu();
+        }
+    }
+
     // ── 辅助函数 ─────────────────────────────────────────────────────
 
     /// 渲染参数标签芯片（label:value 格式），已修改时高亮显示

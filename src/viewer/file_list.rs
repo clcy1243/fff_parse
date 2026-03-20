@@ -182,6 +182,11 @@ impl FffViewerApp {
                                 double_clicked = Some(idx);
                             }
 
+                            // 右键菜单
+                            resp.context_menu(|ui| {
+                                self.file_context_menu(ui, path);
+                            });
+
                             if (col_pos + 1) % cols == 0 {
                                 ui.end_row();
                             }

@@ -55,14 +55,12 @@ impl FffViewerApp {
                 let display_size = egui::vec2(tex_size.x * scale, tex_size.y * scale);
 
                 // Allocate full area with click+drag sensing for split interaction
-                let (full_rect, response) = ui.allocate_exact_size(
-                    available,
-                    if self.info_panel == InfoPanel::Split {
-                        egui::Sense::click_and_drag()
-                    } else {
-                        egui::Sense::hover()
-                    },
-                );
+                let sense = if self.info_panel == InfoPanel::Split {
+                    egui::Sense::click_and_drag()
+                } else {
+                    egui::Sense::click() | egui::Sense::hover()
+                };
+                let (full_rect, response) = ui.allocate_exact_size(available, sense);
 
                 // 在全部分配区域内居中绘制图像
                 let image_rect =
@@ -87,6 +85,14 @@ impl FffViewerApp {
                         &self.split_state.regions,
                         self.split_state.selected,
                     );
+                }
+
+                // 右键菜单
+                if let Some(idx) = self.selected_index {
+                    let path = self.fff_files[idx].clone();
+                    response.context_menu(|ui| {
+                        self.file_context_menu(ui, &path);
+                    });
                 }
             } else {
                 ui.centered_and_justified(|ui| {

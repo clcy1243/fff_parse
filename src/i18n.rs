@@ -187,6 +187,12 @@ pub struct Strings {
     pub auto_levels_black_pct: &'static str,
     pub auto_levels_white_pct: &'static str,
 
+    // Context menu
+    pub ctx_copy_path: &'static str,
+    pub ctx_copy_filename: &'static str,
+    pub ctx_reveal_in_finder: &'static str,
+    pub ctx_open_default: &'static str,
+
     // File filter
     pub file_filter_placeholder: &'static str,
     pub file_filter_clear: &'static str,
@@ -356,6 +362,11 @@ static EN: Strings = Strings {
     auto_levels_black_pct: "Black point clip %",
     auto_levels_white_pct: "White point clip %",
 
+    ctx_copy_path: "📋 Copy Path",
+    ctx_copy_filename: "📋 Copy Filename",
+    ctx_reveal_in_finder: "📂 Reveal in Finder",
+    ctx_open_default: "🔗 Open with Default App",
+
     file_filter_placeholder: "🔎 Filter by name or format…",
     file_filter_clear: "✕",
     files_filtered: "{} / {} files",
@@ -520,6 +531,11 @@ static ZH: Strings = Strings {
     auto_levels_clip: "自动色阶裁切",
     auto_levels_black_pct: "黑点裁切 %",
     auto_levels_white_pct: "白点裁切 %",
+
+    ctx_copy_path: "📋 复制路径",
+    ctx_copy_filename: "📋 复制文件名",
+    ctx_reveal_in_finder: "📂 在 Finder 中显示",
+    ctx_open_default: "🔗 用默认应用打开",
 
     file_filter_placeholder: "🔎 按文件名或格式筛选…",
     file_filter_clear: "✕",
