@@ -898,11 +898,16 @@ impl FffViewerApp {
             // 胶片类型处理后保存为 raw_rgb（直方图将显示实际的色阶分布，含空段）
             raw_after_film = Some(to_rgb16(&result));
 
-            // 色阶已经烘焙到 raw_rgb，UI 手柄设为恒等（用户可在此基础上微调）
-            for i in 0..4 {
-                self.manual_adjust.levels_black[i] = 0.0;
-                self.manual_adjust.levels_gamma[i] = 1.0;
-                self.manual_adjust.levels_white[i] = 255.0;
+            // 色阶已烘焙到 raw_rgb，手柄显示色彩方案中的原始值（仅做参考标记）
+            if correction.apply_histogram {
+                for i in 0..4 {
+                    let s_val = (correction.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let h_val = (correction.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let g_val = 1.0 / (correction.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+                    self.manual_adjust.levels_black[i] = s_val;
+                    self.manual_adjust.levels_white[i] = h_val;
+                    self.manual_adjust.levels_gamma[i] = g_val;
+                }
             }
 
             // 提取胶片类型
