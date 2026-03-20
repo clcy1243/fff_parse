@@ -904,11 +904,12 @@ impl FffViewerApp {
         self.manual_adjust.levels_white = store.white;
     }
 
-    /// 从 16-bit 基准 RGB 图像计算 RGBL 四通道直方图（显示用 256 bin，>>8 映射）。
-    /// 根据 `histogram_source` 选择数据源：Processed 使用处理后的图像，Raw 使用原始图像。
+    /// 从 16-bit 基准 RGB 图像计算 RGBL 四通道直方图。
+    /// 内部使用 65536 bin（精确百分位计算），并派生 256 bin 版本（显示用）。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
             self.histogram = None;
+            self.histogram_16 = None;
             return;
         };
 
@@ -919,24 +920,31 @@ impl FffViewerApp {
 
         let Some(base) = source_img else {
             self.histogram = None;
+            self.histogram_16 = None;
             return;
         };
 
-        // 16-bit 值 >>8 映射到 256 bin 用于显示。
-        // histogram[0..2] = R,G,B；histogram[3] = 亮度（用于 RGB 合并视图）。
-        let mut hist = Box::new([[0u32; 256]; 4]);
+        // 65536-bin 精确直方图
+        let mut hist_16: Vec<Vec<u32>> = vec![vec![0u32; 65536]; 4];
         for pixel in base.pixels() {
             let [r16, g16, b16] = pixel.0;
-            let r8 = (r16 >> 8) as usize;
-            let g8 = (g16 >> 8) as usize;
-            let b8 = (b16 >> 8) as usize;
-            hist[0][r8] += 1;
-            hist[1][g8] += 1;
-            hist[2][b8] += 1;
-            let lum = (0.2126 * r8 as f32 + 0.7152 * g8 as f32 + 0.0722 * b8 as f32) as u8;
-            hist[3][lum as usize] += 1;
+            hist_16[0][r16 as usize] += 1;
+            hist_16[1][g16 as usize] += 1;
+            hist_16[2][b16 as usize] += 1;
+            let lum = (0.2126 * r16 as f32 + 0.7152 * g16 as f32 + 0.0722 * b16 as f32) as usize;
+            hist_16[3][lum.min(65535)] += 1;
         }
+
+        // 派生 256-bin 显示用直方图（每 256 个 16-bit bin 合并为 1 个显示 bin）
+        let mut hist = Box::new([[0u32; 256]; 4]);
+        for ch in 0..4 {
+            for i in 0..65536 {
+                hist[ch][i >> 8] += hist_16[ch][i];
+            }
+        }
+
         self.histogram = Some(hist);
+        self.histogram_16 = Some(hist_16);
         self.histogram_needs_update = false;
     }
 
@@ -977,33 +985,36 @@ impl FffViewerApp {
         }
     }
 
-    /// 根据直方图按指定百分位计算黑白点。
+    /// 根据 65536-bin 直方图按指定百分位计算黑白点（返回 0-255 浮点精度值）。
     /// `black_pct`：黑点裁切百分比（如 0.05 表示 0.05%）。
     /// `white_pct`：白点裁切百分比（如 0.1 表示 0.1%）。
-    pub(super) fn auto_percentile_levels(hist: &[u32; 256], black_pct: f32, white_pct: f32) -> (f32, f32) {
-        let total: u32 = hist.iter().sum();
+    pub(super) fn auto_percentile_levels(hist: &[u32], black_pct: f32, white_pct: f32) -> (f32, f32) {
+        let total: u64 = hist.iter().map(|&c| c as u64).sum();
         if total == 0 { return (0.0, 255.0); }
-        let lo_target = ((total as f32 * black_pct / 100.0) as u32).max(1);
-        let hi_target = ((total as f32 * white_pct / 100.0) as u32).max(1);
+        let bins = hist.len() as f32;
+        let scale = 255.0 / (bins - 1.0); // 映射到 0-255 空间
 
-        let mut b = 0f32;
-        let mut cumsum = 0u32;
+        let lo_target = ((total as f64 * black_pct as f64 / 100.0) as u64).max(1);
+        let hi_target = ((total as f64 * white_pct as f64 / 100.0) as u64).max(1);
+
+        let mut b = 0.0f32;
+        let mut cumsum = 0u64;
         for (i, &count) in hist.iter().enumerate() {
-            cumsum += count;
-            if cumsum >= lo_target { b = i as f32; break; }
+            cumsum += count as u64;
+            if cumsum >= lo_target { b = i as f32 * scale; break; }
         }
 
-        let mut w = 255f32;
+        let mut w = 255.0f32;
         cumsum = 0;
         for (i, &count) in hist.iter().enumerate().rev() {
-            cumsum += count;
-            if cumsum >= hi_target { w = i as f32; break; }
+            cumsum += count as u64;
+            if cumsum >= hi_target { w = i as f32 * scale; break; }
         }
-        (b, w.max(b + 1.0))
+        (b, w.max(b + 0.1))
     }
 
     /// 渲染单通道色阶区段：直方图 + 渐变轨道 + 可拖拽黑/灰/白三角手柄。
-    /// `clip_pct`：自动色阶裁切百分比 (black_pct, white_pct)。
+    /// `auto_bw`：从 65536-bin 直方图预计算的精确黑白点 (black, white)。
     /// 返回 true 表示有值被修改。
     pub(super) fn render_levels_section(
         ui: &mut egui::Ui,
@@ -1011,7 +1022,7 @@ impl FffViewerApp {
         title: &str,
         hist: Option<&[u32; 256]>,
         bar_color: egui::Color32,
-        clip_pct: (f32, f32),
+        auto_bw: Option<(f32, f32)>,
         black: &mut f32,
         gamma: &mut f32,
         white: &mut f32,
@@ -1025,14 +1036,13 @@ impl FffViewerApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(egui::Button::new(egui::RichText::new("A").small())
                     .min_size(egui::vec2(16.0, 0.0)))
-                    .on_hover_text(format!("Auto-set levels ({:.2}%–{:.2}% clip)", clip_pct.0, clip_pct.1))
+                    .on_hover_text("Auto-set levels (16-bit precision)")
                     .clicked()
             }).inner
         }).inner;
 
         if auto_clicked {
-            if let Some(h) = hist {
-                let (b, w) = Self::auto_percentile_levels(h, clip_pct.0, clip_pct.1);
+            if let Some((b, w)) = auto_bw {
                 *black = b;
                 *white = w;
                 *gamma = 1.0;
@@ -1163,7 +1173,7 @@ impl FffViewerApp {
         );
         if r_white.dragged() {
             *white = (*white + r_white.drag_delta().x / track_rect.width() * 255.0)
-                .clamp(*black + 1.0, 255.0);
+                .clamp(*black + 0.1, 255.0);
             changed = true;
         }
 
@@ -1174,7 +1184,7 @@ impl FffViewerApp {
         );
         if r_black.dragged() {
             *black = (*black + r_black.drag_delta().x / track_rect.width() * 255.0)
-                .clamp(0.0, *white - 1.0);
+                .clamp(0.0, *white - 0.1);
             changed = true;
         }
 
@@ -1194,17 +1204,17 @@ impl FffViewerApp {
         }
 
         // ── Compact numeric inputs below the track ───────────────────────
-        let max_black = (*white - 1.0).max(0.0);
-        let min_white = (*black + 1.0).min(255.0);
+        let max_black = (*white - 0.1).max(0.0);
+        let min_white = (*black + 0.1).min(255.0);
         ui.columns(3, |cols| {
             if cols[0].add(
-                egui::DragValue::new(black).range(0.0..=max_black).max_decimals(0).speed(0.5),
+                egui::DragValue::new(black).range(0.0..=max_black).max_decimals(2).speed(0.25),
             ).on_hover_text("Black point").changed() { changed = true; }
             if cols[1].add(
                 egui::DragValue::new(gamma).range(0.10..=9.99).max_decimals(2).speed(0.01),
             ).on_hover_text("Midtone gamma").changed() { changed = true; }
             if cols[2].add(
-                egui::DragValue::new(white).range(min_white..=255.0).max_decimals(0).speed(0.5),
+                egui::DragValue::new(white).range(min_white..=255.0).max_decimals(2).speed(0.25),
             ).on_hover_text("White point").changed() { changed = true; }
         });
 
@@ -1293,6 +1303,21 @@ impl FffViewerApp {
         // 读取直方图数据用于渲染
         let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
 
+        // 从 65536-bin 直方图预计算各通道精确黑白点（避免渲染循环中的借用冲突）
+        let clip_pct = (
+            self.app_config.auto_levels_black_pct,
+            self.app_config.auto_levels_white_pct,
+        );
+        // sections 顺序: [RGB合并(hist ch3), R(ch0), G(ch1), B(ch2)]
+        let hist_ch_order = [3usize, 0, 1, 2];
+        let auto_bw: [Option<(f32, f32)>; 4] = if let Some(ref h16) = self.histogram_16 {
+            std::array::from_fn(|i| {
+                Some(Self::auto_percentile_levels(&h16[hist_ch_order[i]], clip_pct.0, clip_pct.1))
+            })
+        } else {
+            [None; 4]
+        };
+
         ui.add_space(2.0);
 
         // ── 4 histogram sections (outside ScrollArea so scrollbar can't overlap) ──
@@ -1304,11 +1329,6 @@ impl FffViewerApp {
         ];
         let levels_idx = [0usize, 1usize, 2usize, 3usize];
 
-        let clip_pct = (
-            self.app_config.auto_levels_black_pct,
-            self.app_config.auto_levels_white_pct,
-        );
-
         for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
             let lvl_idx = levels_idx[section_pos];
             let hist = hist_data.as_ref().map(|hd| &hd[*hist_ch]);
@@ -1319,7 +1339,7 @@ impl FffViewerApp {
                 title,
                 hist,
                 *bar_color,
-                clip_pct,
+                auto_bw[section_pos],
                 &mut self.manual_adjust.levels_black[lvl_idx],
                 &mut self.manual_adjust.levels_gamma[lvl_idx],
                 &mut self.manual_adjust.levels_white[lvl_idx],

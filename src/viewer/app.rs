@@ -73,6 +73,7 @@ impl FffViewerApp {
             info_panel: InfoPanel::Metadata,
             manual_adjust: color::ManualAdjust::default(),
             histogram: None,
+            histogram_16: None,
             histogram_needs_update: false,
             histogram_source: HistogramSource::Processed,
             levels_processed: HistogramLevels::default(),

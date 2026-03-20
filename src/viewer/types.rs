@@ -500,6 +500,7 @@ pub struct FffViewerApp {
     pub(super) info_panel: InfoPanel,
     pub(super) manual_adjust: color::ManualAdjust,
     pub(super) histogram: Option<Box<[[u32; 256]; 4]>>,
+    pub(super) histogram_16: Option<Vec<Vec<u32>>>,
     pub(super) histogram_needs_update: bool,
     pub(super) histogram_source: HistogramSource,
     /// 处理后数据源的色阶手柄状态
