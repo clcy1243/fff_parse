@@ -6,6 +6,8 @@ pub struct ManualAdjust {
     pub enabled: bool,
     /// 曝光补偿（档位）：-3.0 ~ 3.0
     pub exposure: f32,
+    /// 亮度：-100 ~ 100
+    pub brightness: f32,
     /// 对比度：-100 ~ 100
     pub contrast: f32,
     /// 高光：-100 ~ 100
@@ -34,7 +36,8 @@ impl Default for ManualAdjust {
     fn default() -> Self {
         Self {
             enabled: false,
-            exposure: 0.0, contrast: 0.0, highlights: 0.0, shadows: 0.0,
+            exposure: 0.0, brightness: 0.0, contrast: 0.0,
+            highlights: 0.0, shadows: 0.0,
             saturation: 0.0, r_shift: 0.0, g_shift: 0.0, b_shift: 0.0,
             levels_black: [0.0; 4],
             levels_gamma: [1.0; 4],
@@ -48,6 +51,7 @@ impl ManualAdjust {
     pub fn is_identity(&self) -> bool {
         !self.enabled
             || (self.exposure.abs() < 0.001
+                && self.brightness.abs() < 0.1
                 && self.contrast.abs() < 0.1
                 && self.highlights.abs() < 0.1
                 && self.shadows.abs() < 0.1
@@ -137,6 +141,10 @@ fn apply_adjust_16(
                 let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
             }
+            if adj.brightness.abs() > 0.1 {
+                let b = adj.brightness / 100.0;
+                v = (v + b * 0.5).clamp(0.0, 1.0);
+            }
 
             lut[i as usize] = (v * 65535.0) as u16;
         }
@@ -218,6 +226,10 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
                 let c = adj.contrast / 100.0;
                 let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
+            }
+            if adj.brightness.abs() > 0.1 {
+                let b = adj.brightness / 100.0;
+                v = (v + b * 0.5).clamp(0.0, 1.0);
             }
             luts[ch][i as usize] = (v * 255.0) as u8;
         }

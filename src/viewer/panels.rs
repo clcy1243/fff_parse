@@ -885,18 +885,32 @@ impl FffViewerApp {
             film_correction.shadow = [0; 4];
             film_correction.highlight = [16383; 4]; // 16383 × 4 ≈ 65535
             film_correction.gray = [128; 4]; // 128 = gamma 1.0
+            film_correction.saturation = 0; // 饱和度由手柄控制
 
             result = color::apply_film_processing(&result, &film_correction);
 
             // 将 correction 的色阶映射到 0-255 手柄值
-            for i in 0..4 {
-                let s_val = (correction.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
-                let h_val = (correction.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
-                let g_val = 1.0 / (correction.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
-                self.manual_adjust.levels_black[i] = s_val;
-                self.manual_adjust.levels_white[i] = h_val;
-                self.manual_adjust.levels_gamma[i] = g_val;
+            if correction.apply_histogram {
+                for i in 0..4 {
+                    let s_val = (correction.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let h_val = (correction.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let g_val = 1.0 / (correction.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+                    self.manual_adjust.levels_black[i] = s_val;
+                    self.manual_adjust.levels_white[i] = h_val;
+                    self.manual_adjust.levels_gamma[i] = g_val;
+                }
             }
+
+            // 将滑块参数（饱和度/EV/对比度/亮度）映射到手柄
+            if correction.apply_sliders {
+                self.manual_adjust.saturation = correction.saturation as f32;
+                if (correction.ev - 1.0).abs() > 0.001 {
+                    self.manual_adjust.exposure = correction.ev.log2() as f32;
+                }
+                self.manual_adjust.contrast = correction.contrast as f32;
+                self.manual_adjust.brightness = correction.brightness as f32;
+            }
+
             self.manual_adjust.enabled = true;
             // 同步到两组手柄状态
             self.levels_processed = HistogramLevels {
@@ -1339,6 +1353,7 @@ impl FffViewerApp {
         let adjust_enabled = s.adjust_enabled;
         let reset_adjust = s.reset_adjust;
         let exposure_str = s.exposure;
+        let brightness_str = s.brightness;
         let contrast_str = s.contrast;
         let highlights_str = s.highlights;
         let shadows_str = s.shadows;
@@ -1462,6 +1477,11 @@ impl FffViewerApp {
 
             ui.label(exposure_str);
             if ui.add(egui::Slider::new(&mut adj.exposure, -3.0..=3.0).step_by(0.05).text("stops")).changed() {
+                rebuild = true;
+            }
+
+            ui.label(brightness_str);
+            if ui.add(egui::Slider::new(&mut adj.brightness, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 

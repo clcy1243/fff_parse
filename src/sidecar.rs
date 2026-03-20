@@ -92,6 +92,7 @@ fn to_xml(c: &SidecarConfig) -> String {
     s.push_str("  <adjust>\n");
     let _ = writeln!(s, "    <adj_enabled>{}</adj_enabled>", a.enabled);
     let _ = writeln!(s, "    <adj_exposure>{}</adj_exposure>", a.exposure);
+    let _ = writeln!(s, "    <adj_brightness>{}</adj_brightness>", a.brightness);
     let _ = writeln!(s, "    <adj_contrast>{}</adj_contrast>", a.contrast);
     let _ = writeln!(s, "    <adj_highlights>{}</adj_highlights>", a.highlights);
     let _ = writeln!(s, "    <adj_shadows>{}</adj_shadows>", a.shadows);
@@ -198,6 +199,9 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     }
     if let Some(v) = tag_content(xml, "adj_exposure") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.exposure = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_brightness") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.brightness = f; }
     }
     if let Some(v) = tag_content(xml, "adj_contrast") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.contrast = f; }

@@ -191,6 +191,7 @@ impl FffViewerApp {
             film_corr.shadow = [0; 4];
             film_corr.highlight = [16383; 4];
             film_corr.gray = [128; 4];
+            film_corr.saturation = 0;
             img = color::apply_film_processing(&img, &film_corr);
         }
 
@@ -672,6 +673,7 @@ impl FffViewerApp {
             film_corr.shadow = [0; 4];
             film_corr.highlight = [16383; 4];
             film_corr.gray = [128; 4];
+            film_corr.saturation = 0;
             img = color::apply_film_processing(&img, &film_corr);
         }
         if !pipeline.manual_adjust.is_identity() {

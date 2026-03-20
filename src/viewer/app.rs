@@ -355,11 +355,12 @@ impl FffViewerApp {
                     if has_sidecar {
                         // Restore settings from sidecar
                         self.apply_sidecar(sidecar.as_ref().unwrap(), ctx);
+                    } else if result.auto_corrected {
+                        // 内嵌校正已在后台线程预览中应用，这里需要重新通过完整管线处理
+                        // 以正确提取色阶/饱和度等参数到 UI 手柄
+                        self.use_embedded_correction = true;
+                        self.apply_color_profile(ctx);
                     } else {
-                        // Default: auto-apply embedded correction (film processing only)
-                        if result.auto_corrected {
-                            self.use_embedded_correction = true;
-                        }
                         self.histogram_needs_update = true;
                     }
                     self.loading_status = LoadingStatus::Idle;
