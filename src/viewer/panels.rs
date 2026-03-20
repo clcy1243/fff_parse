@@ -869,15 +869,20 @@ impl FffViewerApp {
         log::info!("Color profile reset");
     }
 
-    /// 根据 16-bit 基准 RGB 图像和手动调整参数重建显示纹理。
-    /// 管线：16-bit base → 16-bit 手动调整 → >>8 转 8-bit → egui 纹理
+    /// 根据当前直方图数据源选择对应的 16-bit 基准图像，应用手动调整后重建显示纹理。
+    /// Raw 模式：raw_rgb → manual_adjust → 显示（绕过胶片处理，直接调整原始数据）
+    /// Processed 模式：base_rgb → manual_adjust → 显示（在胶片处理结果上调整）
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
-        let Some(ref base) = detail.base_rgb else { return };
+
+        let source = match self.histogram_source {
+            HistogramSource::Raw => detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref()),
+            HistogramSource::Processed => detail.base_rgb.as_ref(),
+        };
+        let Some(base) = source else { return };
 
         let img = image::DynamicImage::ImageRgb16(base.clone());
         let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
-        // apply_manual_adjust 现在返回 DynamicImage（可能是 16-bit 或 8-bit）
         let rgb16 = to_rgb16(&adjusted);
         detail.texture = Some(texture_from_16bit(&rgb16, ctx));
     }
@@ -1073,11 +1078,10 @@ impl FffViewerApp {
             let max_v = h_arr.iter().copied().max().unwrap_or(1).max(1) as f32;
             let w = hist_rect.width();
             let bar_w = (w / 256.0).max(1.0);
-            let log_max = max_v.ln_1p();
             for i in 0..256 {
                 let count = h_arr[i] as f32;
                 if count < 0.5 { continue; }
-                let bar_h = (count.ln_1p() / log_max * hist_h).min(hist_h);
+                let bar_h = (count / max_v * hist_h).ceil().min(hist_h);
                 let x = hist_rect.left() + i as f32 / 255.0 * w;
                 painter.rect_filled(
                     egui::Rect::from_min_size(
