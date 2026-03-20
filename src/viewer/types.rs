@@ -31,15 +31,6 @@ pub(super) enum ViewMode {
     Loupe,
 }
 
-/// 直方图数据源：原始（未处理）或当前（已加载色彩方案后）
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum HistogramSource {
-    /// 已加载色彩方案后的图像
-    Processed,
-    /// 未经任何色彩处理的原始图像
-    Raw,
-}
-
 /// 每个直方图数据源独立保存的色阶参数（黑点、白点、Gamma）。
 /// 切换数据源时，当前手柄状态保存到旧源，新源的手柄状态恢复到 `manual_adjust`。
 #[derive(Debug, Clone, PartialEq)]
@@ -501,10 +492,12 @@ pub struct FffViewerApp {
     // 右侧面板
     pub(super) info_panel: InfoPanel,
     pub(super) manual_adjust: color::ManualAdjust,
-    pub(super) histogram: Option<Box<[[u32; 256]; 4]>>,
-    pub(super) histogram_16: Option<Vec<Vec<u32>>>,
+    /// 原始直方图 (从 raw_rgb/base_rgb 计算，用于色阶调整)
+    pub(super) histogram_raw: Option<Box<[[u32; 256]; 4]>>,
+    pub(super) histogram_raw_16: Option<Vec<Vec<u32>>>,
+    /// 处理后直方图 (从最终渲染结果计算，仅显示)
+    pub(super) histogram_processed: Option<Box<[[u32; 256]; 4]>>,
     pub(super) histogram_needs_update: bool,
-    pub(super) histogram_source: HistogramSource,
     /// 处理后数据源的色阶手柄状态
     pub(super) levels_processed: HistogramLevels,
     /// 原始数据源的色阶手柄状态

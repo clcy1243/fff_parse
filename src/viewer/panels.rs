@@ -1118,12 +1118,25 @@ impl FffViewerApp {
         let img = image::DynamicImage::ImageRgb16(base.clone());
         let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
         let rgb16 = to_rgb16(&adjusted);
+
+        // 从最终渲染结果计算处理后直方图
+        let mut proc_hist = Box::new([[0u32; 256]; 4]);
+        for pixel in rgb16.pixels() {
+            let [r16, g16, b16] = pixel.0;
+            proc_hist[0][r16 as usize >> 8] += 1;
+            proc_hist[1][g16 as usize >> 8] += 1;
+            proc_hist[2][b16 as usize >> 8] += 1;
+            let lum = (0.2126 * r16 as f32 + 0.7152 * g16 as f32 + 0.0722 * b16 as f32) as usize;
+            proc_hist[3][(lum >> 8).min(255)] += 1;
+        }
+        self.histogram_processed = Some(proc_hist);
+
         detail.texture = Some(texture_from_16bit(&rgb16, ctx));
     }
 
     /// 将当前 `manual_adjust` 中的色阶手柄保存到两组存储（raw/processed 始终同步）。
     #[allow(dead_code)]
-    fn save_levels_to_source(&mut self, _source: HistogramSource) {
+    fn save_levels_to_source(&mut self) {
         let levels = HistogramLevels {
             black: self.manual_adjust.levels_black,
             gamma: self.manual_adjust.levels_gamma,
@@ -1135,29 +1148,31 @@ impl FffViewerApp {
 
     /// 从存储恢复色阶手柄到 `manual_adjust`（两组存储始终同步，使用 processed）。
     #[allow(dead_code)]
-    fn load_levels_from_source(&mut self, _source: HistogramSource) {
+    fn load_levels_from_source(&mut self) {
         self.manual_adjust.levels_black = self.levels_processed.black;
         self.manual_adjust.levels_gamma = self.levels_processed.gamma;
         self.manual_adjust.levels_white = self.levels_processed.white;
     }
 
-    /// 从 16-bit 基准 RGB 图像计算 RGBL 四通道直方图。
-    /// 内部使用 65536 bin（精确百分位计算），并派生 256 bin 版本（显示用）。
+    /// 计算原始直方图（从 base_rgb/raw_rgb，用于色阶调整的自动功能）。
+    /// 处理后直方图在 rebuild_texture_from_base() 中从渲染结果计算。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
-            self.histogram = None;
-            self.histogram_16 = None;
+            self.histogram_raw = None;
+            self.histogram_raw_16 = None;
             return;
         };
 
-        let source_img: Option<&Rgb16Image> = match self.histogram_source {
-            HistogramSource::Raw => detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref()),
-            HistogramSource::Processed => detail.base_rgb.as_ref(),
+        // 原始直方图：使用渲染源（与 rebuild_texture_from_base 相同的起点）
+        let source_img = if self.manual_adjust.apply_curves {
+            detail.base_rgb.as_ref()
+        } else {
+            detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref())
         };
 
         let Some(base) = source_img else {
-            self.histogram = None;
-            self.histogram_16 = None;
+            self.histogram_raw = None;
+            self.histogram_raw_16 = None;
             return;
         };
 
@@ -1172,7 +1187,7 @@ impl FffViewerApp {
             hist_16[3][lum.min(65535)] += 1;
         }
 
-        // 派生 256-bin 显示用直方图（每 256 个 16-bit bin 合并为 1 个显示 bin）
+        // 派生 256-bin 显示用直方图
         let mut hist = Box::new([[0u32; 256]; 4]);
         for ch in 0..4 {
             for i in 0..65536 {
@@ -1180,14 +1195,14 @@ impl FffViewerApp {
             }
         }
 
-        self.histogram = Some(hist);
-        self.histogram_16 = Some(hist_16);
+        self.histogram_raw = Some(hist);
+        self.histogram_raw_16 = Some(hist_16);
         self.histogram_needs_update = false;
     }
 
     /// 渲染 RGB 三通道叠加直方图
     pub(super) fn render_histogram(&self, ui: &mut egui::Ui) {
-        let Some(ref hist) = self.histogram else { return };
+        let Some(ref hist) = self.histogram_raw else { return };
 
         let desired_size = egui::vec2(ui.available_width(), 80.0);
         let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
@@ -1459,6 +1474,40 @@ impl FffViewerApp {
         changed
     }
 
+    /// 仅渲染直方图条形图（无色阶控制），用于处理后直方图的只读显示。
+    fn render_histogram_bars(
+        ui: &mut egui::Ui,
+        hist: Option<&[u32; 256]>,
+        bar_color: egui::Color32,
+        hist_scale: config::HistogramScale,
+    ) {
+        let avail_w = ui.available_width();
+        let hist_h = 40.0_f32;
+        let (hist_rect, _) = ui.allocate_exact_size(egui::vec2(avail_w, hist_h), egui::Sense::hover());
+        let painter = ui.painter_at(hist_rect);
+        painter.rect_filled(hist_rect, 2.0, egui::Color32::from_gray(18));
+
+        if let Some(h_arr) = hist {
+            let max_v = h_arr.iter().copied().max().unwrap_or(1).max(1) as f32;
+            let w = hist_rect.width();
+            let bar_w = (w / 256.0).max(1.0);
+            for i in 0..256 {
+                let count = h_arr[i] as f32;
+                if count < 0.5 { continue; }
+                let bar_h = (hist_scale.map(count, max_v) * hist_h).ceil().min(hist_h);
+                let x = hist_rect.left() + i as f32 / 255.0 * w;
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(x, hist_rect.bottom() - bar_h),
+                        egui::vec2(bar_w, bar_h),
+                    ),
+                    0.0,
+                    bar_color,
+                );
+            }
+        }
+    }
+
     /// 渲染手动色彩调整面板：四通道色阶 + 曝光/对比度/高光/阴影/饱和度/色彩平衡滑块
     pub(super) fn render_color_adjust_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let s = self.s();
@@ -1485,8 +1534,6 @@ impl FffViewerApp {
         let hist_r = s.hist_r;
         let hist_g = s.hist_g;
         let hist_b = s.hist_b;
-        let hist_source_raw = s.hist_source_raw;
-        let hist_source_processed = s.hist_source_processed;
 
         // ── Header + reset (not scrollable) ────────────────────────────
         ui.heading(adjust_heading);
@@ -1537,38 +1584,21 @@ impl FffViewerApp {
 
         ui.add_space(4.0);
 
-        // ── 直方图数据源切换 ────────────────────────────────────────────
-        // 仅影响直方图显示，不影响图片渲染
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("📊").small());
-            let is_raw = self.histogram_source == HistogramSource::Raw;
-            if ui.selectable_label(!is_raw, hist_source_processed).clicked() && is_raw {
-                self.histogram_source = HistogramSource::Processed;
-                self.histogram_needs_update = true;
-            }
-            ui.label("|");
-            if ui.selectable_label(is_raw, hist_source_raw).clicked() && !is_raw {
-                self.histogram_source = HistogramSource::Raw;
-                self.histogram_needs_update = true;
-            }
-        });
-
-        // 数据源切换后立即重算直方图
+        // 数据源变更后重算原始直方图
         if self.histogram_needs_update {
             self.compute_histogram();
         }
 
-        // 读取直方图数据用于渲染
-        let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
+        // 读取原始直方图数据
+        let hist_raw_data: Option<[[u32; 256]; 4]> = self.histogram_raw.as_deref().copied();
 
-        // 从 65536-bin 直方图预计算各通道精确黑白点（避免渲染循环中的借用冲突）
+        // 从 65536-bin 直方图预计算各通道精确黑白点
         let clip_pct = (
             self.app_config.auto_levels_black_pct,
             self.app_config.auto_levels_white_pct,
         );
-        // sections 顺序: [RGB合并(hist ch3), R(ch0), G(ch1), B(ch2)]
         let hist_ch_order = [3usize, 0, 1, 2];
-        let auto_bw: [Option<(f32, f32)>; 4] = if let Some(ref h16) = self.histogram_16 {
+        let auto_bw: [Option<(f32, f32)>; 4] = if let Some(ref h16) = self.histogram_raw_16 {
             std::array::from_fn(|i| {
                 Some(Self::auto_percentile_levels(&h16[hist_ch_order[i]], clip_pct.0, clip_pct.1))
             })
@@ -1578,12 +1608,11 @@ impl FffViewerApp {
 
         ui.add_space(2.0);
 
-        // ── 色阶启用开关 ──
+        // ── 原始直方图色阶（可调整） ──
         if ui.checkbox(&mut self.manual_adjust.apply_levels, s.histogram_levels).changed() {
             rebuild = true;
         }
 
-        // ── 4 histogram sections (outside ScrollArea so scrollbar can't overlap) ──
         let sections: [(&str, usize, egui::Color32); 4] = [
             (hist_rgb, 3usize, egui::Color32::from_gray(160)),
             (hist_r,   0usize, egui::Color32::from_rgb(200, 50, 50)),
@@ -1594,7 +1623,7 @@ impl FffViewerApp {
 
         for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
             let lvl_idx = levels_idx[section_pos];
-            let hist = hist_data.as_ref().map(|hd| &hd[*hist_ch]);
+            let hist = hist_raw_data.as_ref().map(|hd| &hd[*hist_ch]);
             let section_id = ui.id().with(section_pos);
             if Self::render_levels_section(
                 ui,
@@ -1612,6 +1641,22 @@ impl FffViewerApp {
             }
             ui.add_space(4.0);
         }
+
+        ui.separator();
+        ui.add_space(2.0);
+
+        // ── 处理后直方图（仅显示，不可调整） ──
+        let hist_proc_data: Option<[[u32; 256]; 4]> = self.histogram_processed.as_deref().copied();
+        let hist_scale = config::HistogramScale::from_str(&self.app_config.histogram_scale);
+        egui::CollapsingHeader::new(egui::RichText::new(s.histogram_output).small().strong())
+            .default_open(false)
+            .show(ui, |ui| {
+                for (_section_pos, (_title, hist_ch, bar_color)) in sections.iter().enumerate() {
+                    let hist = hist_proc_data.as_ref().map(|hd| &hd[*hist_ch]);
+                    Self::render_histogram_bars(ui, hist, *bar_color, hist_scale);
+                    ui.add_space(2.0);
+                }
+            });
 
         ui.separator();
         ui.add_space(4.0);
