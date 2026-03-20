@@ -109,6 +109,7 @@ fn to_xml(c: &SidecarConfig) -> String {
     let _ = writeln!(s, "    <adj_apply_saturation>{}</adj_apply_saturation>", a.apply_saturation);
     let _ = writeln!(s, "    <adj_apply_color_balance>{}</adj_apply_color_balance>", a.apply_color_balance);
     let _ = writeln!(s, "    <adj_apply_color_temp>{}</adj_apply_color_temp>", a.apply_color_temp);
+    let _ = writeln!(s, "    <adj_apply_color_corr>{}</adj_apply_color_corr>", a.apply_color_corr);
     // values
     let _ = writeln!(s, "    <adj_exposure>{}</adj_exposure>", a.exposure);
     let _ = writeln!(s, "    <adj_brightness>{}</adj_brightness>", a.brightness);
@@ -129,6 +130,9 @@ fn to_xml(c: &SidecarConfig) -> String {
         a.levels_gamma[0], a.levels_gamma[1], a.levels_gamma[2], a.levels_gamma[3]);
     let _ = writeln!(s, "    <adj_levels_white>{},{},{},{}</adj_levels_white>",
         a.levels_white[0], a.levels_white[1], a.levels_white[2], a.levels_white[3]);
+    // color correction matrix (36 values as comma-separated)
+    let cc_str: Vec<String> = a.color_corr.iter().map(|v| v.to_string()).collect();
+    let _ = writeln!(s, "    <adj_color_corr>{}</adj_color_corr>", cc_str.join(","));
     s.push_str("  </adjust>\n");
 
     // Split section
@@ -239,6 +243,7 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     config.manual_adjust.apply_saturation = parse_bool_default_true(xml, "adj_apply_saturation");
     config.manual_adjust.apply_color_balance = parse_bool_default_true(xml, "adj_apply_color_balance");
     config.manual_adjust.apply_color_temp = parse_bool_default_true(xml, "adj_apply_color_temp");
+    config.manual_adjust.apply_color_corr = parse_bool_default_true(xml, "adj_apply_color_corr");
 
     if let Some(v) = tag_content(xml, "adj_film_type") {
         if let Ok(ft) = v.parse::<i64>() { config.manual_adjust.film_type = ft; }
@@ -298,6 +303,16 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
         let vals: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
         if vals.len() == 4 {
             config.manual_adjust.levels_white = [vals[0], vals[1], vals[2], vals[3]];
+        }
+    }
+    if let Some(v) = tag_content(xml, "adj_color_corr") {
+        let vals: Vec<i64> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if vals.len() == 36 {
+            let mut arr = [0i64; 36];
+            for (i, &val) in vals.iter().enumerate() {
+                arr[i] = val;
+            }
+            config.manual_adjust.color_corr = arr;
         }
     }
 

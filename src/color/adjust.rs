@@ -19,6 +19,7 @@ pub struct ManualAdjust {
     pub apply_saturation: bool,
     pub apply_color_balance: bool,
     pub apply_color_temp: bool,
+    pub apply_color_corr: bool,
 
     // ── 调整值 ──
     /// 曝光补偿（档位）：-3.0 ~ 3.0
@@ -48,6 +49,9 @@ pub struct ManualAdjust {
     /// 色调偏移：-100 ~ 100
     pub tint: f32,
 
+    /// 色彩校正矩阵 6×6 (RGBCMY)，整数值，默认全零(无校正)
+    pub color_corr: [i64; 36],
+
     // 色阶（输入范围）：索引 0=总通道, 1=R, 2=G, 3=B
     /// 输入黑点：0-255
     pub levels_black: [f32; 4],
@@ -65,10 +69,12 @@ impl Default for ManualAdjust {
             apply_brightness: true, apply_shadow_depth: true, apply_midtone: true,
             apply_contrast: true, apply_highlights: true, apply_shadows: true,
             apply_saturation: true, apply_color_balance: true, apply_color_temp: true,
+            apply_color_corr: true,
             exposure: 0.0, brightness: 0.0, lightness: 0.0, midtone: 1.0, contrast: 0.0,
             highlights: 0.0, shadows: 0.0,
             saturation: 0.0, r_shift: 0.0, g_shift: 0.0, b_shift: 0.0,
             color_temperature: 0.0, tint: 0.0,
+            color_corr: [0i64; 36],
             levels_black: [0.0; 4],
             levels_gamma: [1.0; 4],
             levels_white: [255.0; 4],
@@ -95,10 +101,12 @@ impl ManualAdjust {
             || (self.r_shift.abs() < 0.1 && self.g_shift.abs() < 0.1 && self.b_shift.abs() < 0.1);
         let color_temp_id = !self.apply_color_temp
             || (self.color_temperature.abs() < 0.1 && self.tint.abs() < 0.1);
+        let color_corr_id = !self.apply_color_corr
+            || self.color_corr.iter().all(|&v| v == 0);
 
         levels_id && exposure_id && brightness_id && shadow_depth_id && midtone_id
             && contrast_id && highlights_id && shadows_id && saturation_id
-            && color_balance_id && color_temp_id
+            && color_balance_id && color_temp_id && color_corr_id
     }
 }
 
@@ -220,6 +228,22 @@ fn apply_adjust_16(
     let row_len = w as usize * 3;
     let mut out = vec![0u16; row_len * h as usize];
 
+    // 色彩校正矩阵 (6×6 RGBCMY, 只使用 RGB 部分 3×3)
+    // cc[row][col]: row=输出通道(R/G/B), col=输入通道(R/G/B)
+    // 对角线 += 100 表示原色保留, 其余值为百分比混入
+    let apply_cc = adj.apply_color_corr && adj.color_corr.iter().any(|&v| v != 0);
+    let cc: [[f32; 3]; 3] = if apply_cc {
+        let m = &adj.color_corr;
+        // 矩阵前 3 行 × 前 3 列即 RGB→RGB 部分
+        [
+            [(100 + m[0]) as f32 / 100.0, m[1] as f32 / 100.0,       m[2] as f32 / 100.0],
+            [m[6] as f32 / 100.0,         (100 + m[7]) as f32 / 100.0, m[8] as f32 / 100.0],
+            [m[12] as f32 / 100.0,        m[13] as f32 / 100.0,      (100 + m[14]) as f32 / 100.0],
+        ]
+    } else {
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    };
+
     out.par_chunks_mut(row_len)
         .enumerate()
         .for_each(|(y, row)| {
@@ -230,6 +254,13 @@ fn apply_adjust_16(
                 let mut rf = luts[0][src[si] as usize] as f32;
                 let mut gf = luts[1][src[si + 1] as usize] as f32;
                 let mut bf = luts[2][src[si + 2] as usize] as f32;
+
+                if apply_cc {
+                    let r0 = rf; let g0 = gf; let b0 = bf;
+                    rf = (cc[0][0] * r0 + cc[0][1] * g0 + cc[0][2] * b0).clamp(0.0, 65535.0);
+                    gf = (cc[1][0] * r0 + cc[1][1] * g0 + cc[1][2] * b0).clamp(0.0, 65535.0);
+                    bf = (cc[2][0] * r0 + cc[2][1] * g0 + cc[2][2] * b0).clamp(0.0, 65535.0);
+                }
 
                 if sat.abs() > 0.001 {
                     let lum = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;
@@ -331,6 +362,18 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
     let row_len = w as usize * 3;
     let mut out = vec![0u8; row_len * h as usize];
 
+    let apply_cc = adj.apply_color_corr && adj.color_corr.iter().any(|&v| v != 0);
+    let cc: [[f32; 3]; 3] = if apply_cc {
+        let m = &adj.color_corr;
+        [
+            [(100 + m[0]) as f32 / 100.0, m[1] as f32 / 100.0,       m[2] as f32 / 100.0],
+            [m[6] as f32 / 100.0,         (100 + m[7]) as f32 / 100.0, m[8] as f32 / 100.0],
+            [m[12] as f32 / 100.0,        m[13] as f32 / 100.0,      (100 + m[14]) as f32 / 100.0],
+        ]
+    } else {
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    };
+
     out.par_chunks_mut(row_len)
         .enumerate()
         .for_each(|(y, row)| {
@@ -341,6 +384,13 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
                 let mut rf = luts[0][src[si] as usize] as f32;
                 let mut gf = luts[1][src[si + 1] as usize] as f32;
                 let mut bf = luts[2][src[si + 2] as usize] as f32;
+
+                if apply_cc {
+                    let r0 = rf; let g0 = gf; let b0 = bf;
+                    rf = (cc[0][0] * r0 + cc[0][1] * g0 + cc[0][2] * b0).clamp(0.0, 255.0);
+                    gf = (cc[1][0] * r0 + cc[1][1] * g0 + cc[1][2] * b0).clamp(0.0, 255.0);
+                    bf = (cc[2][0] * r0 + cc[2][1] * g0 + cc[2][2] * b0).clamp(0.0, 255.0);
+                }
 
                 if sat.abs() > 0.001 {
                     let lum = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;

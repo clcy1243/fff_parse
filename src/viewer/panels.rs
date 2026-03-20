@@ -931,6 +931,18 @@ impl FffViewerApp {
             // 提取色温/色调
             self.manual_adjust.color_temperature = correction.color_temperature as f32;
             self.manual_adjust.tint = correction.tint as f32;
+            // 提取色彩校正矩阵
+            if correction.apply_cc && correction.color_corr.len() == 36 {
+                let mut arr = [0i64; 36];
+                for (i, &v) in correction.color_corr.iter().enumerate() {
+                    arr[i] = v;
+                }
+                self.manual_adjust.color_corr = arr;
+                self.manual_adjust.apply_color_corr = true;
+            } else {
+                self.manual_adjust.color_corr = [0i64; 36];
+                self.manual_adjust.apply_color_corr = false;
+            }
             // 提取渐变曲线开关
             self.manual_adjust.apply_curves = correction.apply_curves && !correction.gradations.is_empty();
             // 同步到两组手柄状态
@@ -1723,6 +1735,38 @@ impl FffViewerApp {
             if ui.add(egui::Slider::new(&mut adj.b_shift, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
+
+            ui.add_space(8.0);
+
+            // 色彩校正矩阵
+            let cc_labels = ["R", "G", "B", "C", "M", "Y"];
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_color_corr, "").changed() { rebuild = true; }
+                ui.label(egui::RichText::new(s.apply_cc).strong());
+            });
+            egui::Grid::new("cc_matrix_grid")
+                .striped(true)
+                .num_columns(7)
+                .show(ui, |ui| {
+                    // header row
+                    ui.label("");
+                    for label in &cc_labels {
+                        ui.label(egui::RichText::new(*label).small().strong());
+                    }
+                    ui.end_row();
+                    for row in 0..6 {
+                        ui.label(egui::RichText::new(cc_labels[row]).small().strong());
+                        for col in 0..6 {
+                            let idx = row * 6 + col;
+                            let mut val = adj.color_corr[idx] as i32;
+                            if ui.add(egui::DragValue::new(&mut val).range(-100..=100).speed(1)).changed() {
+                                adj.color_corr[idx] = val as i64;
+                                rebuild = true;
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
         });
 
         if rebuild {
@@ -2053,6 +2097,22 @@ impl FffViewerApp {
                             &Self::bool_icon(corr.apply_histogram),
                         );
                         Self::detail_row(ui, s.apply_cc, &Self::bool_icon(corr.apply_cc));
+
+                        // 色彩校正矩阵 6×6
+                        if !corr.color_corr.is_empty() {
+                            ui.label(egui::RichText::new("CC Matrix").small());
+                            ui.end_row();
+                            let cols = 6;
+                            for row in 0..(corr.color_corr.len() / cols) {
+                                let start = row * cols;
+                                let end = (start + cols).min(corr.color_corr.len());
+                                let vals: Vec<String> = corr.color_corr[start..end]
+                                    .iter()
+                                    .map(|v| format!("{}", v))
+                                    .collect();
+                                Self::detail_row(ui, &format!("  R{}", row + 1), &vals.join(", "));
+                            }
+                        }
                         Self::detail_row(
                             ui,
                             s.noise_filter,
