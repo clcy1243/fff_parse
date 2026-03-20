@@ -133,8 +133,8 @@ pub struct ImageCorrection {
     pub auto_shadow: i64,
     /// 处理模式
     pub mode: i64,
-    /// USM 色彩因子
-    pub usm_col_factor: i64,
+    /// USM 色彩因子 [R, G, B]
+    pub usm_col_factor: Vec<i64>,
     /// 直方图色阶：暗部，按通道 [RGB, R, G, B]
     pub shadow: [i64; 4],
     /// 直方图色阶：中间调，按通道 [RGB, R, G, B]

@@ -923,7 +923,7 @@ impl FffViewerApp {
             // 提取胶片类型
             self.manual_adjust.film_type = correction.film_type;
 
-            // 将滑块参数（饱和度/EV/对比度/亮度/明度）映射到手柄
+            // 将滑块参数（饱和度/EV/对比度/亮度/阴影深度/中间调）映射到手柄
             if correction.apply_sliders {
                 self.manual_adjust.saturation = correction.saturation as f32;
                 if (correction.ev - 1.0).abs() > 0.001 {
@@ -932,6 +932,8 @@ impl FffViewerApp {
                 self.manual_adjust.contrast = correction.contrast as f32;
                 self.manual_adjust.brightness = correction.brightness as f32;
                 self.manual_adjust.lightness = correction.lightness as f32;
+                // 中间调 = Gamma - 1.0（FlexColor 的 Gamma 默认 2.0，即中间调 1.0）
+                self.manual_adjust.midtone = (correction.gamma - 1.0) as f32;
             }
 
             self.manual_adjust.enabled = true;
@@ -1467,6 +1469,7 @@ impl FffViewerApp {
         let exposure_str = s.exposure;
         let brightness_str = s.brightness;
         let lightness_str = s.lightness;
+        let midtone_str = s.midtone_adj;
         let contrast_str = s.contrast;
         let highlights_str = s.highlights;
         let shadows_str = s.shadows;
@@ -1632,6 +1635,11 @@ impl FffViewerApp {
 
             ui.label(lightness_str);
             if ui.add(egui::Slider::new(&mut adj.lightness, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.label(midtone_str);
+            if ui.add(egui::Slider::new(&mut adj.midtone, 0.1..=4.0).step_by(0.01).text("")).changed() {
                 rebuild = true;
             }
 
@@ -1920,6 +1928,7 @@ impl FffViewerApp {
                     .num_columns(2)
                     .show(ui, |ui| {
                         Self::detail_row(ui, s.gamma, &format!("{}", corr.gamma));
+                        Self::detail_row(ui, s.midtone_adj, &format!("{:.1}", corr.gamma - 1.0));
                         Self::detail_row(ui, s.ev, &format!("{}", corr.ev));
                         Self::detail_row(ui, s.contrast, &format!("{}", corr.contrast));
                         Self::detail_row(ui, s.brightness, &format!("{}", corr.brightness));

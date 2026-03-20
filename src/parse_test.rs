@@ -104,7 +104,7 @@ fn main() {
                     );
                     println!(
                         "        USM: amount={} radius={} dark_limit={} noise_limit={} col_factor={}",
-                        c.usm_amount, c.usm_radius, c.usm_dark_limit, c.usm_noise_limit, c.usm_col_factor
+                        c.usm_amount, c.usm_radius, c.usm_dark_limit, c.usm_noise_limit, c.usm_col_factor.len()
                     );
                     println!(
                         "        Dust: level={} threshold={} | LensCorr={} Vignette={}",

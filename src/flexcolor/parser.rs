@@ -335,7 +335,7 @@ fn parse_image_correction(dict_node: &XmlNode) -> ImageCorrection {
             "USMRadius" => corr.usm_radius = int_val(),
             "USMDarkLimit" => corr.usm_dark_limit = int_val(),
             "USMNoiseLimit" => corr.usm_noise_limit = int_val(),
-            "USMColFactor" => corr.usm_col_factor = int_val(),
+            "USMColFactor" => corr.usm_col_factor = parse_int_array(val),
             "Threshold" => corr.threshold = int_val(),
             "DustLevel" => corr.dust_level = int_val(),
             "ColorNoiseRadius" => corr.color_noise_radius = int_val(),
