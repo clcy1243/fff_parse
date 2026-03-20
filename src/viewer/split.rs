@@ -193,6 +193,11 @@ impl FffViewerApp {
             film_corr.gray = [128; 4];
             film_corr.saturation = 0;
             img = color::apply_film_processing(&img, &film_corr);
+
+            // 渐变曲线
+            if correction.apply_curves && !correction.gradations.is_empty() {
+                img = color::apply_gradation_curves(&img, &correction.gradations);
+            }
         }
 
         // 3. 手动调整（色阶/曝光/对比度/饱和度等）
@@ -675,6 +680,10 @@ impl FffViewerApp {
             film_corr.gray = [128; 4];
             film_corr.saturation = 0;
             img = color::apply_film_processing(&img, &film_corr);
+
+            if correction.apply_curves && !correction.gradations.is_empty() {
+                img = color::apply_gradation_curves(&img, &correction.gradations);
+            }
         }
         if !pipeline.manual_adjust.is_identity() {
             img = color::apply_manual_adjust(&img, &pipeline.manual_adjust);

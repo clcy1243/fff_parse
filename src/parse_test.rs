@@ -84,18 +84,58 @@ fn main() {
                         c.gamma, c.ev, c.contrast, c.brightness, c.saturation
                     );
                     println!(
+                        "        Lightness={} ColorTemp={} Tint={}",
+                        c.lightness, c.color_temperature, c.tint
+                    );
+                    println!(
                         "        FilmCurve={} FilmType={} ColorModel={}",
                         flexcolor::film_curve_name(c.film_curve),
                         flexcolor::film_type_name(c.film_type),
                         flexcolor::color_model_name(c.color_model)
                     );
                     println!(
-                        "        USM: amount={} radius={} | Dust: {} | LensCorr: {}",
-                        c.usm_amount,
-                        c.usm_radius,
-                        if c.apply_dust { "on" } else { "off" },
-                        c.lens_correction
+                        "        Shadow={:?} Gray={:?} Highlight={:?}",
+                        c.shadow, c.gray, c.highlight
                     );
+                    println!(
+                        "        apply: sliders={} curves={} histogram={} usm={} dust={} cc={} cn_filter={}",
+                        c.apply_sliders, c.apply_curves, c.apply_histogram,
+                        c.apply_usm, c.apply_dust, c.apply_cc, c.apply_cn_filter
+                    );
+                    println!(
+                        "        USM: amount={} radius={} dark_limit={} noise_limit={} col_factor={}",
+                        c.usm_amount, c.usm_radius, c.usm_dark_limit, c.usm_noise_limit, c.usm_col_factor
+                    );
+                    println!(
+                        "        Dust: level={} threshold={} | LensCorr={} Vignette={}",
+                        c.dust_level, c.threshold, c.lens_correction, c.vignette_amount
+                    );
+                    println!(
+                        "        enhanced_shadow={} remove_cast_highlight={} remove_cast_shadow={}",
+                        c.enhanced_shadow, c.remove_cast_highlight, c.remove_cast_shadow
+                    );
+                    println!(
+                        "        input_profile={:?} rgb_profile={:?}",
+                        c.input_profile_name, c.rgb_profile_name
+                    );
+                    println!(
+                        "        auto_highlight={} auto_shadow={} mode={}",
+                        c.auto_highlight, c.auto_shadow, c.mode
+                    );
+                    println!(
+                        "        gradation_sliders={:?}",
+                        c.gradation_sliders
+                    );
+                    println!(
+                        "        color_corr ({} vals)={:?}",
+                        c.color_corr.len(), c.color_corr
+                    );
+                    for (gi, curve) in c.gradations.iter().enumerate() {
+                        if !curve.is_empty() {
+                            let name = ["RGB","R","G","B","C","M","Y"].get(gi).unwrap_or(&"?");
+                            println!("        gradation[{}]({}) {} pts: {:?}", gi, name, curve.len(), curve);
+                        }
+                    }
                 }
             } else {
                 println!("No edit history found");

@@ -909,6 +909,7 @@ impl FffViewerApp {
                 }
                 self.manual_adjust.contrast = correction.contrast as f32;
                 self.manual_adjust.brightness = correction.brightness as f32;
+                self.manual_adjust.lightness = correction.lightness as f32;
             }
 
             self.manual_adjust.enabled = true;
@@ -919,6 +920,12 @@ impl FffViewerApp {
                 white: self.manual_adjust.levels_white,
             };
             self.levels_raw = self.levels_processed.clone();
+
+            // 应用渐变曲线（当 apply_curves 为 true 时）
+            if correction.apply_curves && !correction.gradations.is_empty() {
+                log::info!("Applying gradation curves: {} channels", correction.gradations.len());
+                result = color::apply_gradation_curves(&result, &correction.gradations);
+            }
         }
 
         // 第3步：保存 16-bit 基准图像并更新 raw_rgb
@@ -1354,6 +1361,7 @@ impl FffViewerApp {
         let reset_adjust = s.reset_adjust;
         let exposure_str = s.exposure;
         let brightness_str = s.brightness;
+        let lightness_str = s.lightness;
         let contrast_str = s.contrast;
         let highlights_str = s.highlights;
         let shadows_str = s.shadows;
@@ -1482,6 +1490,11 @@ impl FffViewerApp {
 
             ui.label(brightness_str);
             if ui.add(egui::Slider::new(&mut adj.brightness, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.label(lightness_str);
+            if ui.add(egui::Slider::new(&mut adj.lightness, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 

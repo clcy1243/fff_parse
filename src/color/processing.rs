@@ -1,4 +1,4 @@
-//! 胶片类型处理：负片反转、逐通道色阶调整和胶片曲线应用。
+//! 胶片类型处理：负片反转、逐通道色阶调整、胶片曲线应用和渐变曲线。
 
 // ─── Film Type Processing ───────────────────────────────────────────────────
 
@@ -462,6 +462,203 @@ pub fn apply_film_processing(
 
             let buf = image::RgbImage::from_raw(w, h, out_pixels)
                 .expect("film_processing 8-bit: buffer size mismatch");
+            image::DynamicImage::ImageRgb8(buf)
+        }
+    }
+}
+
+// ─── Gradation Curves ───────────────────────────────────────────────────────
+
+/// 用单调三次 Hermite 插值从控制点构建 256 级查找表。
+///
+/// 控制点格式：(x, y, flag)，x/y 均为 0-255 范围。
+/// 使用 Fritsch-Carlson 方法保证单调性，避免过冲。
+fn build_curve_lut(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let mut lut = [0u8; 256];
+    if points.len() < 2 {
+        for i in 0..256 { lut[i] = i as u8; }
+        return lut;
+    }
+
+    let mut pts: Vec<(f64, f64)> = points.iter()
+        .map(|&(x, y, _)| (x as f64, y as f64))
+        .collect();
+    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    pts.dedup_by(|a, b| (a.0 - b.0).abs() < 0.5);
+
+    let n = pts.len();
+    if n < 2 {
+        for i in 0..256 { lut[i] = i as u8; }
+        return lut;
+    }
+
+    let mut delta = vec![0.0f64; n - 1];
+    for k in 0..n - 1 {
+        let dx = pts[k + 1].0 - pts[k].0;
+        if dx.abs() < 1e-10 { delta[k] = 0.0; }
+        else { delta[k] = (pts[k + 1].1 - pts[k].1) / dx; }
+    }
+
+    // Fritsch-Carlson 单调三次切线
+    let mut m = vec![0.0f64; n];
+    m[0] = delta[0];
+    m[n - 1] = delta[n - 2];
+    for k in 1..n - 1 {
+        if delta[k - 1] * delta[k] <= 0.0 {
+            m[k] = 0.0;
+        } else {
+            m[k] = (delta[k - 1] + delta[k]) / 2.0;
+        }
+    }
+    for k in 0..n - 1 {
+        if delta[k].abs() < 1e-10 {
+            m[k] = 0.0;
+            m[k + 1] = 0.0;
+        } else {
+            let alpha = m[k] / delta[k];
+            let beta = m[k + 1] / delta[k];
+            let s2 = alpha * alpha + beta * beta;
+            if s2 > 9.0 {
+                let tau = 3.0 / s2.sqrt();
+                m[k] = tau * alpha * delta[k];
+                m[k + 1] = tau * beta * delta[k];
+            }
+        }
+    }
+
+    for i in 0..256 {
+        let x = i as f64;
+        if x <= pts[0].0 {
+            lut[i] = pts[0].1.clamp(0.0, 255.0) as u8;
+            continue;
+        }
+        if x >= pts[n - 1].0 {
+            lut[i] = pts[n - 1].1.clamp(0.0, 255.0) as u8;
+            continue;
+        }
+
+        let mut lo = 0;
+        let mut hi = n - 1;
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2;
+            if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
+        }
+
+        let h = pts[hi].0 - pts[lo].0;
+        if h.abs() < 1e-10 {
+            lut[i] = pts[lo].1.clamp(0.0, 255.0) as u8;
+            continue;
+        }
+
+        let t = (x - pts[lo].0) / h;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        let h10 = t3 - 2.0 * t2 + t;
+        let h01 = -2.0 * t3 + 3.0 * t2;
+        let h11 = t3 - t2;
+
+        let y = h00 * pts[lo].1 + h10 * h * m[lo] + h01 * pts[hi].1 + h11 * h * m[hi];
+        lut[i] = y.round().clamp(0.0, 255.0) as u8;
+    }
+
+    lut
+}
+
+/// 将渐变曲线应用到 RGB 图像上（自动处理 8-bit 和 16-bit）。
+///
+/// 渐变曲线通道顺序：[RGB主通道, R, G, B, C(青), M(品红), Y(黄)]
+/// 应用顺序：先逐通道 R/G/B → CMY（反转通道）→ 主通道 RGB
+pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64, i64, i64)>]) -> image::DynamicImage {
+    if gradations.len() < 7 { return img.clone(); }
+
+    let is_identity = |pts: &[(i64, i64, i64)]| -> bool {
+        if pts.len() != 2 { return false; }
+        pts[0].0 == 0 && pts[0].1 == 0 && pts[1].0 == 255 && pts[1].1 == 255
+    };
+    if gradations.iter().all(|ch| is_identity(ch)) { return img.clone(); }
+
+    let lut_rgb = build_curve_lut(&gradations[0]);
+    let lut_r   = build_curve_lut(&gradations[1]);
+    let lut_g   = build_curve_lut(&gradations[2]);
+    let lut_b   = build_curve_lut(&gradations[3]);
+    let lut_c   = build_curve_lut(&gradations[4]);
+    let lut_m   = build_curve_lut(&gradations[5]);
+    let lut_y   = build_curve_lut(&gradations[6]);
+
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            // 扩展 8-bit LUT 到 16-bit
+            let expand = |lut8: &[u8; 256]| -> Vec<u16> {
+                let mut lut16 = vec![0u16; 65536];
+                for i in 0..65536u32 {
+                    let pos = i as f64 / 257.0;
+                    let lo = pos.floor() as usize;
+                    let hi = (lo + 1).min(255);
+                    let frac = pos - lo as f64;
+                    let v = lut8[lo] as f64 * (1.0 - frac) + lut8[hi] as f64 * frac;
+                    lut16[i as usize] = (v * 257.0).round().clamp(0.0, 65535.0) as u16;
+                }
+                lut16
+            };
+
+            let lr = expand(&lut_r);
+            let lg = expand(&lut_g);
+            let lb = expand(&lut_b);
+            let lc = expand(&lut_c);
+            let lm = expand(&lut_m);
+            let ly = expand(&lut_y);
+            let lrgb = expand(&lut_rgb);
+
+            let (w, h) = (rgb16.width(), rgb16.height());
+            let src = rgb16.as_raw();
+            let mut out = Vec::with_capacity(src.len());
+            for chunk in src.chunks_exact(3) {
+                let mut r = lr[chunk[0] as usize];
+                let mut g = lg[chunk[1] as usize];
+                let mut b = lb[chunk[2] as usize];
+
+                r = 65535 - lc[(65535 - r) as usize];
+                g = 65535 - lm[(65535 - g) as usize];
+                b = 65535 - ly[(65535 - b) as usize];
+
+                r = lrgb[r as usize];
+                g = lrgb[g as usize];
+                b = lrgb[b as usize];
+
+                out.push(r);
+                out.push(g);
+                out.push(b);
+            }
+            let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(w, h, out)
+                .expect("gradation 16-bit: buffer size mismatch");
+            image::DynamicImage::ImageRgb16(buf)
+        }
+        _ => {
+            let rgb8 = img.to_rgb8();
+            let (w, h) = (rgb8.width(), rgb8.height());
+            let src = rgb8.as_raw();
+            let mut out = Vec::with_capacity(src.len());
+            for chunk in src.chunks_exact(3) {
+                let mut r = lut_r[chunk[0] as usize];
+                let mut g = lut_g[chunk[1] as usize];
+                let mut b = lut_b[chunk[2] as usize];
+
+                r = 255 - lut_c[(255 - r) as usize];
+                g = 255 - lut_m[(255 - g) as usize];
+                b = 255 - lut_y[(255 - b) as usize];
+
+                r = lut_rgb[r as usize];
+                g = lut_rgb[g as usize];
+                b = lut_rgb[b as usize];
+
+                out.push(r);
+                out.push(g);
+                out.push(b);
+            }
+            let buf = image::RgbImage::from_raw(w, h, out)
+                .expect("gradation 8-bit: buffer size mismatch");
             image::DynamicImage::ImageRgb8(buf)
         }
     }

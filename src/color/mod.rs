@@ -7,5 +7,5 @@ mod adjust;
 
 pub use profile::{IccProfileInfo, IccProfileDetail, SettingsPreset, scan_icc_profiles, scan_settings_presets, parse_icc_detail};
 pub use transform::{TargetColorSpace, apply_icc_transform};
-pub use processing::apply_film_processing;
+pub use processing::{apply_film_processing, apply_gradation_curves};
 pub use adjust::{ManualAdjust, apply_manual_adjust, extract_embedded_icc};
