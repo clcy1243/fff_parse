@@ -1186,11 +1186,13 @@ impl FffViewerApp {
         let mut hist_16: Vec<Vec<u32>> = vec![vec![0u32; 65536]; 4];
         for pixel in base.pixels() {
             let [r16, g16, b16] = pixel.0;
-            hist_16[0][r16 as usize] += 1;
-            hist_16[1][g16 as usize] += 1;
-            hist_16[2][b16 as usize] += 1;
-            let lum = (0.2126 * r16 as f32 + 0.7152 * g16 as f32 + 0.0722 * b16 as f32) as usize;
-            hist_16[3][lum.min(65535)] += 1;
+            {
+                hist_16[0][r16 as usize] += 1;
+                hist_16[1][g16 as usize] += 1;
+                hist_16[2][b16 as usize] += 1;
+                let lum = (0.2126 * r16 as f32 + 0.7152 * g16 as f32 + 0.0722 * b16 as f32) as usize;
+                hist_16[3][lum.min(65535)] += 1;
+            }
         }
 
         // 派生 256-bin 显示用直方图
@@ -1199,6 +1201,15 @@ impl FffViewerApp {
             for i in 0..65536 {
                 hist[ch][i >> 8] += hist_16[ch][i];
             }
+        }
+
+        // 诊断日志
+        for ch in 0..3 {
+            let min_8 = hist[ch].iter().position(|&c| c > 0).unwrap_or(0);
+            let max_8 = hist[ch].iter().rposition(|&c| c > 0).unwrap_or(0);
+            let ch_name = ["R", "G", "B"][ch];
+            log::info!("Raw histogram {}: 256bin=[{}-{}]",
+                ch_name, min_8, max_8);
         }
 
         self.histogram_raw = Some(hist);

@@ -87,10 +87,12 @@ pub fn lut_interp_16(val: f32, lut: &[u8; 256]) -> f32 {
     out * 257.0 // scale 0-255 → 0-65535
 }
 
-/// 应用胶片类型处理：仅负片反转 + 黑白去色。
+/// 应用胶片类型处理：负片反转 + 黑白去色。
 ///
-/// - 彩色负片（FilmType=1）：反转像素值 (65535 - pixel)。
-/// - 黑白负片（FilmType=2）：反转后转为灰度。
+/// - 彩色负片（FilmType=1）：基于 per-channel highlight 反转。
+///   使用 `highlight[ch]*4 - val`（归一化到 [0, 65535]），相当于
+///   测量像素值与底片基底密度（highlight）的距离。
+/// - 黑白负片（FilmType=2）：同上反转后转为灰度。
 /// - 正片（FilmType=0）：不做任何处理。
 ///
 /// 色阶（shadow/highlight/gray）和胶片曲线（film_curve LUT）由 `apply_adjust_16` 处理。
@@ -108,14 +110,23 @@ pub fn apply_film_processing(
         return img.clone();
     }
 
+    // 计算 per-channel 反转基准（highlight 值 × 4，14-bit → 16-bit）
+    let hi_r = (correction.highlight[1] as f32) * 4.0;
+    let hi_g = (correction.highlight[2] as f32) * 4.0;
+    let hi_b = (correction.highlight[3] as f32) * 4.0;
+
     match img {
         image::DynamicImage::ImageRgb16(rgb16) => {
             let (w, h) = (rgb16.width(), rgb16.height());
-            const MAX_VAL: f32 = 65535.0;
             let src = rgb16.as_raw();
 
             let row_len = w as usize * 3;
             let mut out_pixels = vec![0u16; row_len * h as usize];
+
+            // 预计算归一化缩放：inverted / hi * 65535
+            let scale_r = if hi_r > 0.0 { 65535.0 / hi_r } else { 1.0 };
+            let scale_g = if hi_g > 0.0 { 65535.0 / hi_g } else { 1.0 };
+            let scale_b = if hi_b > 0.0 { 65535.0 / hi_b } else { 1.0 };
 
             out_pixels
                 .par_chunks_mut(row_len)
@@ -125,10 +136,11 @@ pub fn apply_film_processing(
                     for x in 0..w as usize {
                         let base = x * 3;
                         let si = src_start + base;
+                        // highlight - val：底片基底密度减去扫描值，归一化到 [0, 65535]
                         let mut ch_f = [
-                            MAX_VAL - src[si] as f32,
-                            MAX_VAL - src[si + 1] as f32,
-                            MAX_VAL - src[si + 2] as f32,
+                            (hi_r - src[si] as f32).max(0.0) * scale_r,
+                            (hi_g - src[si + 1] as f32).max(0.0) * scale_g,
+                            (hi_b - src[si + 2] as f32).max(0.0) * scale_b,
                         ];
 
                         if film_type == 2 {
@@ -136,9 +148,9 @@ pub fn apply_film_processing(
                             ch_f = [lum, lum, lum];
                         }
 
-                        row[base] = ch_f[0].clamp(0.0, MAX_VAL) as u16;
-                        row[base + 1] = ch_f[1].clamp(0.0, MAX_VAL) as u16;
-                        row[base + 2] = ch_f[2].clamp(0.0, MAX_VAL) as u16;
+                        row[base] = ch_f[0].clamp(0.0, 65535.0) as u16;
+                        row[base + 1] = ch_f[1].clamp(0.0, 65535.0) as u16;
+                        row[base + 2] = ch_f[2].clamp(0.0, 65535.0) as u16;
                     }
                 });
 
@@ -153,6 +165,14 @@ pub fn apply_film_processing(
             let row_len = w as usize * 3;
             let mut out_pixels = vec![0u8; row_len * h as usize];
 
+            // 8-bit 版本：highlight 缩放到 [0, 255]
+            let hi8_r = hi_r / 257.0;
+            let hi8_g = hi_g / 257.0;
+            let hi8_b = hi_b / 257.0;
+            let s8_r = if hi8_r > 0.0 { 255.0 / hi8_r } else { 1.0 };
+            let s8_g = if hi8_g > 0.0 { 255.0 / hi8_g } else { 1.0 };
+            let s8_b = if hi8_b > 0.0 { 255.0 / hi8_b } else { 1.0 };
+
             out_pixels
                 .par_chunks_mut(row_len)
                 .enumerate()
@@ -162,9 +182,9 @@ pub fn apply_film_processing(
                         let base = x * 3;
                         let si = src_start + base;
                         let mut ch_f = [
-                            255.0 - src[si] as f32,
-                            255.0 - src[si + 1] as f32,
-                            255.0 - src[si + 2] as f32,
+                            (hi8_r - src[si] as f32).max(0.0) * s8_r,
+                            (hi8_g - src[si + 1] as f32).max(0.0) * s8_g,
+                            (hi8_b - src[si + 2] as f32).max(0.0) * s8_b,
                         ];
 
                         if film_type == 2 {
