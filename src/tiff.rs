@@ -3,6 +3,50 @@
 //! 解析 Imacon/Hasselblad Flextight X5 扫描仪产出的 TIFF 和 FFF 文件。
 //! 支持标准 TIFF（magic 0x2A）和 Imacon FFF（magic 0x55）两种格式，
 //! 可读取 IFD 链、EXIF、MakerNote，并提取预览图像。
+//!
+//! # FFF 文件二进制布局
+//!
+//! FFF 文件基于 TIFF 格式，每个文件固定包含 3 个 IFD（与编辑历史条目数无关）。
+//! 编辑历史仅以 XML 元数据形式存储，不会重复保存图像像素。
+//!
+//! ```text
+//! 偏移             内容                                  大小（典型值）
+//! ─────────────────────────────────────────────────────────────────────
+//! [0..8]           TIFF Header（字节序 MM + magic 0x55   8 B
+//!                  + IFD#0 偏移指针）
+//! [8..~75]         tag 0xB4C7: FlexColor 版本/序列号      ~67 B
+//! [~76..~400076]   tag 0xC519: XML Plist 容器              400 KB（预分配）
+//!   ├ 前 4 字节     XML 实际长度（大端 u32）
+//!   ├ XML plist     编辑历史（ImageSettings 数组）          ~30 KB
+//!   └ 零填充        预留扩展空间                           ~370 KB
+//! [~400076..~600076] tag 0xB4C5: 二进制编辑设置副本          ~195 KB
+//! [~600076..]      IFD#0 tag 表 + 全分辨率 16-bit RGB      文件主体（~92 MB/帧）
+//! [...]            IFD#1 tag 表 + 8-bit 缩略图              ~1.3 MB
+//!                  （FlexColor 预渲染，含完整处理效果）
+//! [...]            tag 0xC51A: CCD 校准数据                 ~211 KB
+//! [...]            IFD#2 tag 表 + 16-bit 降采样预览          ~2.6 MB
+//! [末尾]           IPTC / 其他尾部元数据                    ~200 B
+//! ```
+//!
+//! ## 自定义 Tag 说明
+//!
+//! | Tag      | 名称           | 内容说明                                      |
+//! |----------|----------------|-----------------------------------------------|
+//! | 0xB4C7   | FlexColor 版本 | ASCII: "English v. X.Y.Z (PC)" + 扫描仪序列号 |
+//! | 0xC519   | XML 设置容器   | 前 4 字节为实际 XML 长度，后跟 plist XML       |
+//! | 0xB4C5   | 二进制设置     | 编辑设置的二进制序列化格式                      |
+//! | 0xC51A   | CCD 校准       | 扫描仪 CCD 传感器校准/配置数据                 |
+//!
+//! ## IFD 结构
+//!
+//! | IFD  | SubfileType | 位深  | 用途                                          |
+//! |------|-------------|-------|-----------------------------------------------|
+//! | #0   | 0 (主图)    | 16-bit | 全分辨率原始扫描数据（最大，占文件 95%+）     |
+//! | #1   | 1 (缩略图)  | 8-bit  | FlexColor 预渲染缩略图（含色彩处理效果）       |
+//! | #2   | 0 (主图)    | 16-bit | 降采样预览（与 IFD#0 同比例缩小）             |
+//!
+//! 文件大小差异主要取决于扫描尺寸：整卷扫描 (3996×15118) ≈ 347 MB，
+//! 单帧 (3601×4489) ≈ 97 MB。
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -511,10 +555,243 @@ impl<R: Read + Seek> TiffReader<R> {
 }
 
 impl TiffFile {
-    /// 打开并解析 TIFF/FFF 文件（只读），文件内容全部读入内存
+    /// 打开并解析 TIFF/FFF 文件（只读），文件内容全部读入内存。
+    ///
+    /// 适用于需要访问全分辨率像素数据的场景（详情查看、导出）。
+    /// 对于仅需缩略图的场景，请使用 [`open_for_thumbnail`] 节省内存。
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let data = fs::read(path)?;
         Self::parse(&data)
+    }
+
+    /// 轻量级打开 FFF 文件并仅解码缩略图，不将完整文件加载到内存。
+    ///
+    /// 通过文件 seeking 只读取 IFD 元数据和缩略图像素区域，
+    /// 内存占用约为完整加载的 1/50～1/100（例如 97 MB 文件仅需读 ~1.3 MB）。
+    /// 优先选择 FlexColor 预渲染的 8-bit 缩略图（IFD#1, SubfileType=1）。
+    pub fn open_for_thumbnail<P: AsRef<Path>>(path: P) -> io::Result<Option<image::DynamicImage>> {
+        use std::io::BufReader;
+
+        let file = fs::File::open(path)?;
+        let file_len = file.metadata()?.len();
+        let mut reader = BufReader::new(file);
+
+        // 读取 TIFF 头：字节序 + magic + 首个 IFD 偏移
+        let mut header = [0u8; 8];
+        reader.read_exact(&mut header)?;
+
+        let byte_order = match (header[0], header[1]) {
+            (0x49, 0x49) => ByteOrder::LittleEndian,
+            (0x4D, 0x4D) => ByteOrder::BigEndian,
+            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid byte order")),
+        };
+
+        let read_u16_bo = |buf: &[u8], off: usize| -> u16 {
+            match byte_order {
+                ByteOrder::LittleEndian => u16::from_le_bytes([buf[off], buf[off + 1]]),
+                ByteOrder::BigEndian => u16::from_be_bytes([buf[off], buf[off + 1]]),
+            }
+        };
+        let read_u32_bo = |buf: &[u8], off: usize| -> u32 {
+            match byte_order {
+                ByteOrder::LittleEndian => u32::from_le_bytes([buf[off], buf[off+1], buf[off+2], buf[off+3]]),
+                ByteOrder::BigEndian => u32::from_be_bytes([buf[off], buf[off+1], buf[off+2], buf[off+3]]),
+            }
+        };
+
+        let magic = read_u16_bo(&header, 2);
+        if magic != 0x002A && magic != 0x0055 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a TIFF/FFF file"));
+        }
+
+        let first_ifd = read_u32_bo(&header, 4);
+
+        /// 轻量级 IFD 信息，仅包含缩略图选择和解码所需的字段
+        struct LightIfd {
+            width: u32,
+            height: u32,
+            bps: u32,
+            compression: u32,
+            photometric: u32,
+            spp: u32,
+            subfile_type: u32,
+            strip_offsets: Vec<u32>,
+            strip_byte_counts: Vec<u32>,
+        }
+
+        let mut light_ifds = Vec::new();
+        let mut ifd_offset = first_ifd;
+
+        // 遍历 IFD 链，仅解析缩略图选择所需的 tag
+        for _ in 0..20 {
+            if ifd_offset == 0 || ifd_offset as u64 >= file_len {
+                break;
+            }
+
+            reader.seek(SeekFrom::Start(ifd_offset as u64))?;
+            let mut buf2 = [0u8; 2];
+            reader.read_exact(&mut buf2)?;
+            let entry_count = read_u16_bo(&buf2, 0) as usize;
+            if entry_count > 1000 {
+                break;
+            }
+
+            // 一次性读取所有 IFD 条目（每条 12 字节）+ 下一 IFD 偏移（4 字节）
+            let entries_size = entry_count * 12;
+            let mut entries_buf = vec![0u8; entries_size + 4];
+            reader.read_exact(&mut entries_buf)?;
+
+            let mut lifd = LightIfd {
+                width: 0, height: 0, bps: 8, compression: 1,
+                photometric: 0, spp: 1, subfile_type: 0,
+                strip_offsets: Vec::new(), strip_byte_counts: Vec::new(),
+            };
+
+            // 需要额外 seek 读取的外部值: (文件偏移, 条目数)
+            let mut strip_offsets_ext: Option<(u32, u32)> = None;
+            let mut strip_counts_ext: Option<(u32, u32)> = None;
+            let mut bps_ext: Option<u32> = None;
+
+            for i in 0..entry_count {
+                let e = i * 12;
+                let tag = read_u16_bo(&entries_buf, e);
+                let typ = read_u16_bo(&entries_buf, e + 2);
+                let count = read_u32_bo(&entries_buf, e + 4);
+                let value_offset = read_u32_bo(&entries_buf, e + 8);
+                let short_val = read_u16_bo(&entries_buf, e + 8);
+
+                match tag {
+                    0x00FE => lifd.subfile_type = value_offset,
+                    0x0100 => lifd.width = if typ == 3 { short_val as u32 } else { value_offset },
+                    0x0101 => lifd.height = if typ == 3 { short_val as u32 } else { value_offset },
+                    0x0102 => {
+                        if count == 1 {
+                            lifd.bps = short_val as u32;
+                        } else {
+                            bps_ext = Some(value_offset);
+                        }
+                    }
+                    0x0103 => lifd.compression = if typ == 3 { short_val as u32 } else { value_offset },
+                    0x0106 => lifd.photometric = if typ == 3 { short_val as u32 } else { value_offset },
+                    0x0111 => {
+                        if count == 1 {
+                            lifd.strip_offsets = vec![value_offset];
+                        } else {
+                            strip_offsets_ext = Some((value_offset, count));
+                        }
+                    }
+                    0x0115 => lifd.spp = if typ == 3 { short_val as u32 } else { value_offset },
+                    0x0117 => {
+                        if count == 1 {
+                            lifd.strip_byte_counts = vec![value_offset];
+                        } else {
+                            strip_counts_ext = Some((value_offset, count));
+                        }
+                    }
+                    _ => {} // 跳过所有非必需 tag（包括大型 0xC519 等）
+                }
+            }
+
+            // 读取外部 tag 值（小量 seek + 小量读取）
+            if let Some(offset) = bps_ext {
+                reader.seek(SeekFrom::Start(offset as u64))?;
+                let mut buf = [0u8; 2];
+                reader.read_exact(&mut buf)?;
+                lifd.bps = read_u16_bo(&buf, 0) as u32;
+            }
+            if let Some((offset, count)) = strip_offsets_ext {
+                let count = (count as usize).min(65536);
+                reader.seek(SeekFrom::Start(offset as u64))?;
+                let mut buf = vec![0u8; count * 4];
+                reader.read_exact(&mut buf)?;
+                lifd.strip_offsets = (0..count).map(|i| read_u32_bo(&buf, i * 4)).collect();
+            }
+            if let Some((offset, count)) = strip_counts_ext {
+                let count = (count as usize).min(65536);
+                reader.seek(SeekFrom::Start(offset as u64))?;
+                let mut buf = vec![0u8; count * 4];
+                reader.read_exact(&mut buf)?;
+                lifd.strip_byte_counts = (0..count).map(|i| read_u32_bo(&buf, i * 4)).collect();
+            }
+
+            // 下一 IFD 偏移
+            ifd_offset = read_u32_bo(&entries_buf, entries_size);
+            light_ifds.push(lifd);
+        }
+
+        // 选择最佳缩略图：SubfileType=1 + 8-bit 优先，然后最小尺寸
+        let mut best: Option<(usize, u64, bool, bool)> = None;
+        for (idx, ifd) in light_ifds.iter().enumerate() {
+            if ifd.compression != 1 || ifd.photometric != 2 || ifd.spp < 3
+                || ifd.width == 0 || ifd.height == 0 || ifd.strip_offsets.is_empty()
+            {
+                continue;
+            }
+            let pixels = ifd.width as u64 * ifd.height as u64;
+            let is_thumb = ifd.subfile_type == 1;
+            let is_8bit = ifd.bps == 8;
+
+            let better = if let Some((_, bp, bt, b8)) = best {
+                if is_thumb && !bt { true }
+                else if is_thumb == bt && is_8bit && !b8 { true }
+                else if is_thumb == bt && is_8bit == b8 && pixels < bp { true }
+                else { false }
+            } else {
+                true
+            };
+
+            if better {
+                best = Some((idx, pixels, is_thumb, is_8bit));
+            }
+        }
+
+        let (idx, _, _, _) = match best {
+            Some(b) => b,
+            None => return Ok(None),
+        };
+
+        let ifd = &light_ifds[idx];
+
+        // 仅读取缩略图的像素数据（通常 ~1.3 MB）
+        let total_bytes: usize = ifd.strip_byte_counts.iter().map(|c| *c as usize).sum();
+        let mut pixel_data = Vec::with_capacity(total_bytes);
+        for (off, cnt) in ifd.strip_offsets.iter().zip(ifd.strip_byte_counts.iter()) {
+            reader.seek(SeekFrom::Start(*off as u64))?;
+            let mut buf = vec![0u8; *cnt as usize];
+            reader.read_exact(&mut buf)?;
+            pixel_data.extend_from_slice(&buf);
+        }
+
+        let width = ifd.width;
+        let height = ifd.height;
+
+        if ifd.bps == 8 {
+            let expected = width as usize * height as usize * 3;
+            if pixel_data.len() >= expected {
+                pixel_data.truncate(expected);
+                if let Some(img) = image::RgbImage::from_raw(width, height, pixel_data) {
+                    return Ok(Some(image::DynamicImage::ImageRgb8(img)));
+                }
+            }
+        } else if ifd.bps == 16 {
+            let expected_u16 = width as usize * height as usize * 3;
+            let pixels_u16: Vec<u16> = pixel_data.chunks_exact(2)
+                .take(expected_u16)
+                .map(|c| match byte_order {
+                    ByteOrder::LittleEndian => u16::from_le_bytes([c[0], c[1]]),
+                    ByteOrder::BigEndian => u16::from_be_bytes([c[0], c[1]]),
+                })
+                .collect();
+            if pixels_u16.len() >= expected_u16 {
+                if let Some(img) = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(
+                    width, height, pixels_u16,
+                ) {
+                    return Ok(Some(image::DynamicImage::ImageRgb16(img)));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// 从字节切片解析 TIFF/FFF 数据，检测字节序和魔数后遍历 IFD 链
@@ -898,6 +1175,39 @@ impl TiffFile {
     /// 获取原始文件数据的引用（供外部解析器使用）
     pub fn raw_data(&self) -> &[u8] {
         &self.data
+    }
+
+    /// 释放原始文件数据以回收内存。
+    ///
+    /// 在预览解码、元数据提取等操作完成后调用，释放占用大量内存的像素缓冲区。
+    /// 调用后 `raw_data()` 返回空切片，`decode_*` 方法将无法工作。
+    pub fn release_data(&mut self) {
+        self.data = Vec::new();
+        self.preview_jpeg = None;
+    }
+
+    /// 从 tag 0xC519 中提取 XML plist 字符串。
+    ///
+    /// tag 0xC519 的前 4 字节为 XML 实际长度（大端 u32），后跟 XML 数据。
+    /// 利用已解析的 IFD tag 精确定位 XML，避免全文件扫描。
+    pub fn settings_xml(&self) -> Option<String> {
+        // 在 IFD#0 中查找 tag 0xC519
+        let tag_value = self.ifds.first()?.get(0xC519)?;
+        if let TagValue::Byte(ref raw) | TagValue::Undefined(ref raw) = tag_value {
+            if raw.len() < 4 {
+                return None;
+            }
+            // 前 4 字节为 XML 实际长度（大端）
+            let xml_len = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+            let xml_len = xml_len.min(raw.len() - 4);
+            if xml_len == 0 {
+                return None;
+            }
+            let xml_bytes = &raw[4..4 + xml_len];
+            std::str::from_utf8(xml_bytes).ok().map(|s| s.to_string())
+        } else {
+            None
+        }
     }
 
     /// 汇总所有元数据为键值对列表（格式、字节序、尺寸、EXIF 等）

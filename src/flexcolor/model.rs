@@ -178,9 +178,24 @@ impl EditHistory {
         Self::parse_xml(xml_str)
     }
 
-    /// 从完整文件数据中解析编辑历史（自动查找 XML plist）
+    /// 从完整文件数据中解析编辑历史（自动查找 XML plist）。
+    ///
+    /// 优先使用 `parse_from_tiff` 以避免全文件扫描。
     pub fn parse_from_file(data: &[u8]) -> Option<Self> {
         Self::parse(data)
+    }
+
+    /// 从已解析的 TiffFile 中提取编辑历史。
+    ///
+    /// 利用 tag 0xC519 的精确偏移和长度前缀直接定位 XML，
+    /// 避免对整个文件数据进行线性扫描。
+    pub fn parse_from_tiff(tiff: &crate::tiff::TiffFile) -> Option<Self> {
+        if let Some(xml) = tiff.settings_xml() {
+            Self::parse_xml(&xml)
+        } else {
+            // 回退：扫描原始数据
+            Self::parse(tiff.raw_data())
+        }
     }
 
     /// 解析 Apple plist XML 字符串

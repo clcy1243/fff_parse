@@ -166,18 +166,18 @@ impl FffViewerApp {
         std::thread::spawn(move || {
             use rayon::prelude::*;
             files.par_iter().for_each(|path| {
-                let result = if let Ok(tiff) = TiffFile::open(path) {
-                    if let Some(img) = tiff.decode_thumbnail() {
-                        // 8-bit FlexColor thumbnails already have processing baked in
+                // 使用轻量级方法加载缩略图，仅读取 IFD 元数据 + 缩略图像素，
+                // 跳过全分辨率数据（例如 97MB 文件仅需读 ~1.3MB）
+                let result = match TiffFile::open_for_thumbnail(path) {
+                    Ok(Some(img)) => {
                         let w = img.width();
                         let h = img.height();
                         let rgba = img.to_rgba8().into_raw();
                         ThumbResult { path: path.clone(), rgba, width: w, height: h }
-                    } else {
+                    }
+                    _ => {
                         ThumbResult { path: path.clone(), rgba: Vec::new(), width: 0, height: 0 }
                     }
-                } else {
-                    ThumbResult { path: path.clone(), rgba: Vec::new(), width: 0, height: 0 }
                 };
                 let _ = tx.send(result);
             });
@@ -223,7 +223,8 @@ impl FffViewerApp {
                     let metadata = tiff.metadata_summary();
                     let all_tags = tiff.all_tags();
                     log::debug!("Parsed {} metadata entries, {} tags", metadata.len(), all_tags.len());
-                    let edit_history = EditHistory::parse_from_file(tiff.raw_data());
+                    // 利用 tag 0xC519 精确定位 XML，避免全文件扫描
+                    let edit_history = EditHistory::parse_from_tiff(&tiff);
                     log::debug!("Edit history: {} settings",
                         edit_history.as_ref().map(|h| h.settings.len()).unwrap_or(0));
 
