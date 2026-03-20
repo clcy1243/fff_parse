@@ -1211,9 +1211,6 @@ impl FffViewerApp {
         let hist_source_raw = s.hist_source_raw;
         let hist_source_processed = s.hist_source_processed;
 
-        // Clone histogram data to avoid borrow conflicts when mutating manual_adjust
-        let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
-
         // ── Header + toggle (not scrollable) ────────────────────────────
         ui.heading(adjust_heading);
         ui.add_space(4.0);
@@ -1240,13 +1237,39 @@ impl FffViewerApp {
             if ui.selectable_label(!is_raw, hist_source_processed).clicked() && is_raw {
                 self.histogram_source = HistogramSource::Processed;
                 self.histogram_needs_update = true;
+                // 切换后根据新直方图重新计算色阶手柄位置
+                rebuild = true;
             }
             ui.label("|");
             if ui.selectable_label(is_raw, hist_source_raw).clicked() && !is_raw {
                 self.histogram_source = HistogramSource::Raw;
                 self.histogram_needs_update = true;
+                rebuild = true;
             }
         });
+
+        // 数据源切换后立即重算直方图，使色阶手柄可基于新数据自动定位
+        if self.histogram_needs_update {
+            self.compute_histogram();
+            // 基于新直方图自动设置各通道黑白点
+            if let Some(ref hist) = self.histogram {
+                // RGB 合并通道 (levels_black/white[0])
+                let (b, w) = Self::auto_percentile_levels(&hist[3]);
+                self.manual_adjust.levels_black[0] = b;
+                self.manual_adjust.levels_white[0] = w;
+                self.manual_adjust.levels_gamma[0] = 1.0;
+                // R/G/B 各通道 (levels_black/white[1..3])
+                for ch in 0..3 {
+                    let (b, w) = Self::auto_percentile_levels(&hist[ch]);
+                    self.manual_adjust.levels_black[ch + 1] = b;
+                    self.manual_adjust.levels_white[ch + 1] = w;
+                    self.manual_adjust.levels_gamma[ch + 1] = 1.0;
+                }
+            }
+        }
+
+        // 切换后重新读取直方图数据
+        let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
 
         ui.add_space(2.0);
 
