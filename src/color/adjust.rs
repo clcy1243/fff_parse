@@ -179,6 +179,11 @@ fn apply_adjust_16(
     };
     let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
 
+    let use_film_lut = adj.apply_film_curve
+        && (adj.film_type == 1 || adj.film_type == 2)
+        && adj.film_curve == 4
+        && (adj.film_gamma - 2.0).abs() < 0.01;
+
     for ch in 0..3 {
         let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
             (adj.levels_black[ch + 1] / 255.0, adj.levels_white[ch + 1] / 255.0,
@@ -194,6 +199,15 @@ fn apply_adjust_16(
 
             v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
             v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
+
+            if use_film_lut {
+                let lut_table: &[u8; 256] = match ch {
+                    0 => &crate::color::FILM_CURVE_LUT_R,
+                    1 => &crate::color::FILM_CURVE_LUT_G,
+                    _ => &crate::color::FILM_CURVE_LUT_B,
+                };
+                v = crate::color::lut_interp_16(v, lut_table) / 65535.0;
+            }
 
             v += shifts[ch];
             v *= exposure_mult;
@@ -320,6 +334,11 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
         [0.0; 3]
     };
 
+    let use_film_lut = adj.apply_film_curve
+        && (adj.film_type == 1 || adj.film_type == 2)
+        && adj.film_curve == 4
+        && (adj.film_gamma - 2.0).abs() < 0.01;
+
     for ch in 0..3 {
         let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
             (adj.levels_black[ch + 1] / 255.0, adj.levels_white[ch + 1] / 255.0,
@@ -333,6 +352,19 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
             let mut v = i as f32 / 255.0;
             v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
             v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
+
+            if use_film_lut {
+                let lut_table: &[u8; 256] = match ch {
+                    0 => &crate::color::FILM_CURVE_LUT_R,
+                    1 => &crate::color::FILM_CURVE_LUT_G,
+                    _ => &crate::color::FILM_CURVE_LUT_B,
+                };
+                let x = v * 255.0;
+                let lo = (x as usize).min(254);
+                let hi = lo + 1;
+                let frac = x - lo as f32;
+                v = (lut_table[lo] as f32 * (1.0 - frac) + lut_table[hi] as f32 * frac) / 255.0;
+            }
 
             v += shifts[ch];
             v *= exposure_mult;
