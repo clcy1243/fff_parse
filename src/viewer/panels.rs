@@ -465,7 +465,7 @@ impl FffViewerApp {
                 self.color_status = None;
             }
 
-            // Show the embedded correction name
+            // Show the embedded correction name and details
             if use_embedded {
                 if let Some(ref detail) = self.detail {
                     if let Some(ref history) = detail.edit_history {
@@ -481,6 +481,15 @@ impl FffViewerApp {
                                 .small()
                                 .color(ui.visuals().weak_text_color()),
                         );
+                        let lang = self.language;
+                        let corr = setting.correction.clone();
+                        egui::CollapsingHeader::new(
+                            egui::RichText::new("ℹ Details").small()
+                        )
+                        .id_salt("embedded_correction_detail")
+                        .show(ui, |ui| {
+                            Self::render_correction_details(ui, &corr, lang);
+                        });
                     }
                 }
             }
