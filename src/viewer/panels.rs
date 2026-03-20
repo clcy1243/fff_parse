@@ -889,28 +889,20 @@ impl FffViewerApp {
                 correction.gamma,
             );
 
-            // 将色阶从 correction 提取到 UI 手柄，film processing 使用中性色阶
+            // 使用色彩方案的实际色阶进行胶片处理（raw_rgb 包含完整的负片转正片+色阶校正）
             let mut film_correction = correction.clone();
-            film_correction.shadow = [0; 4];
-            film_correction.highlight = [16383; 4]; // 16383 × 4 ≈ 65535
-            film_correction.gray = [128; 4]; // 128 = gamma 1.0
             film_correction.saturation = 0; // 饱和度由手柄控制
 
             result = color::apply_film_processing(&result, &film_correction);
 
-            // 胶片类型处理后保存为 raw_rgb（Raw 直方图的基准：ICC + 胶片基础处理）
+            // 胶片类型处理后保存为 raw_rgb（直方图将显示实际的色阶分布，含空段）
             raw_after_film = Some(to_rgb16(&result));
 
-            // 将 correction 的色阶映射到 0-255 手柄值
-            if correction.apply_histogram {
-                for i in 0..4 {
-                    let s_val = (correction.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
-                    let h_val = (correction.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
-                    let g_val = 1.0 / (correction.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
-                    self.manual_adjust.levels_black[i] = s_val;
-                    self.manual_adjust.levels_white[i] = h_val;
-                    self.manual_adjust.levels_gamma[i] = g_val;
-                }
+            // 色阶已经烘焙到 raw_rgb，UI 手柄设为恒等（用户可在此基础上微调）
+            for i in 0..4 {
+                self.manual_adjust.levels_black[i] = 0.0;
+                self.manual_adjust.levels_gamma[i] = 1.0;
+                self.manual_adjust.levels_white[i] = 255.0;
             }
 
             // 提取胶片类型
@@ -1070,13 +1062,9 @@ impl FffViewerApp {
 
         if let Some(ref correction) = correction {
             let mut film_corr = correction.clone();
-            film_corr.shadow = [0; 4];
-            film_corr.highlight = [16383; 4];
-            film_corr.gray = [128; 4];
             film_corr.saturation = 0;
             result = color::apply_film_processing(&result, &film_corr);
 
-            // 胶片处理后保存为 raw_rgb（Raw 直方图基准）
             let raw_rgb = to_rgb16(&result);
 
             // 应用渐变曲线
