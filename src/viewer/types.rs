@@ -40,6 +40,28 @@ pub(super) enum HistogramSource {
     Raw,
 }
 
+/// 每个直方图数据源独立保存的色阶参数（黑点、白点、Gamma）。
+/// 切换数据源时，当前手柄状态保存到旧源，新源的手柄状态恢复到 `manual_adjust`。
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct HistogramLevels {
+    /// 输入黑点：索引 0=总通道, 1=R, 2=G, 3=B
+    pub black: [f32; 4],
+    /// 中间调 Gamma：索引 0=总通道, 1=R, 2=G, 3=B
+    pub gamma: [f32; 4],
+    /// 输入白点：索引 0=总通道, 1=R, 2=G, 3=B
+    pub white: [f32; 4],
+}
+
+impl Default for HistogramLevels {
+    fn default() -> Self {
+        Self {
+            black: [0.0; 4],
+            gamma: [1.0; 4],
+            white: [255.0; 4],
+        }
+    }
+}
+
 /// 目录扫描深度，控制是否递归子目录查找图像文件
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum DirScanDepth {
@@ -463,6 +485,10 @@ pub struct FffViewerApp {
     pub(super) histogram: Option<Box<[[u32; 256]; 4]>>,
     pub(super) histogram_needs_update: bool,
     pub(super) histogram_source: HistogramSource,
+    /// 处理后数据源的色阶手柄状态
+    pub(super) levels_processed: HistogramLevels,
+    /// 原始数据源的色阶手柄状态
+    pub(super) levels_raw: HistogramLevels,
     pub(super) tag_filter: String,
     pub(super) expanded_setting: Option<usize>,
 

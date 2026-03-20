@@ -636,6 +636,13 @@ impl FffViewerApp {
 
         // Re-apply color profile if any profile/preset was selected
         self.manual_adjust = config.manual_adjust.clone();
+        // 加载 sidecar 时，将色阶同步到当前数据源的存储，另一个源重置
+        self.save_levels_to_source(self.histogram_source);
+        let other = match self.histogram_source {
+            HistogramSource::Processed => &mut self.levels_raw,
+            HistogramSource::Raw => &mut self.levels_processed,
+        };
+        *other = HistogramLevels::default();
         self.histogram_needs_update = true;
 
         if self.selected_input_profile.is_some() || self.selected_preset.is_some()
@@ -882,6 +889,28 @@ impl FffViewerApp {
             egui::TextureOptions::LINEAR,
         ));
         // Histogram shows base_rgb (input distribution), no update needed on re-adjust
+    }
+
+    /// 将当前 `manual_adjust` 中的色阶手柄保存到指定数据源的存储中。
+    fn save_levels_to_source(&mut self, source: HistogramSource) {
+        let store = match source {
+            HistogramSource::Processed => &mut self.levels_processed,
+            HistogramSource::Raw => &mut self.levels_raw,
+        };
+        store.black = self.manual_adjust.levels_black;
+        store.gamma = self.manual_adjust.levels_gamma;
+        store.white = self.manual_adjust.levels_white;
+    }
+
+    /// 从指定数据源的存储恢复色阶手柄到 `manual_adjust`。
+    fn load_levels_from_source(&mut self, source: HistogramSource) {
+        let store = match source {
+            HistogramSource::Processed => &self.levels_processed,
+            HistogramSource::Raw => &self.levels_raw,
+        };
+        self.manual_adjust.levels_black = store.black;
+        self.manual_adjust.levels_gamma = store.gamma;
+        self.manual_adjust.levels_white = store.white;
     }
 
     /// 从基准 RGB 图像计算 RGBL 四通道直方图。
@@ -1223,6 +1252,8 @@ impl FffViewerApp {
                 if ui.button(reset_adjust).clicked() {
                     let enabled = self.manual_adjust.enabled;
                     self.manual_adjust = color::ManualAdjust { enabled, ..Default::default() };
+                    self.levels_processed = HistogramLevels::default();
+                    self.levels_raw = HistogramLevels::default();
                     rebuild = true;
                 }
             });
@@ -1231,44 +1262,37 @@ impl FffViewerApp {
         ui.add_space(4.0);
 
         // ── 直方图数据源切换 ────────────────────────────────────────────
+        // 切换时将当前色阶手柄保存到旧数据源，从新数据源恢复手柄状态
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("📊").small());
             let is_raw = self.histogram_source == HistogramSource::Raw;
             if ui.selectable_label(!is_raw, hist_source_processed).clicked() && is_raw {
+                // 保存当前手柄到 Raw 存储
+                self.save_levels_to_source(HistogramSource::Raw);
                 self.histogram_source = HistogramSource::Processed;
+                // 从 Processed 存储恢复手柄
+                self.load_levels_from_source(HistogramSource::Processed);
                 self.histogram_needs_update = true;
-                // 切换后根据新直方图重新计算色阶手柄位置
                 rebuild = true;
             }
             ui.label("|");
             if ui.selectable_label(is_raw, hist_source_raw).clicked() && !is_raw {
+                // 保存当前手柄到 Processed 存储
+                self.save_levels_to_source(HistogramSource::Processed);
                 self.histogram_source = HistogramSource::Raw;
+                // 从 Raw 存储恢复手柄
+                self.load_levels_from_source(HistogramSource::Raw);
                 self.histogram_needs_update = true;
                 rebuild = true;
             }
         });
 
-        // 数据源切换后立即重算直方图，使色阶手柄可基于新数据自动定位
+        // 数据源切换后立即重算直方图
         if self.histogram_needs_update {
             self.compute_histogram();
-            // 基于新直方图自动设置各通道黑白点
-            if let Some(ref hist) = self.histogram {
-                // RGB 合并通道 (levels_black/white[0])
-                let (b, w) = Self::auto_percentile_levels(&hist[3]);
-                self.manual_adjust.levels_black[0] = b;
-                self.manual_adjust.levels_white[0] = w;
-                self.manual_adjust.levels_gamma[0] = 1.0;
-                // R/G/B 各通道 (levels_black/white[1..3])
-                for ch in 0..3 {
-                    let (b, w) = Self::auto_percentile_levels(&hist[ch]);
-                    self.manual_adjust.levels_black[ch + 1] = b;
-                    self.manual_adjust.levels_white[ch + 1] = w;
-                    self.manual_adjust.levels_gamma[ch + 1] = 1.0;
-                }
-            }
         }
 
-        // 切换后重新读取直方图数据
+        // 读取直方图数据用于渲染
         let hist_data: Option<[[u32; 256]; 4]> = self.histogram.as_deref().copied();
 
         ui.add_space(2.0);

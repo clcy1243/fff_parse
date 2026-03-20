@@ -75,6 +75,8 @@ impl FffViewerApp {
             histogram: None,
             histogram_needs_update: false,
             histogram_source: HistogramSource::Processed,
+            levels_processed: HistogramLevels::default(),
+            levels_raw: HistogramLevels::default(),
             tag_filter: String::new(),
             expanded_setting: None,
             file_filter: String::new(),
