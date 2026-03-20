@@ -185,6 +185,73 @@ pub fn apply_film_processing(
     }
 }
 
+/// 应用胶片曲线 LUT（在负片反转之后、raw_rgb 保存之前调用）。
+///
+/// 仅当 `film_type ∈ {1,2}` 且 `film_curve == 4` 且 `gamma ≈ 2.0` 时生效。
+pub fn apply_film_curve_lut(
+    img: &image::DynamicImage,
+    correction: &ImageCorrection,
+) -> image::DynamicImage {
+    let dominated = (correction.film_type == 1 || correction.film_type == 2)
+        && correction.film_curve == 4
+        && (correction.gamma - 2.0).abs() < 0.01;
+    if !dominated {
+        return img.clone();
+    }
+
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            use rayon::prelude::*;
+            let (w, h) = (rgb16.width(), rgb16.height());
+            let src = rgb16.as_raw();
+            let row_len = w as usize * 3;
+            let mut out = vec![0u16; row_len * h as usize];
+
+            out.par_chunks_mut(row_len)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    let src_start = y * row_len;
+                    for x in 0..w as usize {
+                        let base = x * 3;
+                        let si = src_start + base;
+                        for ch in 0..3 {
+                            let lut: &[u8; 256] = match ch {
+                                0 => &FILM_CURVE_LUT_R,
+                                1 => &FILM_CURVE_LUT_G,
+                                _ => &FILM_CURVE_LUT_B,
+                            };
+                            let v = src[si + ch] as f32 / 65535.0;
+                            row[base + ch] = lut_interp_16(v, lut) as u16;
+                        }
+                    }
+                });
+
+            let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(w, h, out)
+                .expect("film_curve_lut 16-bit: buffer size mismatch");
+            image::DynamicImage::ImageRgb16(buf)
+        }
+        _ => {
+            let rgb8 = img.to_rgb8();
+            let (w, h) = (rgb8.width(), rgb8.height());
+            let src = rgb8.as_raw();
+            let mut out = Vec::with_capacity(src.len());
+            for chunk in src.chunks_exact(3) {
+                for ch in 0..3 {
+                    let lut: &[u8; 256] = match ch {
+                        0 => &FILM_CURVE_LUT_R,
+                        1 => &FILM_CURVE_LUT_G,
+                        _ => &FILM_CURVE_LUT_B,
+                    };
+                    out.push(lut[chunk[ch] as usize]);
+                }
+            }
+            let buf = image::RgbImage::from_raw(w, h, out)
+                .expect("film_curve_lut 8-bit: buffer size mismatch");
+            image::DynamicImage::ImageRgb8(buf)
+        }
+    }
+}
+
 // ─── Gradation Curves ───────────────────────────────────────────────────────
 
 /// 用单调三次 Hermite 插值从控制点构建 256 级查找表。

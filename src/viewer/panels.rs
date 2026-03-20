@@ -891,7 +891,12 @@ impl FffViewerApp {
 
             result = color::apply_film_processing(&result, correction);
 
-            // 胶片类型处理后保存为 raw_rgb（仅反转+去色，无色阶）
+            // 胶片曲线 LUT（在反转之后、raw_rgb 之前）
+            if self.manual_adjust.apply_film_curve {
+                result = color::apply_film_curve_lut(&result, correction);
+            }
+
+            // 胶片类型+曲线处理后保存为 raw_rgb
             raw_after_film = Some(to_rgb16(&result));
 
             // 从色彩方案加载色阶到手柄
@@ -1002,12 +1007,14 @@ impl FffViewerApp {
         if let Some(detail) = &mut self.detail {
             if let Some(img) = detail.tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
                 // Auto-apply embedded correction (same as initial load)
-                let (processed, corrected, emb_idx) = if let Some(ref eh) = detail.edit_history {
+                let (mut processed, corrected, emb_idx) = if let Some(ref eh) = detail.edit_history {
                     if !eh.settings.is_empty() {
                         let idx = eh.current_index.min(eh.settings.len() - 1);
                         let correction = &eh.settings[idx].correction;
                         log::info!("Reset: re-applying embedded correction");
-                        (color::apply_film_processing(&img, correction), true, Some(idx))
+                        let mut result = color::apply_film_processing(&img, correction);
+                        result = color::apply_film_curve_lut(&result, correction);
+                        (result, true, Some(idx))
                     } else {
                         (img, false, None)
                     }
@@ -1087,6 +1094,10 @@ impl FffViewerApp {
 
         if let Some(ref correction) = correction {
             result = color::apply_film_processing(&result, correction);
+
+            if self.manual_adjust.apply_film_curve {
+                result = color::apply_film_curve_lut(&result, correction);
+            }
 
             let raw_rgb = to_rgb16(&result);
 
