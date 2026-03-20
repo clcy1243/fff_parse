@@ -771,28 +771,8 @@ impl FffViewerApp {
 
         let mut result = preview_img;
 
-        // 第1步：先应用底片处理（负片反转+色阶）。
-        // 必须在 ICC 转换之前执行，因为扫描仪 ICC 配置文件预期
-        // 正片/场景参考数据，而非带橙色底色的原始负片扫描数据。
-        if let Some(ref correction) = preset_correction {
-            let film_type = correction.film_type;
-            log::info!(
-                "Applying film processing: FilmType={} ({}), Shadow={:?}, Highlight={:?}, Gray={:?}, \
-                 RemoveCastHighlight={}, RemoveCastShadow={}, Gamma={}",
-                film_type,
-                flexcolor::film_type_name(film_type),
-                correction.shadow,
-                correction.highlight,
-                correction.gray,
-                correction.remove_cast_highlight,
-                correction.remove_cast_shadow,
-                correction.gamma,
-            );
-            result = color::apply_film_processing(&result, correction);
-        }
-
-        // 第2步：应用 ICC 色彩空间转换（扫描仪 RGB → 输出 RGB）。
-        // 此时已是正片/校正后的数据。
+        // 第1步：应用 ICC 色彩空间转换（扫描仪 RGB → 输出 RGB）。
+        // ICC 在胶片处理之前执行，确保色彩空间校正先于色调映射。
         if let Some(icc_data) = &input_icc {
             log::info!(
                 "Applying ICC transform: input={} bytes, image={}x{}",
@@ -812,26 +792,32 @@ impl FffViewerApp {
             }
         }
 
-        // 第3步：保存 16-bit 基准图像并创建显示纹理
+        // ICC 转换后保存为 raw_rgb（Raw 模式的基准：ICC 校正后、无胶片处理）
+        let raw_after_icc = to_rgb16(&result);
+
+        // 第2步：应用底片处理（负片反转+色阶）。
+        if let Some(ref correction) = preset_correction {
+            let film_type = correction.film_type;
+            log::info!(
+                "Applying film processing: FilmType={} ({}), Shadow={:?}, Highlight={:?}, Gray={:?}, \
+                 RemoveCastHighlight={}, RemoveCastShadow={}, Gamma={}",
+                film_type,
+                flexcolor::film_type_name(film_type),
+                correction.shadow,
+                correction.highlight,
+                correction.gray,
+                correction.remove_cast_highlight,
+                correction.remove_cast_shadow,
+                correction.gamma,
+            );
+            result = color::apply_film_processing(&result, correction);
+        }
+
+        // 第3步：保存 16-bit 基准图像并更新 raw_rgb
         let rgb16 = to_rgb16(&result);
         if let Some(detail) = &mut self.detail {
             detail.base_rgb = Some(rgb16);
-        }
-
-        // 第4步：对 raw_rgb 也应用 ICC 色彩空间转换（不含胶片处理）。
-        // Raw 模式下直方图和调整基于 ICC 校正后的原始数据。
-        if let Some(icc_data) = &input_icc {
-            if let Some(detail) = &self.detail {
-                if let Some(ref raw) = detail.raw_rgb {
-                    let raw_img = image::DynamicImage::ImageRgb16(raw.clone());
-                    if let Ok(transformed) = color::apply_icc_transform(&raw_img, icc_data, self.target_color_space) {
-                        let raw_icc = to_rgb16(&transformed);
-                        if let Some(detail) = &mut self.detail {
-                            detail.raw_rgb = Some(raw_icc);
-                        }
-                    }
-                }
-            }
+            detail.raw_rgb = Some(raw_after_icc);
         }
 
         self.histogram_needs_update = true;

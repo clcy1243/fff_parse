@@ -173,13 +173,7 @@ impl FffViewerApp {
 
         // 应用与预览相同的色彩处理管线（全分辨率）
 
-        // 1. 胶片处理（负片反转 + 色阶校正）
-        if let Some(ref correction) = pipeline.correction {
-            log::info!("export: applying film processing (film_type={})", correction.film_type);
-            img = color::apply_film_processing(&img, correction);
-        }
-
-        // 2. ICC 色彩空间转换
+        // 1. ICC 色彩空间转换（先于胶片处理）
         if let Some(ref icc_data) = pipeline.icc_data {
             log::info!("export: applying ICC transform ({} bytes)", icc_data.len());
             match color::apply_icc_transform(&img, icc_data, pipeline.target_color_space) {
@@ -188,6 +182,12 @@ impl FffViewerApp {
                     log::warn!("export: ICC transform failed ({}), exporting without ICC", e);
                 }
             }
+        }
+
+        // 2. 胶片处理（负片反转 + 色阶校正）
+        if let Some(ref correction) = pipeline.correction {
+            log::info!("export: applying film processing (film_type={})", correction.film_type);
+            img = color::apply_film_processing(&img, correction);
         }
 
         // 3. 手动调整（色阶/曝光/对比度/饱和度等）
@@ -655,16 +655,16 @@ impl FffViewerApp {
             }
         };
 
-        // 应用色彩处理管线（全分辨率）
+        // 应用色彩处理管线（全分辨率）：ICC → 胶片处理 → 手动调整
         let pipeline = self.build_export_pipeline();
 
-        if let Some(ref correction) = pipeline.correction {
-            img = color::apply_film_processing(&img, correction);
-        }
         if let Some(ref icc_data) = pipeline.icc_data {
             if let Ok(transformed) = color::apply_icc_transform(&img, icc_data, pipeline.target_color_space) {
                 img = transformed;
             }
+        }
+        if let Some(ref correction) = pipeline.correction {
+            img = color::apply_film_processing(&img, correction);
         }
         if !pipeline.manual_adjust.is_identity() {
             img = color::apply_manual_adjust(&img, &pipeline.manual_adjust);
