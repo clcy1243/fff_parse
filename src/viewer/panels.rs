@@ -716,13 +716,6 @@ impl FffViewerApp {
 
         // Re-apply color profile if any profile/preset was selected
         self.manual_adjust = config.manual_adjust.clone();
-        // 加载 sidecar 时，将色阶同步到当前数据源的存储，另一个源重置
-        self.save_levels_to_source(self.histogram_source);
-        let other = match self.histogram_source {
-            HistogramSource::Processed => &mut self.levels_raw,
-            HistogramSource::Raw => &mut self.levels_processed,
-        };
-        *other = HistogramLevels::default();
         self.histogram_needs_update = true;
 
         if self.selected_input_profile.is_some() || self.selected_preset.is_some()
@@ -1094,17 +1087,11 @@ impl FffViewerApp {
         self.rebuild_texture_from_base(ctx);
     }
 
-    /// 根据当前直方图数据源选择对应的 16-bit 基准图像，应用手动调整后重建显示纹理。
-    /// Raw 模式：raw_rgb（ICC + 胶片类型处理） → manual_adjust → 显示
-    /// Processed 模式：base_rgb（ICC + 胶片处理 + 渐变曲线） → manual_adjust → 显示
+    /// 根据当前色彩方案的 base_rgb 应用手动调整后重建显示纹理。
+    /// 渲染始终基于 base_rgb（ICC + 胶片处理 + 渐变曲线），不受直方图数据源影响。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
-
-        let source = match self.histogram_source {
-            HistogramSource::Raw => detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref()),
-            HistogramSource::Processed => detail.base_rgb.as_ref(),
-        };
-        let Some(base) = source else { return };
+        let Some(base) = detail.base_rgb.as_ref() else { return };
 
         let img = image::DynamicImage::ImageRgb16(base.clone());
         let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
@@ -1112,26 +1099,24 @@ impl FffViewerApp {
         detail.texture = Some(texture_from_16bit(&rgb16, ctx));
     }
 
-    /// 将当前 `manual_adjust` 中的色阶手柄保存到指定数据源的存储中。
-    fn save_levels_to_source(&mut self, source: HistogramSource) {
-        let store = match source {
-            HistogramSource::Processed => &mut self.levels_processed,
-            HistogramSource::Raw => &mut self.levels_raw,
+    /// 将当前 `manual_adjust` 中的色阶手柄保存到两组存储（raw/processed 始终同步）。
+    #[allow(dead_code)]
+    fn save_levels_to_source(&mut self, _source: HistogramSource) {
+        let levels = HistogramLevels {
+            black: self.manual_adjust.levels_black,
+            gamma: self.manual_adjust.levels_gamma,
+            white: self.manual_adjust.levels_white,
         };
-        store.black = self.manual_adjust.levels_black;
-        store.gamma = self.manual_adjust.levels_gamma;
-        store.white = self.manual_adjust.levels_white;
+        self.levels_processed = levels.clone();
+        self.levels_raw = levels;
     }
 
-    /// 从指定数据源的存储恢复色阶手柄到 `manual_adjust`。
-    fn load_levels_from_source(&mut self, source: HistogramSource) {
-        let store = match source {
-            HistogramSource::Processed => &self.levels_processed,
-            HistogramSource::Raw => &self.levels_raw,
-        };
-        self.manual_adjust.levels_black = store.black;
-        self.manual_adjust.levels_gamma = store.gamma;
-        self.manual_adjust.levels_white = store.white;
+    /// 从存储恢复色阶手柄到 `manual_adjust`（两组存储始终同步，使用 processed）。
+    #[allow(dead_code)]
+    fn load_levels_from_source(&mut self, _source: HistogramSource) {
+        self.manual_adjust.levels_black = self.levels_processed.black;
+        self.manual_adjust.levels_gamma = self.levels_processed.gamma;
+        self.manual_adjust.levels_white = self.levels_processed.white;
     }
 
     /// 从 16-bit 基准 RGB 图像计算 RGBL 四通道直方图。
@@ -1536,28 +1521,18 @@ impl FffViewerApp {
         ui.add_space(4.0);
 
         // ── 直方图数据源切换 ────────────────────────────────────────────
-        // 切换时将当前色阶手柄保存到旧数据源，从新数据源恢复手柄状态
+        // 仅影响直方图显示，不影响图片渲染
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("📊").small());
             let is_raw = self.histogram_source == HistogramSource::Raw;
             if ui.selectable_label(!is_raw, hist_source_processed).clicked() && is_raw {
-                // 保存当前手柄到 Raw 存储
-                self.save_levels_to_source(HistogramSource::Raw);
                 self.histogram_source = HistogramSource::Processed;
-                // 从 Processed 存储恢复手柄
-                self.load_levels_from_source(HistogramSource::Processed);
                 self.histogram_needs_update = true;
-                rebuild = true;
             }
             ui.label("|");
             if ui.selectable_label(is_raw, hist_source_raw).clicked() && !is_raw {
-                // 保存当前手柄到 Processed 存储
-                self.save_levels_to_source(HistogramSource::Processed);
                 self.histogram_source = HistogramSource::Raw;
-                // 从 Raw 存储恢复手柄
-                self.load_levels_from_source(HistogramSource::Raw);
                 self.histogram_needs_update = true;
-                rebuild = true;
             }
         });
 
