@@ -62,6 +62,10 @@ pub struct AppConfig {
     pub favorites: Vec<String>,
     /// 各目录的扫描深度：路径 → 0（仅当前层）、1（一层子目录）、2（所有子目录）
     pub dir_scan_modes: std::collections::HashMap<String, u8>,
+    /// 自动色阶黑点裁切百分比（默认 0.05%，适合扫描图像的低噪声特性）
+    pub auto_levels_black_pct: f32,
+    /// 自动色阶白点裁切百分比（默认 0.1%，去除灰尘/划痕等亮点噪声）
+    pub auto_levels_white_pct: f32,
 }
 
 impl Default for AppConfig {
@@ -73,6 +77,8 @@ impl Default for AppConfig {
             language: detect_system_language(),
             favorites: Vec::new(),
             dir_scan_modes: std::collections::HashMap::new(),
+            auto_levels_black_pct: 0.05,
+            auto_levels_white_pct: 0.1,
         }
     }
 }
@@ -166,6 +172,8 @@ fn to_xml(c: &AppConfig) -> String {
         .map(|(k, v)| format!("{}:{}", xml_escape(k), v))
         .collect::<Vec<_>>().join("|");
     let _ = writeln!(s, "  <dir_scan_modes>{}</dir_scan_modes>", modes_str);
+    let _ = writeln!(s, "  <auto_levels_black_pct>{}</auto_levels_black_pct>", c.auto_levels_black_pct);
+    let _ = writeln!(s, "  <auto_levels_white_pct>{}</auto_levels_white_pct>", c.auto_levels_white_pct);
     s.push_str("</fff_viewer_config>\n");
     s
 }
@@ -207,6 +215,16 @@ fn parse_xml(xml: &str) -> Option<AppConfig> {
                     }
                 }
             }
+        }
+    }
+    if let Some(v) = tag_content(xml, "auto_levels_black_pct") {
+        if let Ok(n) = v.parse::<f32>() {
+            config.auto_levels_black_pct = n.clamp(0.0, 5.0);
+        }
+    }
+    if let Some(v) = tag_content(xml, "auto_levels_white_pct") {
+        if let Ok(n) = v.parse::<f32>() {
+            config.auto_levels_white_pct = n.clamp(0.0, 5.0);
         }
     }
     Some(config)

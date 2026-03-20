@@ -183,6 +183,9 @@ pub struct Strings {
     pub scan_depth_flat: &'static str,
     pub scan_depth_one: &'static str,
     pub scan_depth_all: &'static str,
+    pub auto_levels_clip: &'static str,
+    pub auto_levels_black_pct: &'static str,
+    pub auto_levels_white_pct: &'static str,
 
     // File filter
     pub file_filter_placeholder: &'static str,
@@ -349,6 +352,9 @@ static EN: Strings = Strings {
     scan_depth_flat: "This folder only",
     scan_depth_one: "One level deep",
     scan_depth_all: "All subdirectories",
+    auto_levels_clip: "Auto Levels Clipping",
+    auto_levels_black_pct: "Black point clip %",
+    auto_levels_white_pct: "White point clip %",
 
     file_filter_placeholder: "🔎 Filter by name or format…",
     file_filter_clear: "✕",
@@ -511,6 +517,9 @@ static ZH: Strings = Strings {
     scan_depth_flat: "仅当前目录",
     scan_depth_one: "包含一级子目录",
     scan_depth_all: "包含所有子目录",
+    auto_levels_clip: "自动色阶裁切",
+    auto_levels_black_pct: "黑点裁切 %",
+    auto_levels_white_pct: "白点裁切 %",
 
     file_filter_placeholder: "🔎 按文件名或格式筛选…",
     file_filter_clear: "✕",

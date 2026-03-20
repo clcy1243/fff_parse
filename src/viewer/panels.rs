@@ -983,12 +983,14 @@ impl FffViewerApp {
         }
     }
 
-    /// 根据直方图 0.5%/99.5% 百分位计算黑白点
-    pub(super) fn auto_percentile_levels(hist: &[u32; 256]) -> (f32, f32) {
+    /// 根据直方图按指定百分位计算黑白点。
+    /// `black_pct`：黑点裁切百分比（如 0.05 表示 0.05%）。
+    /// `white_pct`：白点裁切百分比（如 0.1 表示 0.1%）。
+    pub(super) fn auto_percentile_levels(hist: &[u32; 256], black_pct: f32, white_pct: f32) -> (f32, f32) {
         let total: u32 = hist.iter().sum();
         if total == 0 { return (0.0, 255.0); }
-        let lo_target = ((total as f32 * 0.005) as u32).max(1);
-        let hi_target = total.saturating_sub(lo_target);
+        let lo_target = ((total as f32 * black_pct / 100.0) as u32).max(1);
+        let hi_target = ((total as f32 * white_pct / 100.0) as u32).max(1);
 
         let mut b = 0f32;
         let mut cumsum = 0u32;
@@ -1001,12 +1003,13 @@ impl FffViewerApp {
         cumsum = 0;
         for (i, &count) in hist.iter().enumerate().rev() {
             cumsum += count;
-            if cumsum >= (total - hi_target) { w = i as f32; break; }
+            if cumsum >= hi_target { w = i as f32; break; }
         }
         (b, w.max(b + 1.0))
     }
 
     /// 渲染单通道色阶区段：直方图 + 渐变轨道 + 可拖拽黑/灰/白三角手柄。
+    /// `clip_pct`：自动色阶裁切百分比 (black_pct, white_pct)。
     /// 返回 true 表示有值被修改。
     pub(super) fn render_levels_section(
         ui: &mut egui::Ui,
@@ -1014,6 +1017,7 @@ impl FffViewerApp {
         title: &str,
         hist: Option<&[u32; 256]>,
         bar_color: egui::Color32,
+        clip_pct: (f32, f32),
         black: &mut f32,
         gamma: &mut f32,
         white: &mut f32,
@@ -1027,14 +1031,14 @@ impl FffViewerApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(egui::Button::new(egui::RichText::new("A").small())
                     .min_size(egui::vec2(16.0, 0.0)))
-                    .on_hover_text("Auto-set levels (0.5%–99.5% percentile)")
+                    .on_hover_text(format!("Auto-set levels ({:.2}%–{:.2}% clip)", clip_pct.0, clip_pct.1))
                     .clicked()
             }).inner
         }).inner;
 
         if auto_clicked {
             if let Some(h) = hist {
-                let (b, w) = Self::auto_percentile_levels(h);
+                let (b, w) = Self::auto_percentile_levels(h, clip_pct.0, clip_pct.1);
                 *black = b;
                 *white = w;
                 *gamma = 1.0;
@@ -1306,6 +1310,11 @@ impl FffViewerApp {
         ];
         let levels_idx = [0usize, 1usize, 2usize, 3usize];
 
+        let clip_pct = (
+            self.app_config.auto_levels_black_pct,
+            self.app_config.auto_levels_white_pct,
+        );
+
         for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
             let lvl_idx = levels_idx[section_pos];
             let hist = hist_data.as_ref().map(|hd| &hd[*hist_ch]);
@@ -1316,6 +1325,7 @@ impl FffViewerApp {
                 title,
                 hist,
                 *bar_color,
+                clip_pct,
                 &mut self.manual_adjust.levels_black[lvl_idx],
                 &mut self.manual_adjust.levels_gamma[lvl_idx],
                 &mut self.manual_adjust.levels_white[lvl_idx],
@@ -1444,13 +1454,41 @@ impl FffViewerApp {
                 ui.selectable_value(&mut self.language, Language::Chinese, Language::Chinese.label());
             });
 
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // ── Auto Levels Clipping ──
+        ui.strong(s.auto_levels_clip);
+        ui.add_space(2.0);
+        let old_black_pct = self.app_config.auto_levels_black_pct;
+        let old_white_pct = self.app_config.auto_levels_white_pct;
+        ui.horizontal(|ui| {
+            ui.label(s.auto_levels_black_pct);
+            ui.add(egui::DragValue::new(&mut self.app_config.auto_levels_black_pct)
+                .range(0.0..=5.0)
+                .speed(0.01)
+                .suffix("%")
+                .max_decimals(2));
+        });
+        ui.horizontal(|ui| {
+            ui.label(s.auto_levels_white_pct);
+            ui.add(egui::DragValue::new(&mut self.app_config.auto_levels_white_pct)
+                .range(0.0..=5.0)
+                .speed(0.01)
+                .suffix("%")
+                .max_decimals(2));
+        });
+
         // Detect changes and save
         let gpu_changed = self.app_config.gpu_enabled != old_gpu
             || self.app_config.gpu_device != old_device;
         let threads_changed = self.app_config.render_threads != old_threads;
         let lang_changed = self.language != old_lang;
+        let levels_pct_changed = self.app_config.auto_levels_black_pct != old_black_pct
+            || self.app_config.auto_levels_white_pct != old_white_pct;
 
-        if gpu_changed || threads_changed || lang_changed {
+        if gpu_changed || threads_changed || lang_changed || levels_pct_changed {
             if lang_changed {
                 self.app_config.language = self.language.to_config().to_string();
             }
