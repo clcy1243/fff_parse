@@ -5,6 +5,7 @@
 
 use super::types::*;
 
+use eframe::egui;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -233,5 +234,44 @@ pub(super) fn clamp_image_for_gpu(img: image::DynamicImage) -> image::DynamicIma
         w, h, MAX_TEX, nw, nh
     );
     img.resize_exact(nw, nh, image::imageops::FilterType::Triangle)
+}
+
+/// 将 DynamicImage 转换为 Rgb16Image（16-bit RGB）。
+/// 如果输入已是 ImageRgb16 则零拷贝提取；否则从 8-bit 上移。
+pub(super) fn to_rgb16(img: &image::DynamicImage) -> Rgb16Image {
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => rgb16.clone(),
+        _ => {
+            let rgb8 = img.to_rgb8();
+            let (w, h) = rgb8.dimensions();
+            let pixels: Vec<u16> = rgb8.as_raw().iter().map(|&v| (v as u16) << 8 | v as u16).collect();
+            Rgb16Image::from_raw(w, h, pixels).expect("to_rgb16: buffer size mismatch")
+        }
+    }
+}
+
+/// 从 16-bit RGB 图像创建 egui 显示纹理（>>8 转 8-bit）
+pub(super) fn texture_from_16bit(rgb16: &Rgb16Image, ctx: &egui::Context) -> egui::TextureHandle {
+    use rayon::prelude::*;
+    let (w, h) = (rgb16.width() as usize, rgb16.height() as usize);
+    let src = rgb16.as_raw();
+    let row_len = w * 3;
+    // 并行 >>8 转换 + 添加 alpha 通道
+    let mut rgba = vec![255u8; w * h * 4];
+    rgba.par_chunks_mut(w * 4)
+        .enumerate()
+        .for_each(|(y, row_dst)| {
+            let row_start = y * row_len;
+            for x in 0..w {
+                let si = row_start + x * 3;
+                let di = x * 4;
+                row_dst[di]     = (src[si]     >> 8) as u8;
+                row_dst[di + 1] = (src[si + 1] >> 8) as u8;
+                row_dst[di + 2] = (src[si + 2] >> 8) as u8;
+                // alpha = 255 (already set)
+            }
+        });
+    let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
+    ctx.load_texture("loupe_preview", color_image, egui::TextureOptions::LINEAR)
 }
 

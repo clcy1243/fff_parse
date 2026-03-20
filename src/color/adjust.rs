@@ -61,30 +61,49 @@ impl ManualAdjust {
     }
 }
 
-/// 对 8-bit 图像应用手动调整（曝光、对比度、阴影/高光、饱和度、色彩平衡、色阶）。
+/// 对图像应用手动调整（曝光、对比度、阴影/高光、饱和度、色彩平衡、色阶）。
 ///
-/// 使用逐通道 LUT 提升性能，处理流程：色阶 → 曝光/色彩平衡 → 阴影/高光 → 对比度 → 饱和度。
+/// 支持 16-bit 和 8-bit 输入，始终返回与输入相同的位深。
+/// 色阶参数 (levels_black/white) 范围为 0-255（用户空间），内部自动映射到实际位深。
+/// 使用 65536 项 LUT（16-bit）或 256 项 LUT（8-bit）提升性能。
 pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> image::DynamicImage {
     if adj.is_identity() {
         return img.clone();
     }
 
-    let rgb8 = img.to_rgb8();
-    let (w, h) = (rgb8.width(), rgb8.height());
-    let src = rgb8.as_raw();
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            image::DynamicImage::ImageRgb16(apply_adjust_16(rgb16, adj))
+        }
+        _ => {
+            let rgb8 = img.to_rgb8();
+            image::DynamicImage::ImageRgb8(apply_adjust_8(&rgb8, adj))
+        }
+    }
+}
+
+/// 16-bit 手动调整实现：65536 项 per-channel LUT + 逐像素饱和度
+fn apply_adjust_16(
+    rgb16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    adj: &ManualAdjust,
+) -> image::ImageBuffer<image::Rgb<u16>, Vec<u16>> {
+    use rayon::prelude::*;
+
+    let (w, h) = (rgb16.width(), rgb16.height());
+    let src = rgb16.as_raw();
 
     let exposure_mult = 2.0_f32.powf(adj.exposure);
     let sat = adj.saturation / 100.0;
 
-    // Master levels params
+    // 色阶参数从用户空间 (0-255) 映射到归一化 (0-1)
     let bl_m = adj.levels_black[0] / 255.0;
     let wh_m = adj.levels_white[0] / 255.0;
     let range_m = (wh_m - bl_m).max(0.001);
     let gamma_m = adj.levels_gamma[0].clamp(0.01, 99.0);
 
-    // Build per-channel LUTs: levels → exposure/color-balance → shadows/highlights → contrast
-    let mut luts = [[0u8; 256]; 3];
+    // 构建 65536 项 per-channel LUT
     let shifts = [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0];
+    let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
 
     for ch in 0..3 {
         let bl_c = adj.levels_black[ch + 1] / 255.0;
@@ -92,47 +111,41 @@ pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> ima
         let range_c = (wh_c - bl_c).max(0.001);
         let gamma_c = adj.levels_gamma[ch + 1].clamp(0.01, 99.0);
 
-        for i in 0..=255u32 {
-            let mut v = i as f32 / 255.0;
+        let mut lut = vec![0u16; 65536];
+        for i in 0..65536u32 {
+            let mut v = i as f32 / 65535.0;
 
-            // Step 1: Apply master levels (affects all channels equally)
             v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
-
-            // Step 2: Apply per-channel levels
             v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
 
-            // Step 3: Color balance + exposure
             v += shifts[ch];
             v *= exposure_mult;
             v = v.clamp(0.0, 1.0);
 
-            // Step 4: Shadows rolloff
             if adj.shadows.abs() > 0.1 {
                 let s = adj.shadows / 100.0;
                 let t = 1.0 - v;
                 v = (v + s * t * t * 0.5).clamp(0.0, 1.0);
             }
-            // Step 5: Highlights rolloff
             if adj.highlights.abs() > 0.1 {
                 let hi = adj.highlights / 100.0;
                 let t = v;
                 v = (v + hi * t * t * 0.5).clamp(0.0, 1.0);
             }
-            // Step 6: Contrast S-curve
             if adj.contrast.abs() > 0.1 {
                 let c = adj.contrast / 100.0;
                 let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
             }
 
-            luts[ch][i as usize] = (v * 255.0) as u8;
+            lut[i as usize] = (v * 65535.0) as u16;
         }
+        luts.push(lut);
     }
 
     let row_len = w as usize * 3;
-    let mut out = vec![0u8; row_len * h as usize];
+    let mut out = vec![0u16; row_len * h as usize];
 
-    use rayon::prelude::*;
     out.par_chunks_mut(row_len)
         .enumerate()
         .for_each(|(y, row)| {
@@ -144,7 +157,86 @@ pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> ima
                 let mut gf = luts[1][src[si + 1] as usize] as f32;
                 let mut bf = luts[2][src[si + 2] as usize] as f32;
 
-                // Saturation: desaturate/saturate using luminance
+                if sat.abs() > 0.001 {
+                    let lum = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;
+                    rf = (lum + (rf - lum) * (1.0 + sat)).clamp(0.0, 65535.0);
+                    gf = (lum + (gf - lum) * (1.0 + sat)).clamp(0.0, 65535.0);
+                    bf = (lum + (bf - lum) * (1.0 + sat)).clamp(0.0, 65535.0);
+                }
+
+                row[base] = rf as u16;
+                row[base + 1] = gf as u16;
+                row[base + 2] = bf as u16;
+            }
+        });
+
+    image::ImageBuffer::from_raw(w, h, out).expect("manual_adjust_16 buffer mismatch")
+}
+
+/// 8-bit 手动调整实现（保留原有逻辑）
+fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage {
+    use rayon::prelude::*;
+
+    let (w, h) = (rgb8.width(), rgb8.height());
+    let src = rgb8.as_raw();
+
+    let exposure_mult = 2.0_f32.powf(adj.exposure);
+    let sat = adj.saturation / 100.0;
+
+    let bl_m = adj.levels_black[0] / 255.0;
+    let wh_m = adj.levels_white[0] / 255.0;
+    let range_m = (wh_m - bl_m).max(0.001);
+    let gamma_m = adj.levels_gamma[0].clamp(0.01, 99.0);
+
+    let mut luts = [[0u8; 256]; 3];
+    let shifts = [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0];
+
+    for ch in 0..3 {
+        let bl_c = adj.levels_black[ch + 1] / 255.0;
+        let wh_c = adj.levels_white[ch + 1] / 255.0;
+        let range_c = (wh_c - bl_c).max(0.001);
+        let gamma_c = adj.levels_gamma[ch + 1].clamp(0.01, 99.0);
+
+        for i in 0..=255u32 {
+            let mut v = i as f32 / 255.0;
+            v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
+            v += shifts[ch];
+            v *= exposure_mult;
+            v = v.clamp(0.0, 1.0);
+            if adj.shadows.abs() > 0.1 {
+                let s = adj.shadows / 100.0;
+                let t = 1.0 - v;
+                v = (v + s * t * t * 0.5).clamp(0.0, 1.0);
+            }
+            if adj.highlights.abs() > 0.1 {
+                let hi = adj.highlights / 100.0;
+                let t = v;
+                v = (v + hi * t * t * 0.5).clamp(0.0, 1.0);
+            }
+            if adj.contrast.abs() > 0.1 {
+                let c = adj.contrast / 100.0;
+                let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
+                v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
+            }
+            luts[ch][i as usize] = (v * 255.0) as u8;
+        }
+    }
+
+    let row_len = w as usize * 3;
+    let mut out = vec![0u8; row_len * h as usize];
+
+    out.par_chunks_mut(row_len)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let src_start = y * row_len;
+            for x in 0..w as usize {
+                let base = x * 3;
+                let si = src_start + base;
+                let mut rf = luts[0][src[si] as usize] as f32;
+                let mut gf = luts[1][src[si + 1] as usize] as f32;
+                let mut bf = luts[2][src[si + 2] as usize] as f32;
+
                 if sat.abs() > 0.001 {
                     let lum = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;
                     rf = (lum + (rf - lum) * (1.0 + sat)).clamp(0.0, 255.0);
@@ -158,8 +250,7 @@ pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> ima
             }
         });
 
-    let buf = image::RgbImage::from_raw(w, h, out).expect("manual_adjust buffer mismatch");
-    image::DynamicImage::ImageRgb8(buf)
+    image::RgbImage::from_raw(w, h, out).expect("manual_adjust_8 buffer mismatch")
 }
 
 /// 从 FFF 文件的 TIFF 标签 0xC51A（ImaconProfileData）中提取嵌入的 ICC 配置文件。

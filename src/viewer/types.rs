@@ -355,6 +355,9 @@ pub(super) struct ThumbEntry {
 
 // ─── 选中文件的详细信息 ──────────────────────────────────────────────────────
 
+/// 16-bit RGB 图像类型别名，用于内部管线全程保持 16-bit 精度
+pub(super) type Rgb16Image = image::ImageBuffer<image::Rgb<u16>, Vec<u16>>;
+
 /// 已加载的文件详情：包含解析后的 TIFF 数据、元数据、纹理和色彩信息
 pub(super) struct LoadedDetail {
     pub(super) path: PathBuf,
@@ -365,10 +368,10 @@ pub(super) struct LoadedDetail {
     pub(super) edit_history: Option<EditHistory>,
     pub(super) texture: Option<egui::TextureHandle>,
     pub(super) embedded_icc: Option<Vec<u8>>,
-    /// 已处理的 8-bit 基准图像（色彩方案应用后），用于直方图计算和手动调整
-    pub(super) base_rgb: Option<image::RgbImage>,
-    /// 未经色彩处理的 8-bit 原始图像（仅 16→8 位转换），用于原始直方图
-    pub(super) raw_rgb: Option<image::RgbImage>,
+    /// 已处理的 16-bit 基准图像（色彩方案应用后），用于直方图计算和手动调整
+    pub(super) base_rgb: Option<Rgb16Image>,
+    /// 未经色彩处理的 16-bit 原始图像，用于原始直方图
+    pub(super) raw_rgb: Option<Rgb16Image>,
 }
 
 // ─── 导出状态 ───────────────────────────────────────────────────────────────
@@ -435,11 +438,13 @@ pub(super) struct DetailResult {
     pub(super) metadata: Vec<(String, String)>,
     pub(super) all_tags: Vec<(String, String, String, String)>,
     pub(super) edit_history: Option<EditHistory>,
-    pub(super) preview_rgba: Option<(Vec<u8>, u32, u32)>, // (像素数据, 宽, 高)
-    pub(super) raw_preview_rgb: Option<image::RgbImage>,  // 未经色彩处理的原始 8-bit 预览
+    /// 已处理的 16-bit 图像（色彩方案应用后）
+    pub(super) preview_16: Option<image::DynamicImage>,
+    /// 未经色彩处理的 16-bit 原始图像
+    pub(super) raw_preview_16: Option<image::DynamicImage>,
     pub(super) embedded_icc: Option<Vec<u8>>,
-    pub(super) auto_corrected: bool, // 为 true 表示已自动应用嵌入的校正
-    pub(super) sidecar: Option<SidecarConfig>, // 从 XML sidecar 读取的持久化设置
+    pub(super) auto_corrected: bool,
+    pub(super) sidecar: Option<SidecarConfig>,
 }
 
 /// 文件详情加载消息

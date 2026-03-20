@@ -812,11 +812,10 @@ impl FffViewerApp {
             }
         }
 
-        // 第3步：转换为显示用 8 位、限制 GPU 纹理尺寸、保存基准图像并上传纹理
-        let result = convert_16_to_8_for_display(result);
-        let result = clamp_image_for_gpu(result);
+        // 第3步：保存 16-bit 基准图像并创建显示纹理
+        let rgb16 = to_rgb16(&result);
         if let Some(detail) = &mut self.detail {
-            detail.base_rgb = Some(result.to_rgb8());
+            detail.base_rgb = Some(rgb16);
         }
         self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
@@ -862,9 +861,7 @@ impl FffViewerApp {
                 };
                 self.use_embedded_correction = corrected;
 
-                let processed = convert_16_to_8_for_display(processed);
-                let processed = clamp_image_for_gpu(processed);
-                detail.base_rgb = Some(processed.to_rgb8());
+                detail.base_rgb = Some(to_rgb16(&processed));
             }
         }
         self.histogram_needs_update = true;
@@ -872,23 +869,17 @@ impl FffViewerApp {
         log::info!("Color profile reset");
     }
 
-    /// 根据基准 RGB 图像和手动调整参数重建显示纹理
+    /// 根据 16-bit 基准 RGB 图像和手动调整参数重建显示纹理。
+    /// 管线：16-bit base → 16-bit 手动调整 → >>8 转 8-bit → egui 纹理
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
         let Some(ref base) = detail.base_rgb else { return };
 
-        let img = image::DynamicImage::ImageRgb8(base.clone());
+        let img = image::DynamicImage::ImageRgb16(base.clone());
         let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
-        let rgba = adjusted.to_rgba8();
-        let size = [rgba.width() as usize, rgba.height() as usize];
-        let pixels = rgba.into_raw();
-        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-        detail.texture = Some(ctx.load_texture(
-            "loupe_preview_adjusted",
-            color_image,
-            egui::TextureOptions::LINEAR,
-        ));
-        // Histogram shows base_rgb (input distribution), no update needed on re-adjust
+        // apply_manual_adjust 现在返回 DynamicImage（可能是 16-bit 或 8-bit）
+        let rgb16 = to_rgb16(&adjusted);
+        detail.texture = Some(texture_from_16bit(&rgb16, ctx));
     }
 
     /// 将当前 `manual_adjust` 中的色阶手柄保存到指定数据源的存储中。
@@ -913,7 +904,7 @@ impl FffViewerApp {
         self.manual_adjust.levels_white = store.white;
     }
 
-    /// 从基准 RGB 图像计算 RGBL 四通道直方图。
+    /// 从 16-bit 基准 RGB 图像计算 RGBL 四通道直方图（显示用 256 bin，>>8 映射）。
     /// 根据 `histogram_source` 选择数据源：Processed 使用处理后的图像，Raw 使用原始图像。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
@@ -921,7 +912,7 @@ impl FffViewerApp {
             return;
         };
 
-        let source_img = match self.histogram_source {
+        let source_img: Option<&Rgb16Image> = match self.histogram_source {
             HistogramSource::Raw => detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref()),
             HistogramSource::Processed => detail.base_rgb.as_ref(),
         };
@@ -931,15 +922,18 @@ impl FffViewerApp {
             return;
         };
 
-        // 统计 R/G/B 三通道及亮度通道的分布。
+        // 16-bit 值 >>8 映射到 256 bin 用于显示。
         // histogram[0..2] = R,G,B；histogram[3] = 亮度（用于 RGB 合并视图）。
         let mut hist = Box::new([[0u32; 256]; 4]);
         for pixel in base.pixels() {
-            let [r, g, b] = pixel.0;
-            hist[0][r as usize] += 1;
-            hist[1][g as usize] += 1;
-            hist[2][b as usize] += 1;
-            let lum = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) as u8;
+            let [r16, g16, b16] = pixel.0;
+            let r8 = (r16 >> 8) as usize;
+            let g8 = (g16 >> 8) as usize;
+            let b8 = (b16 >> 8) as usize;
+            hist[0][r8] += 1;
+            hist[1][g8] += 1;
+            hist[2][b8] += 1;
+            let lum = (0.2126 * r8 as f32 + 0.7152 * g8 as f32 + 0.0722 * b8 as f32) as u8;
             hist[3][lum as usize] += 1;
         }
         self.histogram = Some(hist);

@@ -242,14 +242,12 @@ impl FffViewerApp {
                     });
 
                     // Decode preview with downsampling for fast display
-                    let (preview_rgba, raw_preview_rgb, auto_corrected) = if let Some(img) = tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
+                    let (preview_16, raw_preview_16, auto_corrected) = if let Some(img) = tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
                         log::info!("Decoded downscaled preview: {}x{} {:?}",
                             img.width(), img.height(), img.color());
 
-                        // 保存未经色彩处理的原始 8-bit 图像（用于原始直方图显示）
-                        let raw_8bit = convert_16_to_8_for_display(img.clone());
-                        let raw_8bit = clamp_image_for_gpu(raw_8bit);
-                        let raw_rgb = raw_8bit.to_rgb8();
+                        // 保存未经色彩处理的 16-bit 原始图像（用于原始直方图）
+                        let raw_16 = img.clone();
 
                         // Auto-apply embedded correction if available
                         let (processed, corrected) = if let Some(ref correction) = embedded_correction {
@@ -261,12 +259,7 @@ impl FffViewerApp {
                             (img, false)
                         };
 
-                        let processed = convert_16_to_8_for_display(processed);
-                        let processed = clamp_image_for_gpu(processed);
-                        let rgba = processed.to_rgba8();
-                        let w = rgba.width();
-                        let h = rgba.height();
-                        (Some((rgba.into_raw(), w, h)), Some(raw_rgb), corrected)
+                        (Some(processed), Some(raw_16), corrected)
                     } else {
                         log::warn!("No preview decoded for {}", path.display());
                         (None, None, false)
@@ -288,8 +281,8 @@ impl FffViewerApp {
                         metadata,
                         all_tags,
                         edit_history,
-                        preview_rgba,
-                        raw_preview_rgb,
+                        preview_16,
+                        raw_preview_16,
                         embedded_icc,
                         auto_corrected,
                         sidecar: sidecar_config,
@@ -334,20 +327,17 @@ impl FffViewerApp {
                     let has_sidecar = result.sidecar.is_some();
                     let sidecar = result.sidecar.clone();
 
-                    let (texture, base_rgb) = if let Some((ref pixels, w, h)) = result.preview_rgba {
-                        let size = [w as usize, h as usize];
-                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
-                        let tex = ctx.load_texture(
-                            "loupe_preview",
-                            color_image,
-                            egui::TextureOptions::LINEAR,
-                        );
-                        let rgb_pixels: Vec<u8> = pixels.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
-                        let rgb_img = image::RgbImage::from_raw(w, h, rgb_pixels);
-                        (Some(tex), rgb_img)
+                    // 从 16-bit 图像提取 base_rgb(16-bit) 并创建 8-bit 显示纹理
+                    let (texture, base_rgb) = if let Some(ref img16) = result.preview_16 {
+                        let rgb16 = to_rgb16(img16);
+                        let tex = texture_from_16bit(&rgb16, ctx);
+                        (Some(tex), Some(rgb16))
                     } else {
                         (None, None)
                     };
+
+                    // raw_rgb 也转为 Rgb16Image
+                    let raw_rgb = result.raw_preview_16.as_ref().map(|img| to_rgb16(img));
 
                     self.detail = Some(LoadedDetail {
                         path: result.path,
@@ -358,7 +348,7 @@ impl FffViewerApp {
                         texture,
                         embedded_icc: result.embedded_icc,
                         base_rgb,
-                        raw_rgb: result.raw_preview_rgb,
+                        raw_rgb,
                     });
 
                     if has_sidecar {
