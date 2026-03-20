@@ -4,6 +4,147 @@ use std::path::{Path, PathBuf};
 
 // ─── ICC Profile descriptor ────────────────────────────────────────────────
 
+/// 从 ICC 配置文件原始字节中解析的详细元数据。
+#[derive(Debug, Clone, Default)]
+pub struct IccProfileDetail {
+    /// 配置文件大小（字节）
+    pub size: u32,
+    /// 版本号
+    pub version: String,
+    /// 设备类别：scnr / mntr / prtr / link / spac / abst / nmcl
+    pub device_class: String,
+    /// 设备类别的可读名称
+    pub device_class_name: String,
+    /// 输入色彩空间：RGB / CMYK / GRAY / Lab 等
+    pub color_space: String,
+    /// PCS（连接色彩空间）：XYZ 或 Lab
+    pub pcs: String,
+    /// 配置文件描述名称
+    pub description: String,
+    /// 创建日期时间
+    pub date_time: String,
+    /// 首选色彩管理模块（CMM）
+    pub cmm_type: String,
+    /// 渲染意图：0=感知 1=相对比色 2=饱和度 3=绝对比色
+    pub rendering_intent: String,
+    /// PCS 照度体 (D50 等)
+    pub illuminant: String,
+    /// 制造商签名
+    pub manufacturer: String,
+    /// 设备型号签名
+    pub model: String,
+    /// 标签数量
+    pub tag_count: u32,
+    /// 标签列表：(签名, 偏移, 大小)
+    pub tags: Vec<(String, u32, u32)>,
+}
+
+/// 从 ICC 原始字节中解析详细元数据。
+pub fn parse_icc_detail(data: &[u8]) -> Option<IccProfileDetail> {
+    if data.len() < 132 { return None; }
+
+    let u32be = |off: usize| -> u32 {
+        u32::from_be_bytes([data[off], data[off+1], data[off+2], data[off+3]])
+    };
+    let sig = |off: usize| -> String {
+        std::str::from_utf8(&data[off..off+4])
+            .unwrap_or("????")
+            .trim()
+            .to_string()
+    };
+
+    let size = u32be(0);
+    let cmm = sig(4);
+    let ver_major = data[8];
+    let ver_minor = data[9] >> 4;
+    let ver_bugfix = data[9] & 0x0F;
+    let version = format!("{}.{}.{}", ver_major, ver_minor, ver_bugfix);
+
+    let device_class = sig(12);
+    let device_class_name = match device_class.as_str() {
+        "scnr" => "Scanner",
+        "mntr" => "Monitor",
+        "prtr" => "Printer",
+        "link" => "Device Link",
+        "spac" => "Color Space",
+        "abst" => "Abstract",
+        "nmcl" => "Named Color",
+        _ => "Unknown",
+    }.to_string();
+
+    let color_space = sig(16);
+    let pcs = sig(20);
+
+    // Date/time at bytes 24-35 (6 × u16)
+    let u16be = |off: usize| -> u16 {
+        u16::from_be_bytes([data[off], data[off+1]])
+    };
+    let year  = u16be(24);
+    let month = u16be(26);
+    let day   = u16be(28);
+    let hour  = u16be(30);
+    let min   = u16be(32);
+    let sec   = u16be(34);
+    let date_time = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        year, month, day, hour, min, sec);
+
+    // Rendering intent at byte 64-67
+    let intent_val = u32be(64);
+    let rendering_intent = match intent_val {
+        0 => "Perceptual",
+        1 => "Relative Colorimetric",
+        2 => "Saturation",
+        3 => "Absolute Colorimetric",
+        _ => "Unknown",
+    }.to_string();
+
+    // PCS illuminant at bytes 68-79 (3 × s15Fixed16)
+    let fix16 = |off: usize| -> f64 {
+        let raw = i32::from_be_bytes([data[off], data[off+1], data[off+2], data[off+3]]);
+        raw as f64 / 65536.0
+    };
+    let ill_x = fix16(68);
+    let ill_y = fix16(72);
+    let ill_z = fix16(76);
+    let illuminant = format!("X={:.4} Y={:.4} Z={:.4}", ill_x, ill_y, ill_z);
+
+    let manufacturer = sig(48);
+    let model = sig(52);
+
+    let description = extract_profile_description(data)
+        .unwrap_or_default();
+
+    // Tags
+    let tag_count = u32be(128);
+    let mut tags = Vec::new();
+    for i in 0..tag_count as usize {
+        let base = 132 + i * 12;
+        if base + 12 > data.len() { break; }
+        let tag_sig = sig(base);
+        let tag_off = u32be(base + 4);
+        let tag_sz  = u32be(base + 8);
+        tags.push((tag_sig, tag_off, tag_sz));
+    }
+
+    Some(IccProfileDetail {
+        size,
+        version,
+        device_class,
+        device_class_name,
+        color_space,
+        pcs,
+        description,
+        date_time,
+        cmm_type: cmm,
+        rendering_intent,
+        illuminant,
+        manufacturer,
+        model,
+        tag_count,
+        tags,
+    })
+}
+
 /// ICC 配置文件的描述信息。
 #[derive(Debug, Clone)]
 pub struct IccProfileInfo {

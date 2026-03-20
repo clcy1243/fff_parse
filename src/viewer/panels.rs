@@ -352,6 +352,60 @@ impl FffViewerApp {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut self.use_embedded_icc, s.use_embedded_icc);
             });
+
+            // Show embedded ICC profile details in a collapsible section
+            if let Some(icc_bytes) = self.detail.as_ref().and_then(|d| d.embedded_icc.as_ref()) {
+                if let Some(detail) = color::parse_icc_detail(icc_bytes) {
+                    egui::CollapsingHeader::new(
+                        egui::RichText::new(if detail.description.is_empty() {
+                            format!("ℹ ICC ({} {})", detail.color_space, detail.device_class_name)
+                        } else {
+                            format!("ℹ {}", detail.description)
+                        }).small()
+                    )
+                    .id_salt("embedded_icc_detail")
+                    .show(ui, |ui| {
+                        egui::Grid::new("embedded_icc_grid")
+                            .num_columns(2)
+                            .spacing([8.0, 2.0])
+                            .show(ui, |ui| {
+                                let row = |ui: &mut egui::Ui, label: &str, value: &str| {
+                                    ui.label(egui::RichText::new(label).small());
+                                    ui.label(egui::RichText::new(value).small().monospace());
+                                    ui.end_row();
+                                };
+                                if !detail.description.is_empty() {
+                                    row(ui, s.icc_detail_name, &detail.description);
+                                }
+                                row(ui, s.icc_detail_version, &detail.version);
+                                row(ui, s.icc_detail_class,
+                                    &format!("{} ({})", detail.device_class_name, detail.device_class));
+                                row(ui, s.icc_detail_color_space, &detail.color_space);
+                                row(ui, s.icc_detail_pcs, &detail.pcs);
+                                row(ui, s.icc_detail_intent, &detail.rendering_intent);
+                                row(ui, s.icc_detail_date, &detail.date_time);
+                                if !detail.cmm_type.is_empty() {
+                                    row(ui, s.icc_detail_cmm, &detail.cmm_type);
+                                }
+                                row(ui, s.icc_detail_illuminant, &detail.illuminant);
+                                row(ui, s.icc_detail_size,
+                                    &format!("{} bytes", detail.size));
+                                row(ui, s.icc_detail_tags, &detail.tag_count.to_string());
+                            });
+
+                        // Show tag list
+                        if !detail.tags.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new(
+                                detail.tags.iter()
+                                    .map(|(sig, _, sz)| format!("{sig}({sz})"))
+                                    .collect::<Vec<_>>()
+                                    .join("  ")
+                            ).small().weak());
+                        }
+                    });
+                }
+            }
         }
 
         ui.add_space(12.0);
