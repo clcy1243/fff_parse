@@ -1163,12 +1163,8 @@ impl FffViewerApp {
             return;
         };
 
-        // 原始直方图：使用渲染源（与 rebuild_texture_from_base 相同的起点）
-        let source_img = if self.manual_adjust.apply_curves {
-            detail.base_rgb.as_ref()
-        } else {
-            detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref())
-        };
+        // 原始直方图：永远使用 raw_rgb（ICC + 胶片处理，无渐变曲线）
+        let source_img = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
 
         let Some(base) = source_img else {
             self.histogram_raw = None;
