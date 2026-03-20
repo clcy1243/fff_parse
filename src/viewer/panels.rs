@@ -1903,36 +1903,41 @@ impl FffViewerApp {
 
         // ── Histogram Levels (shadow / gray / highlight per channel) ──
         {
-            let has_levels = corr.shadow.iter().any(|&v| v != 0)
-                || corr.gray.iter().any(|&v| v != 0)
-                || corr.highlight.iter().any(|&v| v != 255);
-            if has_levels {
-                egui::CollapsingHeader::new(
-                    egui::RichText::new(s.histogram_levels).small().strong(),
-                )
-                .default_open(true)
-                .show(ui, |ui| {
-                    let ch = ["RGB", "R", "G", "B"];
-                    egui::Grid::new("hist_levels_grid")
-                        .striped(true)
-                        .num_columns(4)
-                        .show(ui, |ui| {
-                            // Header
-                            ui.label(egui::RichText::new("").small());
-                            ui.label(egui::RichText::new(s.levels_shadow).small().strong());
-                            ui.label(egui::RichText::new(s.levels_midtone).small().strong());
-                            ui.label(egui::RichText::new(s.levels_highlight).small().strong());
+            egui::CollapsingHeader::new(
+                egui::RichText::new(s.histogram_levels).small().strong(),
+            )
+            .default_open(true)
+            .show(ui, |ui| {
+                let ch = ["RGB", "R", "G", "B"];
+                egui::Grid::new("hist_levels_grid")
+                    .striped(true)
+                    .num_columns(4)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("").small());
+                        ui.label(egui::RichText::new(s.levels_shadow).small().strong());
+                        ui.label(egui::RichText::new(s.levels_midtone).small().strong());
+                        ui.label(egui::RichText::new(s.levels_highlight).small().strong());
+                        ui.end_row();
+                        for i in 0..4 {
+                            ui.label(egui::RichText::new(ch[i]).small().strong());
+                            // Shadow/Highlight: raw × 4 = 16-bit value, show mapped to 0-255
+                            let s_val = corr.shadow[i] as f64 * 4.0 / 65535.0 * 255.0;
+                            let h_val = corr.highlight[i] as f64 * 4.0 / 65535.0 * 255.0;
+                            // Gray: 128 = gamma 1.0
+                            let g_gamma = 1.0 / (corr.gray[i] as f64 / 128.0).clamp(0.01, 10.0);
+                            ui.label(egui::RichText::new(
+                                format!("{} (≈{:.1})", corr.shadow[i], s_val)
+                            ).small().monospace());
+                            ui.label(egui::RichText::new(
+                                format!("{} (γ{:.2})", corr.gray[i], g_gamma)
+                            ).small().monospace());
+                            ui.label(egui::RichText::new(
+                                format!("{} (≈{:.1})", corr.highlight[i], h_val)
+                            ).small().monospace());
                             ui.end_row();
-                            for i in 0..4 {
-                                ui.label(egui::RichText::new(ch[i]).small().strong());
-                                ui.label(egui::RichText::new(format!("{}", corr.shadow[i])).small().monospace());
-                                ui.label(egui::RichText::new(format!("{}", corr.gray[i])).small().monospace());
-                                ui.label(egui::RichText::new(format!("{}", corr.highlight[i])).small().monospace());
-                                ui.end_row();
-                            }
-                        });
-                });
-            }
+                        }
+                    });
+            });
         }
     }
 
