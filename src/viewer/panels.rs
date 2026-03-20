@@ -817,6 +817,23 @@ impl FffViewerApp {
         if let Some(detail) = &mut self.detail {
             detail.base_rgb = Some(rgb16);
         }
+
+        // 第4步：对 raw_rgb 也应用 ICC 色彩空间转换（不含胶片处理）。
+        // Raw 模式下直方图和调整基于 ICC 校正后的原始数据。
+        if let Some(icc_data) = &input_icc {
+            if let Some(detail) = &self.detail {
+                if let Some(ref raw) = detail.raw_rgb {
+                    let raw_img = image::DynamicImage::ImageRgb16(raw.clone());
+                    if let Ok(transformed) = color::apply_icc_transform(&raw_img, icc_data, self.target_color_space) {
+                        let raw_icc = to_rgb16(&transformed);
+                        if let Some(detail) = &mut self.detail {
+                            detail.raw_rgb = Some(raw_icc);
+                        }
+                    }
+                }
+            }
+        }
+
         self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
 
