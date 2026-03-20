@@ -354,6 +354,7 @@ impl FffViewerApp {
                         texture,
                         embedded_icc: result.embedded_icc,
                         base_rgb,
+                        icc_rgb: None,
                         raw_rgb,
                     });
 

@@ -370,7 +370,9 @@ pub(super) struct LoadedDetail {
     pub(super) embedded_icc: Option<Vec<u8>>,
     /// 已处理的 16-bit 基准图像（色彩方案应用后），用于直方图计算和手动调整
     pub(super) base_rgb: Option<Rgb16Image>,
-    /// 未经色彩处理的 16-bit 原始图像，用于原始直方图
+    /// ICC 转换后的 16-bit 图像（胶片处理前），用于切换胶片类型时重新处理
+    pub(super) icc_rgb: Option<Rgb16Image>,
+    /// 胶片类型处理后的 16-bit 图像（ICC + 胶片基础处理），用于 Raw 直方图
     pub(super) raw_rgb: Option<Rgb16Image>,
 }
 

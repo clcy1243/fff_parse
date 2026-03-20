@@ -876,8 +876,9 @@ impl FffViewerApp {
             }
         }
 
-        // ICC 转换后保存为 raw_rgb（Raw 模式的基准：ICC 校正后、无胶片处理）
-        let raw_after_icc = to_rgb16(&result);
+        // ICC 转换后保存为 icc_rgb（切换胶片类型时的重处理起点）
+        let icc_rgb = to_rgb16(&result);
+        let mut raw_after_film: Option<Rgb16Image> = None;
 
         // 第2步：应用底片处理（负片反转，不含色阶——色阶由手柄控制）。
         if let Some(ref correction) = preset_correction {
@@ -903,6 +904,9 @@ impl FffViewerApp {
             film_correction.saturation = 0; // 饱和度由手柄控制
 
             result = color::apply_film_processing(&result, &film_correction);
+
+            // 胶片类型处理后保存为 raw_rgb（Raw 直方图的基准：ICC + 胶片基础处理）
+            raw_after_film = Some(to_rgb16(&result));
 
             // 将 correction 的色阶映射到 0-255 手柄值
             if correction.apply_histogram {
@@ -946,11 +950,15 @@ impl FffViewerApp {
             }
         }
 
-        // 第3步：保存 16-bit 基准图像并更新 raw_rgb
+        // 第3步：保存各阶段 16-bit 基准图像
+        // icc_rgb: ICC 后、胶片处理前（用于切换胶片类型时重新处理）
+        // raw_rgb: ICC + 胶片类型处理后（Raw 直方图基准）
+        // base_rgb: 完整处理后（Processed 直方图基准）
         let rgb16 = to_rgb16(&result);
         if let Some(detail) = &mut self.detail {
+            detail.icc_rgb = Some(icc_rgb);
+            detail.raw_rgb = raw_after_film.or_else(|| detail.icc_rgb.clone());
             detail.base_rgb = Some(rgb16);
-            detail.raw_rgb = Some(raw_after_icc);
         }
 
         // 保存当前调整状态为基线（重置按钮恢复到此状态）
@@ -1013,19 +1021,19 @@ impl FffViewerApp {
     }
 
     /// 当用户更改胶片类型时，使用新的 film_type 重新处理管线。
-    /// 从 raw_rgb（ICC 校正后）重新开始胶片处理。
+    /// 当胶片类型改变时，从 icc_rgb（ICC 校正后）重新开始胶片处理。
     pub(super) fn reprocess_with_film_type(&mut self, ctx: &egui::Context) {
         let new_film_type = self.manual_adjust.film_type;
         log::info!("Reprocessing with film_type={}", new_film_type);
 
         let Some(detail) = &self.detail else { return };
-        let Some(raw_rgb) = detail.raw_rgb.as_ref() else {
-            // 没有 raw_rgb，尝试直接重新处理
+        let Some(icc_rgb) = detail.icc_rgb.as_ref() else {
+            // 没有 icc_rgb，尝试直接重新处理
             self.apply_color_profile(ctx);
             return;
         };
 
-        let mut result = image::DynamicImage::ImageRgb16(raw_rgb.clone());
+        let mut result = image::DynamicImage::ImageRgb16(icc_rgb.clone());
 
         // 构建临时 correction，使用新的 film_type
         let correction = if self.use_embedded_correction {
@@ -1058,15 +1066,26 @@ impl FffViewerApp {
             film_corr.saturation = 0;
             result = color::apply_film_processing(&result, &film_corr);
 
+            // 胶片处理后保存为 raw_rgb（Raw 直方图基准）
+            let raw_rgb = to_rgb16(&result);
+
             // 应用渐变曲线
             if correction.apply_curves && !correction.gradations.is_empty() {
                 result = color::apply_gradation_curves(&result, &correction.gradations);
             }
-        }
 
-        let rgb16 = to_rgb16(&result);
-        if let Some(detail) = &mut self.detail {
-            detail.base_rgb = Some(rgb16);
+            let rgb16 = to_rgb16(&result);
+            if let Some(detail) = &mut self.detail {
+                detail.raw_rgb = Some(raw_rgb);
+                detail.base_rgb = Some(rgb16);
+            }
+        } else {
+            // 无 correction 时，raw_rgb = icc_rgb
+            let rgb16 = to_rgb16(&result);
+            if let Some(detail) = &mut self.detail {
+                detail.raw_rgb = Some(rgb16.clone());
+                detail.base_rgb = Some(rgb16);
+            }
         }
 
         self.histogram_needs_update = true;
@@ -1074,8 +1093,8 @@ impl FffViewerApp {
     }
 
     /// 根据当前直方图数据源选择对应的 16-bit 基准图像，应用手动调整后重建显示纹理。
-    /// Raw 模式：raw_rgb → manual_adjust → 显示（绕过胶片处理，直接调整原始数据）
-    /// Processed 模式：base_rgb → manual_adjust → 显示（在胶片处理结果上调整）
+    /// Raw 模式：raw_rgb（ICC + 胶片类型处理） → manual_adjust → 显示
+    /// Processed 模式：base_rgb（ICC + 胶片处理 + 渐变曲线） → manual_adjust → 显示
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
 
