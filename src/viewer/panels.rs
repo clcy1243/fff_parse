@@ -54,18 +54,12 @@ impl FffViewerApp {
 
 impl FffViewerApp {
     /// 从 correction 的 shadow/highlight/gray 加载色阶手柄值。
-    /// 负片的值在原始扫描空间，需要反转映射。
+    /// shadow/highlight 值始终在后处理空间（对负片已是反转后的值）。
     fn load_levels_from_correction(adj: &mut color::ManualAdjust, corr: &flexcolor::ImageCorrection) {
         if !corr.apply_histogram { return; }
-        let is_neg = corr.film_type == 1 || corr.film_type == 2;
         for i in 0..4 {
-            if is_neg {
-                adj.levels_black[i] = ((65535.0 - corr.highlight[i] as f32 * 4.0) / 65535.0 * 255.0).clamp(0.0, 255.0);
-                adj.levels_white[i] = ((65535.0 - corr.shadow[i] as f32 * 4.0) / 65535.0 * 255.0).clamp(0.0, 255.0);
-            } else {
-                adj.levels_black[i] = (corr.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
-                adj.levels_white[i] = (corr.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
-            }
+            adj.levels_black[i] = (corr.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+            adj.levels_white[i] = (corr.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
             adj.levels_gamma[i] = 1.0 / (corr.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
         }
     }
