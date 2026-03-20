@@ -187,6 +187,17 @@ pub struct Strings {
     pub auto_levels_black_pct: &'static str,
     pub auto_levels_white_pct: &'static str,
 
+    // Histogram scale
+    pub histogram_scale_label: &'static str,
+    pub histogram_scale_linear: &'static str,
+    pub histogram_scale_sqrt: &'static str,
+    pub histogram_scale_log: &'static str,
+    pub histogram_scale_cbrt: &'static str,
+    pub histogram_scale_linear_desc: &'static str,
+    pub histogram_scale_sqrt_desc: &'static str,
+    pub histogram_scale_log_desc: &'static str,
+    pub histogram_scale_cbrt_desc: &'static str,
+
     // Context menu
     pub ctx_copy_path: &'static str,
     pub ctx_copy_filename: &'static str,
@@ -362,6 +373,16 @@ static EN: Strings = Strings {
     auto_levels_black_pct: "Black point clip %",
     auto_levels_white_pct: "White point clip %",
 
+    histogram_scale_label: "Histogram Scale",
+    histogram_scale_linear: "Linear",
+    histogram_scale_sqrt: "Square Root",
+    histogram_scale_log: "Logarithmic",
+    histogram_scale_cbrt: "Cube Root",
+    histogram_scale_linear_desc: "count / max — faithful proportion, low bins invisible",
+    histogram_scale_sqrt_desc: "√count / √max — balanced, Photoshop-style",
+    histogram_scale_log_desc: "ln(1+count) / ln(1+max) — heavy compression, all bins visible",
+    histogram_scale_cbrt_desc: "∛count / ∛max — between sqrt and log",
+
     ctx_copy_path: "📋 Copy Path",
     ctx_copy_filename: "📋 Copy Filename",
     ctx_reveal_in_finder: "📂 Reveal in Finder",
@@ -531,6 +552,16 @@ static ZH: Strings = Strings {
     auto_levels_clip: "自动色阶裁切",
     auto_levels_black_pct: "黑点裁切 %",
     auto_levels_white_pct: "白点裁切 %",
+
+    histogram_scale_label: "直方图纵轴映射",
+    histogram_scale_linear: "线性",
+    histogram_scale_sqrt: "平方根",
+    histogram_scale_log: "对数",
+    histogram_scale_cbrt: "立方根",
+    histogram_scale_linear_desc: "count / max — 真实比例，低频不可见",
+    histogram_scale_sqrt_desc: "√count / √max — 适中压缩（Photoshop 风格）",
+    histogram_scale_log_desc: "ln(1+count) / ln(1+max) — 强压缩，低频清晰",
+    histogram_scale_cbrt_desc: "∛count / ∛max — 介于平方根和对数之间",
 
     ctx_copy_path: "📋 复制路径",
     ctx_copy_filename: "📋 复制文件名",

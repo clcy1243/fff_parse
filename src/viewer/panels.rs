@@ -1034,6 +1034,7 @@ impl FffViewerApp {
         black: &mut f32,
         gamma: &mut f32,
         white: &mut f32,
+        hist_scale: config::HistogramScale,
     ) -> bool {
         let mut changed = false;
         let avail_w = ui.available_width();
@@ -1081,10 +1082,11 @@ impl FffViewerApp {
             let max_v = h_arr.iter().copied().max().unwrap_or(1).max(1) as f32;
             let w = hist_rect.width();
             let bar_w = (w / 256.0).max(1.0);
+            let scale = hist_scale;
             for i in 0..256 {
                 let count = h_arr[i] as f32;
                 if count < 0.5 { continue; }
-                let bar_h = (count / max_v * hist_h).ceil().min(hist_h);
+                let bar_h = (scale.map(count, max_v) * hist_h).ceil().min(hist_h);
                 let x = hist_rect.left() + i as f32 / 255.0 * w;
                 painter.rect_filled(
                     egui::Rect::from_min_size(
@@ -1350,6 +1352,7 @@ impl FffViewerApp {
                 &mut self.manual_adjust.levels_black[lvl_idx],
                 &mut self.manual_adjust.levels_gamma[lvl_idx],
                 &mut self.manual_adjust.levels_white[lvl_idx],
+                config::HistogramScale::from_str(&self.app_config.histogram_scale),
             ) {
                 rebuild = true;
             }
@@ -1501,6 +1504,42 @@ impl FffViewerApp {
                 .max_decimals(2));
         });
 
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // ── Histogram Scale ──
+        ui.strong(s.histogram_scale_label);
+        ui.add_space(2.0);
+        let old_hist_scale = self.app_config.histogram_scale.clone();
+        let cur_scale = config::HistogramScale::from_str(&self.app_config.histogram_scale);
+        let scale_label = match cur_scale {
+            config::HistogramScale::Linear => s.histogram_scale_linear,
+            config::HistogramScale::Sqrt   => s.histogram_scale_sqrt,
+            config::HistogramScale::Log    => s.histogram_scale_log,
+            config::HistogramScale::Cbrt   => s.histogram_scale_cbrt,
+        };
+        egui::ComboBox::from_id_salt("settings_hist_scale")
+            .selected_text(scale_label)
+            .width(ui.available_width() - 16.0)
+            .show_ui(ui, |ui| {
+                for &sc in config::HistogramScale::ALL {
+                    let (label, desc) = match sc {
+                        config::HistogramScale::Linear => (s.histogram_scale_linear, s.histogram_scale_linear_desc),
+                        config::HistogramScale::Sqrt   => (s.histogram_scale_sqrt,   s.histogram_scale_sqrt_desc),
+                        config::HistogramScale::Log    => (s.histogram_scale_log,    s.histogram_scale_log_desc),
+                        config::HistogramScale::Cbrt   => (s.histogram_scale_cbrt,   s.histogram_scale_cbrt_desc),
+                    };
+                    let mut selected = cur_scale == sc;
+                    let resp = ui.selectable_label(selected, format!("{label}  {desc}"));
+                    if resp.clicked() && !selected {
+                        selected = true;
+                        self.app_config.histogram_scale = sc.to_str().to_string();
+                    }
+                    let _ = selected;
+                }
+            });
+
         // Detect changes and save
         let gpu_changed = self.app_config.gpu_enabled != old_gpu
             || self.app_config.gpu_device != old_device;
@@ -1508,8 +1547,9 @@ impl FffViewerApp {
         let lang_changed = self.language != old_lang;
         let levels_pct_changed = self.app_config.auto_levels_black_pct != old_black_pct
             || self.app_config.auto_levels_white_pct != old_white_pct;
+        let hist_scale_changed = self.app_config.histogram_scale != old_hist_scale;
 
-        if gpu_changed || threads_changed || lang_changed || levels_pct_changed {
+        if gpu_changed || threads_changed || lang_changed || levels_pct_changed || hist_scale_changed {
             if lang_changed {
                 self.app_config.language = self.language.to_config().to_string();
             }

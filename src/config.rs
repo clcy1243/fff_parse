@@ -66,6 +66,54 @@ pub struct AppConfig {
     pub auto_levels_black_pct: f32,
     /// 自动色阶白点裁切百分比（默认 0.1%，去除灰尘/划痕等亮点噪声）
     pub auto_levels_white_pct: f32,
+    /// 直方图纵轴映射方式（默认：平方根）
+    pub histogram_scale: String,
+}
+
+/// 直方图纵轴映射方式
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HistogramScale {
+    /// 线性：count / max — 忠实反映像素数量比例，低频 bin 几乎不可见
+    Linear,
+    /// 平方根：√count / √max — 适中压缩，业界最常用（Photoshop）
+    Sqrt,
+    /// 对数：ln(1+count) / ln(1+max) — 强压缩，低频 bin 清晰可见
+    Log,
+    /// 立方根：∛count / ∛max — 介于平方根和对数之间
+    Cbrt,
+}
+
+impl HistogramScale {
+    pub const ALL: &[Self] = &[Self::Linear, Self::Sqrt, Self::Log, Self::Cbrt];
+
+    pub fn to_str(self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::Sqrt => "sqrt",
+            Self::Log => "log",
+            Self::Cbrt => "cbrt",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "linear" => Self::Linear,
+            "log" => Self::Log,
+            "cbrt" => Self::Cbrt,
+            _ => Self::Sqrt,
+        }
+    }
+
+    /// 将像素计数映射为 0-1 范围的显示高度
+    pub fn map(self, count: f32, max: f32) -> f32 {
+        if max <= 0.0 { return 0.0; }
+        match self {
+            Self::Linear => count / max,
+            Self::Sqrt   => count.sqrt() / max.sqrt(),
+            Self::Log    => count.ln_1p() / max.ln_1p(),
+            Self::Cbrt   => count.cbrt() / max.cbrt(),
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -79,6 +127,7 @@ impl Default for AppConfig {
             dir_scan_modes: std::collections::HashMap::new(),
             auto_levels_black_pct: 0.05,
             auto_levels_white_pct: 0.1,
+            histogram_scale: "sqrt".to_string(),
         }
     }
 }
@@ -174,6 +223,7 @@ fn to_xml(c: &AppConfig) -> String {
     let _ = writeln!(s, "  <dir_scan_modes>{}</dir_scan_modes>", modes_str);
     let _ = writeln!(s, "  <auto_levels_black_pct>{}</auto_levels_black_pct>", c.auto_levels_black_pct);
     let _ = writeln!(s, "  <auto_levels_white_pct>{}</auto_levels_white_pct>", c.auto_levels_white_pct);
+    let _ = writeln!(s, "  <histogram_scale>{}</histogram_scale>", xml_escape(&c.histogram_scale));
     s.push_str("</fff_viewer_config>\n");
     s
 }
@@ -227,6 +277,9 @@ fn parse_xml(xml: &str) -> Option<AppConfig> {
             config.auto_levels_white_pct = n.clamp(0.0, 5.0);
         }
     }
+    if let Some(v) = tag_content(xml, "histogram_scale") {
+        config.histogram_scale = xml_unescape(&v);
+    }
     Some(config)
 }
 
@@ -270,6 +323,7 @@ mod tests {
             language: "zh".to_string(),
             favorites: vec!["/Users/test/Photos".to_string(), "/Volumes/SD".to_string()],
             dir_scan_modes,
+            ..Default::default()
         };
         let xml = to_xml(&config);
         let parsed = parse_xml(&xml).unwrap();
