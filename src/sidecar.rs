@@ -95,8 +95,21 @@ fn to_xml(c: &SidecarConfig) -> String {
     // Manual adjust section
     let a = &c.manual_adjust;
     s.push_str("  <adjust>\n");
-    let _ = writeln!(s, "    <adj_enabled>{}</adj_enabled>", a.enabled);
     let _ = writeln!(s, "    <adj_film_type>{}</adj_film_type>", a.film_type);
+    // per-category enable flags
+    let _ = writeln!(s, "    <adj_apply_levels>{}</adj_apply_levels>", a.apply_levels);
+    let _ = writeln!(s, "    <adj_apply_curves>{}</adj_apply_curves>", a.apply_curves);
+    let _ = writeln!(s, "    <adj_apply_exposure>{}</adj_apply_exposure>", a.apply_exposure);
+    let _ = writeln!(s, "    <adj_apply_brightness>{}</adj_apply_brightness>", a.apply_brightness);
+    let _ = writeln!(s, "    <adj_apply_shadow_depth>{}</adj_apply_shadow_depth>", a.apply_shadow_depth);
+    let _ = writeln!(s, "    <adj_apply_midtone>{}</adj_apply_midtone>", a.apply_midtone);
+    let _ = writeln!(s, "    <adj_apply_contrast>{}</adj_apply_contrast>", a.apply_contrast);
+    let _ = writeln!(s, "    <adj_apply_highlights>{}</adj_apply_highlights>", a.apply_highlights);
+    let _ = writeln!(s, "    <adj_apply_shadows>{}</adj_apply_shadows>", a.apply_shadows);
+    let _ = writeln!(s, "    <adj_apply_saturation>{}</adj_apply_saturation>", a.apply_saturation);
+    let _ = writeln!(s, "    <adj_apply_color_balance>{}</adj_apply_color_balance>", a.apply_color_balance);
+    let _ = writeln!(s, "    <adj_apply_color_temp>{}</adj_apply_color_temp>", a.apply_color_temp);
+    // values
     let _ = writeln!(s, "    <adj_exposure>{}</adj_exposure>", a.exposure);
     let _ = writeln!(s, "    <adj_brightness>{}</adj_brightness>", a.brightness);
     let _ = writeln!(s, "    <adj_lightness>{}</adj_lightness>", a.lightness);
@@ -105,6 +118,8 @@ fn to_xml(c: &SidecarConfig) -> String {
     let _ = writeln!(s, "    <adj_highlights>{}</adj_highlights>", a.highlights);
     let _ = writeln!(s, "    <adj_shadows>{}</adj_shadows>", a.shadows);
     let _ = writeln!(s, "    <adj_saturation>{}</adj_saturation>", a.saturation);
+    let _ = writeln!(s, "    <adj_color_temperature>{}</adj_color_temperature>", a.color_temperature);
+    let _ = writeln!(s, "    <adj_tint>{}</adj_tint>", a.tint);
     let _ = writeln!(s, "    <adj_r_shift>{}</adj_r_shift>", a.r_shift);
     let _ = writeln!(s, "    <adj_g_shift>{}</adj_g_shift>", a.g_shift);
     let _ = writeln!(s, "    <adj_b_shift>{}</adj_b_shift>", a.b_shift);
@@ -208,9 +223,23 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
         config.split_naming_pattern = xml_unescape(&v);
     }
 
-    if let Some(v) = tag_content(xml, "adj_enabled") {
-        config.manual_adjust.enabled = v == "true";
-    }
+    // per-category enable flags (backwards-compatible: missing = default true)
+    let parse_bool_default_true = |xml: &str, tag: &str| -> bool {
+        tag_content(xml, tag).map_or(true, |v| v != "false")
+    };
+    config.manual_adjust.apply_levels = parse_bool_default_true(xml, "adj_apply_levels");
+    config.manual_adjust.apply_curves = parse_bool_default_true(xml, "adj_apply_curves");
+    config.manual_adjust.apply_exposure = parse_bool_default_true(xml, "adj_apply_exposure");
+    config.manual_adjust.apply_brightness = parse_bool_default_true(xml, "adj_apply_brightness");
+    config.manual_adjust.apply_shadow_depth = parse_bool_default_true(xml, "adj_apply_shadow_depth");
+    config.manual_adjust.apply_midtone = parse_bool_default_true(xml, "adj_apply_midtone");
+    config.manual_adjust.apply_contrast = parse_bool_default_true(xml, "adj_apply_contrast");
+    config.manual_adjust.apply_highlights = parse_bool_default_true(xml, "adj_apply_highlights");
+    config.manual_adjust.apply_shadows = parse_bool_default_true(xml, "adj_apply_shadows");
+    config.manual_adjust.apply_saturation = parse_bool_default_true(xml, "adj_apply_saturation");
+    config.manual_adjust.apply_color_balance = parse_bool_default_true(xml, "adj_apply_color_balance");
+    config.manual_adjust.apply_color_temp = parse_bool_default_true(xml, "adj_apply_color_temp");
+
     if let Some(v) = tag_content(xml, "adj_film_type") {
         if let Ok(ft) = v.parse::<i64>() { config.manual_adjust.film_type = ft; }
     }
@@ -237,6 +266,12 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     }
     if let Some(v) = tag_content(xml, "adj_saturation") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.saturation = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_color_temperature") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.color_temperature = f; }
+    }
+    if let Some(v) = tag_content(xml, "adj_tint") {
+        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.tint = f; }
     }
     if let Some(v) = tag_content(xml, "adj_r_shift") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.r_shift = f; }

@@ -3,9 +3,24 @@
 /// 手动图像调整参数，在色彩管道之后应用。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManualAdjust {
-    pub enabled: bool,
     /// 胶片类型：0=正片, 1=彩色负片, 2=黑白负片
     pub film_type: i64,
+
+    // ── 各调整项独立启用开关（用于调试/排查渲染问题） ──
+    pub apply_levels: bool,
+    pub apply_curves: bool,
+    pub apply_exposure: bool,
+    pub apply_brightness: bool,
+    pub apply_shadow_depth: bool,
+    pub apply_midtone: bool,
+    pub apply_contrast: bool,
+    pub apply_highlights: bool,
+    pub apply_shadows: bool,
+    pub apply_saturation: bool,
+    pub apply_color_balance: bool,
+    pub apply_color_temp: bool,
+
+    // ── 调整值 ──
     /// 曝光补偿（档位）：-3.0 ~ 3.0
     pub exposure: f32,
     /// 亮度：-100 ~ 100
@@ -28,6 +43,10 @@ pub struct ManualAdjust {
     pub g_shift: f32,
     /// 蓝色通道色彩平衡：-100 ~ 100
     pub b_shift: f32,
+    /// 色温：-100 ~ 100
+    pub color_temperature: f32,
+    /// 色调偏移：-100 ~ 100
+    pub tint: f32,
 
     // 色阶（输入范围）：索引 0=总通道, 1=R, 2=G, 3=B
     /// 输入黑点：0-255
@@ -41,11 +60,15 @@ pub struct ManualAdjust {
 impl Default for ManualAdjust {
     fn default() -> Self {
         Self {
-            enabled: false,
             film_type: 0,
+            apply_levels: true, apply_curves: true, apply_exposure: true,
+            apply_brightness: true, apply_shadow_depth: true, apply_midtone: true,
+            apply_contrast: true, apply_highlights: true, apply_shadows: true,
+            apply_saturation: true, apply_color_balance: true, apply_color_temp: true,
             exposure: 0.0, brightness: 0.0, lightness: 0.0, midtone: 1.0, contrast: 0.0,
             highlights: 0.0, shadows: 0.0,
             saturation: 0.0, r_shift: 0.0, g_shift: 0.0, b_shift: 0.0,
+            color_temperature: 0.0, tint: 0.0,
             levels_black: [0.0; 4],
             levels_gamma: [1.0; 4],
             levels_white: [255.0; 4],
@@ -56,21 +79,26 @@ impl Default for ManualAdjust {
 impl ManualAdjust {
     /// 判断当前调整参数是否为恒等变换（即不产生任何效果）。
     pub fn is_identity(&self) -> bool {
-        !self.enabled
-            || (self.exposure.abs() < 0.001
-                && self.brightness.abs() < 0.1
-                && self.lightness.abs() < 0.1
-                && (self.midtone - 1.0).abs() < 0.01
-                && self.contrast.abs() < 0.1
-                && self.highlights.abs() < 0.1
-                && self.shadows.abs() < 0.1
-                && self.saturation.abs() < 0.1
-                && self.r_shift.abs() < 0.1
-                && self.g_shift.abs() < 0.1
-                && self.b_shift.abs() < 0.1
-                && self.levels_black.iter().all(|&v| v < 0.5)
+        let levels_id = !self.apply_levels
+            || (self.levels_black.iter().all(|&v| v < 0.5)
                 && self.levels_gamma.iter().all(|&v| (v - 1.0).abs() < 0.01)
-                && self.levels_white.iter().all(|&v| v > 254.5))
+                && self.levels_white.iter().all(|&v| v > 254.5));
+        let exposure_id = !self.apply_exposure || self.exposure.abs() < 0.001;
+        let brightness_id = !self.apply_brightness || self.brightness.abs() < 0.1;
+        let shadow_depth_id = !self.apply_shadow_depth || self.lightness.abs() < 0.1;
+        let midtone_id = !self.apply_midtone || (self.midtone - 1.0).abs() < 0.01;
+        let contrast_id = !self.apply_contrast || self.contrast.abs() < 0.1;
+        let highlights_id = !self.apply_highlights || self.highlights.abs() < 0.1;
+        let shadows_id = !self.apply_shadows || self.shadows.abs() < 0.1;
+        let saturation_id = !self.apply_saturation || self.saturation.abs() < 0.1;
+        let color_balance_id = !self.apply_color_balance
+            || (self.r_shift.abs() < 0.1 && self.g_shift.abs() < 0.1 && self.b_shift.abs() < 0.1);
+        let color_temp_id = !self.apply_color_temp
+            || (self.color_temperature.abs() < 0.1 && self.tint.abs() < 0.1);
+
+        levels_id && exposure_id && brightness_id && shadow_depth_id && midtone_id
+            && contrast_id && highlights_id && shadows_id && saturation_id
+            && color_balance_id && color_temp_id
     }
 }
 
@@ -105,24 +133,42 @@ fn apply_adjust_16(
     let (w, h) = (rgb16.width(), rgb16.height());
     let src = rgb16.as_raw();
 
-    let exposure_mult = 2.0_f32.powf(adj.exposure);
-    let sat = adj.saturation / 100.0;
+    let exposure_mult = if adj.apply_exposure { 2.0_f32.powf(adj.exposure) } else { 1.0 };
+    let sat = if adj.apply_saturation { adj.saturation / 100.0 } else { 0.0 };
 
     // 色阶参数从用户空间 (0-255) 映射到归一化 (0-1)
-    let bl_m = adj.levels_black[0] / 255.0;
-    let wh_m = adj.levels_white[0] / 255.0;
+    let (bl_m, wh_m, gamma_m) = if adj.apply_levels {
+        (adj.levels_black[0] / 255.0, adj.levels_white[0] / 255.0, adj.levels_gamma[0].clamp(0.01, 99.0))
+    } else {
+        (0.0, 1.0, 1.0)
+    };
     let range_m = (wh_m - bl_m).max(0.001);
-    let gamma_m = adj.levels_gamma[0].clamp(0.01, 99.0);
+
+    // 色温/色调 per-channel 乘数
+    let temp_mults = if adj.apply_color_temp && (adj.color_temperature.abs() > 0.1 || adj.tint.abs() > 0.1) {
+        let t = adj.color_temperature / 100.0;
+        let tn = adj.tint / 100.0;
+        [1.0 + t * 0.15, 1.0 - tn * 0.15, 1.0 - t * 0.15]
+    } else {
+        [1.0, 1.0, 1.0]
+    };
 
     // 构建 65536 项 per-channel LUT
-    let shifts = [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0];
+    let shifts = if adj.apply_color_balance {
+        [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0]
+    } else {
+        [0.0; 3]
+    };
     let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
 
     for ch in 0..3 {
-        let bl_c = adj.levels_black[ch + 1] / 255.0;
-        let wh_c = adj.levels_white[ch + 1] / 255.0;
+        let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
+            (adj.levels_black[ch + 1] / 255.0, adj.levels_white[ch + 1] / 255.0,
+             adj.levels_gamma[ch + 1].clamp(0.01, 99.0))
+        } else {
+            (0.0, 1.0, 1.0)
+        };
         let range_c = (wh_c - bl_c).max(0.001);
-        let gamma_c = adj.levels_gamma[ch + 1].clamp(0.01, 99.0);
 
         let mut lut = vec![0u16; 65536];
         for i in 0..65536u32 {
@@ -133,34 +179,35 @@ fn apply_adjust_16(
 
             v += shifts[ch];
             v *= exposure_mult;
+            v *= temp_mults[ch];
             v = v.clamp(0.0, 1.0);
 
-            if adj.shadows.abs() > 0.1 {
+            if adj.apply_shadows && adj.shadows.abs() > 0.1 {
                 let s = adj.shadows / 100.0;
                 let t = 1.0 - v;
                 v = (v + s * t * t * 0.5).clamp(0.0, 1.0);
             }
-            if adj.highlights.abs() > 0.1 {
+            if adj.apply_highlights && adj.highlights.abs() > 0.1 {
                 let hi = adj.highlights / 100.0;
                 let t = v;
                 v = (v + hi * t * t * 0.5).clamp(0.0, 1.0);
             }
-            if adj.contrast.abs() > 0.1 {
+            if adj.apply_contrast && adj.contrast.abs() > 0.1 {
                 let c = adj.contrast / 100.0;
                 let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
             }
-            if adj.brightness.abs() > 0.1 {
+            if adj.apply_brightness && adj.brightness.abs() > 0.1 {
                 let b = adj.brightness / 100.0;
                 v = (v + b * 0.5).clamp(0.0, 1.0);
             }
-            if adj.lightness.abs() > 0.1 {
+            if adj.apply_shadow_depth && adj.lightness.abs() > 0.1 {
                 let l = adj.lightness / 100.0;
                 let gamma = 1.0 / (1.0 + l).max(0.1);
                 v = v.powf(gamma).clamp(0.0, 1.0);
             }
             // 中间调：midtone=1.0 为中性(Gamma=2.0)，>1 提亮中间调，<1 压暗
-            if (adj.midtone - 1.0).abs() > 0.01 {
+            if adj.apply_midtone && (adj.midtone - 1.0).abs() > 0.01 {
                 let g = adj.midtone.clamp(0.1, 10.0);
                 v = v.powf(1.0 / g).clamp(0.0, 1.0);
             }
@@ -207,22 +254,39 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
     let (w, h) = (rgb8.width(), rgb8.height());
     let src = rgb8.as_raw();
 
-    let exposure_mult = 2.0_f32.powf(adj.exposure);
-    let sat = adj.saturation / 100.0;
+    let exposure_mult = if adj.apply_exposure { 2.0_f32.powf(adj.exposure) } else { 1.0 };
+    let sat = if adj.apply_saturation { adj.saturation / 100.0 } else { 0.0 };
 
-    let bl_m = adj.levels_black[0] / 255.0;
-    let wh_m = adj.levels_white[0] / 255.0;
+    let (bl_m, wh_m, gamma_m) = if adj.apply_levels {
+        (adj.levels_black[0] / 255.0, adj.levels_white[0] / 255.0, adj.levels_gamma[0].clamp(0.01, 99.0))
+    } else {
+        (0.0, 1.0, 1.0)
+    };
     let range_m = (wh_m - bl_m).max(0.001);
-    let gamma_m = adj.levels_gamma[0].clamp(0.01, 99.0);
+
+    let temp_mults = if adj.apply_color_temp && (adj.color_temperature.abs() > 0.1 || adj.tint.abs() > 0.1) {
+        let t = adj.color_temperature / 100.0;
+        let tn = adj.tint / 100.0;
+        [1.0 + t * 0.15, 1.0 - tn * 0.15, 1.0 - t * 0.15]
+    } else {
+        [1.0, 1.0, 1.0]
+    };
 
     let mut luts = [[0u8; 256]; 3];
-    let shifts = [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0];
+    let shifts = if adj.apply_color_balance {
+        [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0]
+    } else {
+        [0.0; 3]
+    };
 
     for ch in 0..3 {
-        let bl_c = adj.levels_black[ch + 1] / 255.0;
-        let wh_c = adj.levels_white[ch + 1] / 255.0;
+        let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
+            (adj.levels_black[ch + 1] / 255.0, adj.levels_white[ch + 1] / 255.0,
+             adj.levels_gamma[ch + 1].clamp(0.01, 99.0))
+        } else {
+            (0.0, 1.0, 1.0)
+        };
         let range_c = (wh_c - bl_c).max(0.001);
-        let gamma_c = adj.levels_gamma[ch + 1].clamp(0.01, 99.0);
 
         for i in 0..=255u32 {
             let mut v = i as f32 / 255.0;
@@ -230,32 +294,33 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
             v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
             v += shifts[ch];
             v *= exposure_mult;
+            v *= temp_mults[ch];
             v = v.clamp(0.0, 1.0);
-            if adj.shadows.abs() > 0.1 {
+            if adj.apply_shadows && adj.shadows.abs() > 0.1 {
                 let s = adj.shadows / 100.0;
                 let t = 1.0 - v;
                 v = (v + s * t * t * 0.5).clamp(0.0, 1.0);
             }
-            if adj.highlights.abs() > 0.1 {
+            if adj.apply_highlights && adj.highlights.abs() > 0.1 {
                 let hi = adj.highlights / 100.0;
                 let t = v;
                 v = (v + hi * t * t * 0.5).clamp(0.0, 1.0);
             }
-            if adj.contrast.abs() > 0.1 {
+            if adj.apply_contrast && adj.contrast.abs() > 0.1 {
                 let c = adj.contrast / 100.0;
                 let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
             }
-            if adj.brightness.abs() > 0.1 {
+            if adj.apply_brightness && adj.brightness.abs() > 0.1 {
                 let b = adj.brightness / 100.0;
                 v = (v + b * 0.5).clamp(0.0, 1.0);
             }
-            if adj.lightness.abs() > 0.1 {
+            if adj.apply_shadow_depth && adj.lightness.abs() > 0.1 {
                 let l = adj.lightness / 100.0;
                 let gamma = 1.0 / (1.0 + l).max(0.1);
                 v = v.powf(gamma).clamp(0.0, 1.0);
             }
-            if (adj.midtone - 1.0).abs() > 0.01 {
+            if adj.apply_midtone && (adj.midtone - 1.0).abs() > 0.01 {
                 let g = adj.midtone.clamp(0.1, 10.0);
                 v = v.powf(1.0 / g).clamp(0.0, 1.0);
             }

@@ -928,8 +928,11 @@ impl FffViewerApp {
                 // 中间调 = Gamma - 1.0（FlexColor 的 Gamma 默认 2.0，即中间调 1.0）
                 self.manual_adjust.midtone = (correction.gamma - 1.0) as f32;
             }
-
-            self.manual_adjust.enabled = true;
+            // 提取色温/色调
+            self.manual_adjust.color_temperature = correction.color_temperature as f32;
+            self.manual_adjust.tint = correction.tint as f32;
+            // 提取渐变曲线开关
+            self.manual_adjust.apply_curves = correction.apply_curves && !correction.gradations.is_empty();
             // 同步到两组手柄状态
             self.levels_processed = HistogramLevels {
                 black: self.manual_adjust.levels_black,
@@ -1091,7 +1094,14 @@ impl FffViewerApp {
     /// 渲染始终基于 base_rgb（ICC + 胶片处理 + 渐变曲线），不受直方图数据源影响。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
-        let Some(base) = detail.base_rgb.as_ref() else { return };
+
+        // 根据渐变曲线开关选择起点：开=base_rgb(含曲线), 关=raw_rgb(无曲线)
+        let source = if self.manual_adjust.apply_curves {
+            detail.base_rgb.as_ref()
+        } else {
+            detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref())
+        };
+        let Some(base) = source else { return };
 
         let img = image::DynamicImage::ImageRgb16(base.clone());
         let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
@@ -1449,7 +1459,6 @@ impl FffViewerApp {
         let mut rebuild = false;
 
         let adjust_heading = s.adjust_heading;
-        let adjust_enabled = s.adjust_enabled;
         let reset_adjust = s.reset_adjust;
         let exposure_str = s.exposure;
         let brightness_str = s.brightness;
@@ -1467,19 +1476,15 @@ impl FffViewerApp {
         let hist_source_raw = s.hist_source_raw;
         let hist_source_processed = s.hist_source_processed;
 
-        // ── Header + toggle (not scrollable) ────────────────────────────
+        // ── Header + reset (not scrollable) ────────────────────────────
         ui.heading(adjust_heading);
         ui.add_space(4.0);
 
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut self.manual_adjust.enabled, adjust_enabled).changed() {
-                rebuild = true;
-            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(reset_adjust).clicked() {
-                    // 重置到色彩方案加载后的基线状态（而非全部清零）
-                    let enabled = self.manual_adjust.enabled;
-                    self.manual_adjust = color::ManualAdjust { enabled, ..self.baseline_adjust.clone() };
+                    // 重置到色彩方案加载后的基线状态
+                    self.manual_adjust = self.baseline_adjust.clone();
                     self.levels_processed = self.baseline_levels_processed.clone();
                     self.levels_raw = self.baseline_levels_raw.clone();
                     rebuild = true;
@@ -1561,6 +1566,11 @@ impl FffViewerApp {
 
         ui.add_space(2.0);
 
+        // ── 色阶启用开关 ──
+        if ui.checkbox(&mut self.manual_adjust.apply_levels, s.histogram_levels).changed() {
+            rebuild = true;
+        }
+
         // ── 4 histogram sections (outside ScrollArea so scrollbar can't overlap) ──
         let sections: [(&str, usize, egui::Color32); 4] = [
             (hist_rgb, 3usize, egui::Color32::from_gray(160)),
@@ -1598,48 +1608,106 @@ impl FffViewerApp {
         egui::ScrollArea::vertical().id_salt("adjust_sliders").show(ui, |ui| {
             let adj = &mut self.manual_adjust;
 
-            ui.label(exposure_str);
+            // 渐变曲线开关
+            if ui.checkbox(&mut adj.apply_curves, s.gradation_curves).changed() {
+                rebuild = true;
+            }
+            ui.add_space(4.0);
+
+            // 曝光
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_exposure, "").changed() { rebuild = true; }
+                ui.label(exposure_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.exposure, -3.0..=3.0).step_by(0.05).text("stops")).changed() {
                 rebuild = true;
             }
 
-            ui.label(brightness_str);
+            // 亮度
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_brightness, "").changed() { rebuild = true; }
+                ui.label(brightness_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.brightness, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 
-            ui.label(lightness_str);
+            // 阴影深度
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_shadow_depth, "").changed() { rebuild = true; }
+                ui.label(lightness_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.lightness, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 
-            ui.label(midtone_str);
+            // 中间调
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_midtone, "").changed() { rebuild = true; }
+                ui.label(midtone_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.midtone, 0.1..=4.0).step_by(0.01).text("")).changed() {
                 rebuild = true;
             }
 
-            ui.label(contrast_str);
+            // 对比度
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_contrast, "").changed() { rebuild = true; }
+                ui.label(contrast_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.contrast, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 
-            ui.label(highlights_str);
+            // 高光
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_highlights, "").changed() { rebuild = true; }
+                ui.label(highlights_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.highlights, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 
-            ui.label(shadows_str);
+            // 阴影
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_shadows, "").changed() { rebuild = true; }
+                ui.label(shadows_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.shadows, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 
-            ui.label(saturation_str);
+            // 饱和度
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_saturation, "").changed() { rebuild = true; }
+                ui.label(saturation_str);
+            });
             if ui.add(egui::Slider::new(&mut adj.saturation, -100.0..=100.0).text("")).changed() {
                 rebuild = true;
             }
 
             ui.add_space(8.0);
-            ui.label(egui::RichText::new(color_balance_str).strong());
+
+            // 色温/色调
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_color_temp, "").changed() { rebuild = true; }
+                ui.label(egui::RichText::new(s.color_temp).strong());
+            });
+            if ui.add(egui::Slider::new(&mut adj.color_temperature, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+            ui.label(s.tint);
+            if ui.add(egui::Slider::new(&mut adj.tint, -100.0..=100.0).text("")).changed() {
+                rebuild = true;
+            }
+
+            ui.add_space(8.0);
+
+            // 色彩平衡
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut adj.apply_color_balance, "").changed() { rebuild = true; }
+                ui.label(egui::RichText::new(color_balance_str).strong());
+            });
 
             ui.label("R");
             if ui.add(egui::Slider::new(&mut adj.r_shift, -100.0..=100.0).text("")).changed() {
