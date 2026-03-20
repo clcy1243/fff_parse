@@ -1900,6 +1900,40 @@ impl FffViewerApp {
                 }
             });
         }
+
+        // ── Histogram Levels (shadow / gray / highlight per channel) ──
+        {
+            let has_levels = corr.shadow.iter().any(|&v| v != 0)
+                || corr.gray.iter().any(|&v| v != 0)
+                || corr.highlight.iter().any(|&v| v != 255);
+            if has_levels {
+                egui::CollapsingHeader::new(
+                    egui::RichText::new(s.histogram_levels).small().strong(),
+                )
+                .default_open(true)
+                .show(ui, |ui| {
+                    let ch = ["RGB", "R", "G", "B"];
+                    egui::Grid::new("hist_levels_grid")
+                        .striped(true)
+                        .num_columns(4)
+                        .show(ui, |ui| {
+                            // Header
+                            ui.label(egui::RichText::new("").small());
+                            ui.label(egui::RichText::new(s.levels_shadow).small().strong());
+                            ui.label(egui::RichText::new(s.levels_midtone).small().strong());
+                            ui.label(egui::RichText::new(s.levels_highlight).small().strong());
+                            ui.end_row();
+                            for i in 0..4 {
+                                ui.label(egui::RichText::new(ch[i]).small().strong());
+                                ui.label(egui::RichText::new(format!("{}", corr.shadow[i])).small().monospace());
+                                ui.label(egui::RichText::new(format!("{}", corr.gray[i])).small().monospace());
+                                ui.label(egui::RichText::new(format!("{}", corr.highlight[i])).small().monospace());
+                                ui.end_row();
+                            }
+                        });
+                });
+            }
+        }
     }
 
     /// 渲染一行参数详情（标签 + 值）

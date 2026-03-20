@@ -83,6 +83,10 @@ pub struct Strings {
     pub processing_flags: &'static str,
     pub lens_other: &'static str,
     pub gradation_curves: &'static str,
+    pub histogram_levels: &'static str,
+    pub levels_shadow: &'static str,
+    pub levels_midtone: &'static str,
+    pub levels_highlight: &'static str,
 
     // Correction parameters
     pub gamma: &'static str,
@@ -286,6 +290,10 @@ static EN: Strings = Strings {
     processing_flags: "⚙ Processing Flags",
     lens_other: "📐 Lens & Other",
     gradation_curves: "📈 Gradation Curves",
+    histogram_levels: "📊 Histogram Levels",
+    levels_shadow: "Shadow",
+    levels_midtone: "Midtone",
+    levels_highlight: "Highlight",
 
     gamma: "Gamma",
     ev: "EV",
@@ -477,6 +485,10 @@ static ZH: Strings = Strings {
     processing_flags: "⚙ 处理标志",
     lens_other: "📐 镜头与其他",
     gradation_curves: "📈 渐变曲线",
+    histogram_levels: "📊 直方图色阶",
+    levels_shadow: "暗部",
+    levels_midtone: "中间调",
+    levels_highlight: "高光",
 
     gamma: "伽马",
     ev: "曝光补偿",
