@@ -110,7 +110,10 @@ fn to_xml(c: &SidecarConfig) -> String {
     let _ = writeln!(s, "    <adj_apply_color_balance>{}</adj_apply_color_balance>", a.apply_color_balance);
     let _ = writeln!(s, "    <adj_apply_color_temp>{}</adj_apply_color_temp>", a.apply_color_temp);
     let _ = writeln!(s, "    <adj_apply_color_corr>{}</adj_apply_color_corr>", a.apply_color_corr);
+    let _ = writeln!(s, "    <adj_apply_film_curve>{}</adj_apply_film_curve>", a.apply_film_curve);
     // values
+    let _ = writeln!(s, "    <adj_film_curve>{}</adj_film_curve>", a.film_curve);
+    let _ = writeln!(s, "    <adj_film_gamma>{}</adj_film_gamma>", a.film_gamma);
     let _ = writeln!(s, "    <adj_exposure>{}</adj_exposure>", a.exposure);
     let _ = writeln!(s, "    <adj_brightness>{}</adj_brightness>", a.brightness);
     let _ = writeln!(s, "    <adj_lightness>{}</adj_lightness>", a.lightness);
@@ -244,9 +247,16 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
     config.manual_adjust.apply_color_balance = parse_bool_default_true(xml, "adj_apply_color_balance");
     config.manual_adjust.apply_color_temp = parse_bool_default_true(xml, "adj_apply_color_temp");
     config.manual_adjust.apply_color_corr = parse_bool_default_true(xml, "adj_apply_color_corr");
+    config.manual_adjust.apply_film_curve = parse_bool_default_true(xml, "adj_apply_film_curve");
 
     if let Some(v) = tag_content(xml, "adj_film_type") {
         if let Ok(ft) = v.parse::<i64>() { config.manual_adjust.film_type = ft; }
+    }
+    if let Some(v) = tag_content(xml, "adj_film_curve") {
+        if let Ok(fc) = v.parse::<i64>() { config.manual_adjust.film_curve = fc; }
+    }
+    if let Some(v) = tag_content(xml, "adj_film_gamma") {
+        if let Ok(fg) = v.parse::<f64>() { config.manual_adjust.film_gamma = fg; }
     }
     if let Some(v) = tag_content(xml, "adj_exposure") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.exposure = f; }

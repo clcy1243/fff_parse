@@ -5,9 +5,14 @@
 pub struct ManualAdjust {
     /// 胶片类型：0=正片, 1=彩色负片, 2=黑白负片
     pub film_type: i64,
+    /// 胶片曲线类型（来自 correction.film_curve）
+    pub film_curve: i64,
+    /// 胶片 Gamma 值（来自 correction.gamma）
+    pub film_gamma: f64,
 
     // ── 各调整项独立启用开关（用于调试/排查渲染问题） ──
     pub apply_levels: bool,
+    pub apply_film_curve: bool,
     pub apply_curves: bool,
     pub apply_exposure: bool,
     pub apply_brightness: bool,
@@ -65,7 +70,9 @@ impl Default for ManualAdjust {
     fn default() -> Self {
         Self {
             film_type: 0,
-            apply_levels: true, apply_curves: true, apply_exposure: true,
+            film_curve: 0,
+            film_gamma: 2.0,
+            apply_levels: true, apply_film_curve: true, apply_curves: true, apply_exposure: true,
             apply_brightness: true, apply_shadow_depth: true, apply_midtone: true,
             apply_contrast: true, apply_highlights: true, apply_shadows: true,
             apply_saturation: true, apply_color_balance: true, apply_color_temp: true,
@@ -104,7 +111,10 @@ impl ManualAdjust {
         let color_corr_id = !self.apply_color_corr
             || self.color_corr.iter().all(|&v| v == 0);
 
-        levels_id && exposure_id && brightness_id && shadow_depth_id && midtone_id
+        // film_curve 不算恒等——只要 apply_film_curve=true 就需要处理
+        let film_curve_id = !self.apply_film_curve;
+
+        levels_id && film_curve_id && exposure_id && brightness_id && shadow_depth_id && midtone_id
             && contrast_id && highlights_id && shadows_id && saturation_id
             && color_balance_id && color_temp_id && color_corr_id
     }
@@ -169,6 +179,12 @@ fn apply_adjust_16(
     };
     let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
 
+    // 是否使用经验胶片曲线 LUT（负片 + FilmCurve=4 + Gamma≈2）
+    let use_film_lut = adj.apply_film_curve
+        && (adj.film_type == 1 || adj.film_type == 2)
+        && adj.film_curve == 4
+        && (adj.film_gamma - 2.0).abs() < 0.01;
+
     for ch in 0..3 {
         let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
             (adj.levels_black[ch + 1] / 255.0, adj.levels_white[ch + 1] / 255.0,
@@ -184,6 +200,16 @@ fn apply_adjust_16(
 
             v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
             v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
+
+            // 胶片曲线 LUT（色阶后、其它调整前）
+            if use_film_lut {
+                let lut_table: &[u8; 256] = match ch {
+                    0 => &crate::color::FILM_CURVE_LUT_R,
+                    1 => &crate::color::FILM_CURVE_LUT_G,
+                    _ => &crate::color::FILM_CURVE_LUT_B,
+                };
+                v = crate::color::lut_interp_16(v, lut_table) / 65535.0;
+            }
 
             v += shifts[ch];
             v *= exposure_mult;
@@ -310,6 +336,11 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
         [0.0; 3]
     };
 
+    let use_film_lut = adj.apply_film_curve
+        && (adj.film_type == 1 || adj.film_type == 2)
+        && adj.film_curve == 4
+        && (adj.film_gamma - 2.0).abs() < 0.01;
+
     for ch in 0..3 {
         let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
             (adj.levels_black[ch + 1] / 255.0, adj.levels_white[ch + 1] / 255.0,
@@ -323,6 +354,21 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
             let mut v = i as f32 / 255.0;
             v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
             v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
+
+            if use_film_lut {
+                let lut_table: &[u8; 256] = match ch {
+                    0 => &crate::color::FILM_CURVE_LUT_R,
+                    1 => &crate::color::FILM_CURVE_LUT_G,
+                    _ => &crate::color::FILM_CURVE_LUT_B,
+                };
+                // LUT outputs 0-255, normalize
+                let x = v * 255.0;
+                let lo = (x as usize).min(254);
+                let hi = lo + 1;
+                let frac = x - lo as f32;
+                v = (lut_table[lo] as f32 * (1.0 - frac) + lut_table[hi] as f32 * frac) / 255.0;
+            }
+
             v += shifts[ch];
             v *= exposure_mult;
             v *= temp_mults[ch];

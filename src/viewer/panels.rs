@@ -873,40 +873,43 @@ impl FffViewerApp {
         let icc_rgb = to_rgb16(&result);
         let mut raw_after_film: Option<Rgb16Image> = None;
 
-        // 第2步：应用底片处理（负片反转，不含色阶——色阶由手柄控制）。
+        // 第2步：应用底片处理（仅负片反转 + B&W去色）。
+        // 色阶和胶片曲线由 apply_adjust_16 处理。
         if let Some(ref correction) = preset_correction {
             let film_type = correction.film_type;
             log::info!(
                 "Applying film processing: FilmType={} ({}), Shadow={:?}, Highlight={:?}, Gray={:?}, \
-                 RemoveCastHighlight={}, RemoveCastShadow={}, Gamma={}",
+                 FilmCurve={}, Gamma={}",
                 film_type,
                 flexcolor::film_type_name(film_type),
                 correction.shadow,
                 correction.highlight,
                 correction.gray,
-                correction.remove_cast_highlight,
-                correction.remove_cast_shadow,
+                correction.film_curve,
                 correction.gamma,
             );
 
-            // 使用色彩方案的实际色阶进行胶片处理（raw_rgb 包含完整的负片转正片+色阶校正）
-            let mut film_correction = correction.clone();
-            film_correction.saturation = 0; // 饱和度由手柄控制
+            result = color::apply_film_processing(&result, correction);
 
-            result = color::apply_film_processing(&result, &film_correction);
-
-            // 胶片类型处理后保存为 raw_rgb（直方图将显示实际的色阶分布，含空段）
+            // 胶片类型处理后保存为 raw_rgb（仅反转+去色，无色阶）
             raw_after_film = Some(to_rgb16(&result));
 
-            // 色阶已烘焙到 raw_rgb，手柄设为恒等（用户可在此基础上微调）
-            for i in 0..4 {
-                self.manual_adjust.levels_black[i] = 0.0;
-                self.manual_adjust.levels_white[i] = 255.0;
-                self.manual_adjust.levels_gamma[i] = 1.0;
+            // 从色彩方案加载色阶到手柄
+            if correction.apply_histogram {
+                for i in 0..4 {
+                    let s_val = (correction.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let h_val = (correction.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let g_val = 1.0 / (correction.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+                    self.manual_adjust.levels_black[i] = s_val;
+                    self.manual_adjust.levels_white[i] = h_val;
+                    self.manual_adjust.levels_gamma[i] = g_val;
+                }
             }
 
-            // 提取胶片类型
+            // 提取胶片类型、胶片曲线、Gamma
             self.manual_adjust.film_type = correction.film_type;
+            self.manual_adjust.film_curve = correction.film_curve;
+            self.manual_adjust.film_gamma = correction.gamma;
 
             // 将滑块参数（饱和度/EV/对比度/亮度/阴影深度/中间调）映射到手柄
             if correction.apply_sliders {
@@ -1014,13 +1017,28 @@ impl FffViewerApp {
                 self.use_embedded_correction = corrected;
                 self.embedded_correction_index = emb_idx;
 
-                // 色阶已烘焙，手柄重置为恒等
-                for i in 0..4 {
-                    self.manual_adjust.levels_black[i] = 0.0;
-                    self.manual_adjust.levels_white[i] = 255.0;
-                    self.manual_adjust.levels_gamma[i] = 1.0;
+                // 从嵌入 correction 加载色阶手柄
+                if corrected {
+                    if let Some(ref eh) = detail.edit_history {
+                        let idx = emb_idx.unwrap_or(0).min(eh.settings.len() - 1);
+                        let corr = &eh.settings[idx].correction;
+                        if corr.apply_histogram {
+                            for i in 0..4 {
+                                let s_val = (corr.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                                let h_val = (corr.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                                let g_val = 1.0 / (corr.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+                                self.manual_adjust.levels_black[i] = s_val;
+                                self.manual_adjust.levels_white[i] = h_val;
+                                self.manual_adjust.levels_gamma[i] = g_val;
+                            }
+                        }
+                        self.manual_adjust.film_type = corr.film_type;
+                        self.manual_adjust.film_curve = corr.film_curve;
+                        self.manual_adjust.film_gamma = corr.gamma;
+                    }
                 }
 
+                detail.raw_rgb = Some(to_rgb16(&processed));
                 detail.base_rgb = Some(to_rgb16(&processed));
             }
         }
@@ -1068,9 +1086,7 @@ impl FffViewerApp {
         };
 
         if let Some(ref correction) = correction {
-            let mut film_corr = correction.clone();
-            film_corr.saturation = 0;
-            result = color::apply_film_processing(&result, &film_corr);
+            result = color::apply_film_processing(&result, correction);
 
             let raw_rgb = to_rgb16(&result);
 
@@ -1085,12 +1101,19 @@ impl FffViewerApp {
                 detail.base_rgb = Some(rgb16);
             }
 
-            // 色阶已烘焙，手柄重置为恒等
-            for i in 0..4 {
-                self.manual_adjust.levels_black[i] = 0.0;
-                self.manual_adjust.levels_white[i] = 255.0;
-                self.manual_adjust.levels_gamma[i] = 1.0;
+            // 从色彩方案加载色阶到手柄
+            if correction.apply_histogram {
+                for i in 0..4 {
+                    let s_val = (correction.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let h_val = (correction.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
+                    let g_val = 1.0 / (correction.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+                    self.manual_adjust.levels_black[i] = s_val;
+                    self.manual_adjust.levels_white[i] = h_val;
+                    self.manual_adjust.levels_gamma[i] = g_val;
+                }
             }
+            self.manual_adjust.film_curve = correction.film_curve;
+            self.manual_adjust.film_gamma = correction.gamma;
         } else {
             // 无 correction 时，raw_rgb = icc_rgb
             let rgb16 = to_rgb16(&result);
@@ -1608,6 +1631,10 @@ impl FffViewerApp {
 
         // ── 原始直方图色阶（可调整） ──
         if ui.checkbox(&mut self.manual_adjust.apply_levels, s.histogram_levels).changed() {
+            rebuild = true;
+        }
+        // ── 胶片曲线开关 ──
+        if ui.checkbox(&mut self.manual_adjust.apply_film_curve, s.film_curve).changed() {
             rebuild = true;
         }
 
