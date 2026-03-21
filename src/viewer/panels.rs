@@ -942,6 +942,45 @@ impl FffViewerApp {
             }
             // 提取渐变曲线开关
             self.manual_adjust.apply_curves = correction.apply_curves && !correction.gradations.is_empty();
+            // 提取 USM 锐化参数
+            self.manual_adjust.apply_usm = correction.apply_usm;
+            self.manual_adjust.usm_amount = correction.usm_amount;
+            self.manual_adjust.usm_radius = correction.usm_radius;
+            self.manual_adjust.usm_dark_limit = correction.usm_dark_limit;
+            self.manual_adjust.usm_noise_limit = correction.usm_noise_limit;
+            if correction.usm_col_factor.len() >= 3 {
+                self.manual_adjust.usm_col_factor = [
+                    correction.usm_col_factor[0],
+                    correction.usm_col_factor[1],
+                    correction.usm_col_factor[2],
+                ];
+            }
+            // 提取除尘参数
+            self.manual_adjust.apply_dust = correction.apply_dust;
+            self.manual_adjust.dust_level = correction.dust_level;
+            // 提取色彩噪声滤镜参数
+            self.manual_adjust.apply_cn_filter = correction.apply_cn_filter;
+            self.manual_adjust.color_noise_radius = correction.color_noise_radius;
+            self.manual_adjust.noise_filter_bias = correction.noise_filter_bias;
+            // 提取镜头/暗角校正参数
+            self.manual_adjust.lens_correction = correction.lens_correction;
+            self.manual_adjust.vignette_amount = correction.vignette_amount;
+            // 提取阴影增强与色偏去除参数
+            self.manual_adjust.enhanced_shadow = correction.enhanced_shadow;
+            self.manual_adjust.remove_cast_highlight = correction.remove_cast_highlight;
+            self.manual_adjust.remove_cast_shadow = correction.remove_cast_shadow;
+            // 加载渐变曲线控制点到编辑器
+            if !correction.gradations.is_empty() {
+                self.curve_points = correction.gradations.clone();
+                // 确保至少有7个通道
+                while self.curve_points.len() < 7 {
+                    self.curve_points.push(vec![(0, 0, 0), (255, 255, 0)]);
+                }
+            } else {
+                self.curve_points = Self::default_curve_points();
+            }
+            self.curve_channel = 0;
+            self.curve_dragging = None;
             // 同步到两组手柄状态
             self.levels_processed = HistogramLevels {
                 black: self.manual_adjust.levels_black,
@@ -950,11 +989,7 @@ impl FffViewerApp {
             };
             self.levels_raw = self.levels_processed.clone();
 
-            // 应用渐变曲线（当 apply_curves 为 true 时）
-            if correction.apply_curves && !correction.gradations.is_empty() {
-                log::info!("Applying gradation curves: {} channels", correction.gradations.len());
-                result = color::apply_gradation_curves(&result, &correction.gradations);
-            }
+            // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
         }
 
         // 第3步：保存各阶段 16-bit 基准图像
@@ -972,6 +1007,7 @@ impl FffViewerApp {
         self.baseline_adjust = self.manual_adjust.clone();
         self.baseline_levels_processed = self.levels_processed.clone();
         self.baseline_levels_raw = self.levels_raw.clone();
+        self.baseline_curve_points = self.curve_points.clone();
 
         self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
@@ -1084,15 +1120,10 @@ impl FffViewerApp {
 
             let raw_rgb = to_rgb16(&result);
 
-            // 应用渐变曲线
-            if correction.apply_curves && !correction.gradations.is_empty() {
-                result = color::apply_gradation_curves(&result, &correction.gradations);
-            }
-
-            let rgb16 = to_rgb16(&result);
+            // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
             if let Some(detail) = &mut self.detail {
+                detail.base_rgb = Some(raw_rgb.clone());
                 detail.raw_rgb = Some(raw_rgb);
-                detail.base_rgb = Some(rgb16);
             }
 
             // 从色彩方案加载色阶到手柄（负片自动翻转）
@@ -1112,20 +1143,30 @@ impl FffViewerApp {
         self.rebuild_texture_from_base(ctx);
     }
 
-    /// 根据当前色彩方案的 base_rgb 应用手动调整后重建显示纹理。
-    /// 渲染始终基于 base_rgb（ICC + 胶片处理 + 渐变曲线），不受直方图数据源影响。
+    /// 根据 raw_rgb 应用渐变曲线（若开启且非恒等）和手动调整后重建显示纹理。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
 
-        // 根据渐变曲线开关选择起点：开=base_rgb(含曲线), 关=raw_rgb(无曲线)
-        let source = if self.manual_adjust.apply_curves {
-            detail.base_rgb.as_ref()
-        } else {
-            detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref())
-        };
+        let source = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
         let Some(base) = source else { return };
 
-        let img = image::DynamicImage::ImageRgb16(base.clone());
+        // 判断曲线是否全恒等（仅两个端点 (0,0)→(255,255)）
+        let curves_are_identity = self.curve_points.iter().all(|pts| {
+            pts.len() == 2
+                && pts[0].0 == 0 && pts[0].1 == 0
+                && pts[1].0 == 255 && pts[1].1 == 255
+        });
+
+        let img = if self.manual_adjust.apply_curves
+            && self.curve_points.len() >= 7
+            && !curves_are_identity
+        {
+            let raw_img = image::DynamicImage::ImageRgb16(base.clone());
+            color::apply_gradation_curves(&raw_img, &self.curve_points)
+        } else {
+            image::DynamicImage::ImageRgb16(base.clone())
+        };
+
         let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
         let rgb16 = to_rgb16(&adjusted);
 
@@ -1164,7 +1205,8 @@ impl FffViewerApp {
         self.manual_adjust.levels_white = self.levels_processed.white;
     }
 
-    /// 计算原始直方图（从 base_rgb/raw_rgb，用于色阶调整的自动功能）。
+    /// 计算原始直方图（用于色阶调整的自动功能和显示）。
+    /// 直方图始终基于 raw_rgb（原始数据，不含渐变曲线），不受曲线调整影响。
     /// 处理后直方图在 rebuild_texture_from_base() 中从渲染结果计算。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
@@ -1173,7 +1215,8 @@ impl FffViewerApp {
             return;
         };
 
-        // 原始直方图：永远使用 raw_rgb（ICC + 胶片处理，无渐变曲线）
+        // 直方图始终基于 raw_rgb（ICC + 胶片处理，不含渐变曲线），
+        // 反映原始像素分布，不受曲线调整影响。
         let source_img = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
 
         let Some(base) = source_img else {
@@ -1215,43 +1258,6 @@ impl FffViewerApp {
         self.histogram_raw = Some(hist);
         self.histogram_raw_16 = Some(hist_16);
         self.histogram_needs_update = false;
-    }
-
-    /// 渲染 RGB 三通道叠加直方图
-    pub(super) fn render_histogram(&self, ui: &mut egui::Ui) {
-        let Some(ref hist) = self.histogram_raw else { return };
-
-        let desired_size = egui::vec2(ui.available_width(), 80.0);
-        let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-
-        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(20));
-
-        let max_count = hist[0].iter().chain(hist[1].iter()).chain(hist[2].iter())
-            .copied().max().unwrap_or(1).max(1) as f32;
-
-        let w = rect.width();
-        let h = rect.height();
-
-        let colors = [
-            egui::Color32::from_rgba_unmultiplied(220, 50, 50, 100),
-            egui::Color32::from_rgba_unmultiplied(50, 200, 50, 100),
-            egui::Color32::from_rgba_unmultiplied(50, 100, 255, 100),
-        ];
-
-        for ch in 0..3 {
-            for i in 0..256 {
-                let bar_h = (hist[ch][i] as f32 / max_count * h).min(h);
-                if bar_h < 0.5 { continue; }
-                let x = rect.left() + i as f32 / 255.0 * w;
-                let bar_w = (w / 256.0).max(1.0);
-                let bar_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, rect.bottom() - bar_h),
-                    egui::vec2(bar_w, bar_h),
-                );
-                painter.rect_filled(bar_rect, 0.0, colors[ch]);
-            }
-        }
     }
 
     /// 根据 65536-bin 直方图按指定百分位计算黑白点（返回 0-255 浮点精度值）。
@@ -1491,6 +1497,218 @@ impl FffViewerApp {
         changed
     }
 
+    /// 渲染曲线编辑器：通道选择 + 可视化曲线图 + 控制点拖拽交互。
+    /// 返回 true 表示曲线数据已修改，需要重建纹理。
+    fn render_curve_editor(
+        ui: &mut egui::Ui,
+        curve_points: &mut Vec<Vec<(i64, i64, i64)>>,
+        curve_channel: &mut usize,
+        curve_dragging: &mut Option<usize>,
+        reset_label: &str,
+    ) -> bool {
+        let mut changed = false;
+
+        // ── 通道选择按钮 ──
+        ui.horizontal(|ui| {
+            let channels = ["RGB", "R", "G", "B", "C", "M", "Y"];
+            let colors = [
+                egui::Color32::from_gray(200),
+                egui::Color32::from_rgb(255, 80, 80),
+                egui::Color32::from_rgb(80, 200, 80),
+                egui::Color32::from_rgb(80, 120, 255),
+                egui::Color32::from_rgb(0, 200, 200),
+                egui::Color32::from_rgb(200, 0, 200),
+                egui::Color32::from_rgb(200, 200, 0),
+            ];
+            for (i, &label) in channels.iter().enumerate() {
+                let selected = *curve_channel == i;
+                let text = egui::RichText::new(label).small();
+                let text = if selected { text.color(colors[i]) } else { text };
+                if ui.selectable_label(selected, text).clicked() {
+                    *curve_channel = i;
+                    *curve_dragging = None;
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button(reset_label).clicked() {
+                    let ch = *curve_channel;
+                    if ch < curve_points.len() {
+                        curve_points[ch] = vec![(0, 0, 0), (255, 255, 0)];
+                        changed = true;
+                    }
+                }
+            });
+        });
+
+        // ── 曲线图绘制 ──
+        let avail_w = ui.available_width();
+        let graph_size = avail_w.min(256.0).max(120.0);
+        let (graph_rect, response) = ui.allocate_exact_size(
+            egui::vec2(graph_size, graph_size),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(graph_rect);
+
+        // 背景
+        painter.rect_filled(graph_rect, 2.0, egui::Color32::from_gray(24));
+
+        // 网格线（4×4）
+        let grid_color = egui::Color32::from_gray(45);
+        for i in 1..4 {
+            let frac = i as f32 / 4.0;
+            let x = graph_rect.left() + frac * graph_rect.width();
+            let y = graph_rect.top() + frac * graph_rect.height();
+            painter.line_segment(
+                [egui::pos2(x, graph_rect.top()), egui::pos2(x, graph_rect.bottom())],
+                egui::Stroke::new(0.5, grid_color),
+            );
+            painter.line_segment(
+                [egui::pos2(graph_rect.left(), y), egui::pos2(graph_rect.right(), y)],
+                egui::Stroke::new(0.5, grid_color),
+            );
+        }
+
+        // 对角线（恒等映射参考线）
+        painter.line_segment(
+            [egui::pos2(graph_rect.left(), graph_rect.bottom()),
+             egui::pos2(graph_rect.right(), graph_rect.top())],
+            egui::Stroke::new(0.5, egui::Color32::from_gray(60)),
+        );
+
+        let ch = *curve_channel;
+        if ch >= curve_points.len() { return changed; }
+
+        // 曲线通道颜色
+        let curve_color = match ch {
+            1 => egui::Color32::from_rgb(255, 80, 80),
+            2 => egui::Color32::from_rgb(80, 200, 80),
+            3 => egui::Color32::from_rgb(80, 120, 255),
+            4 => egui::Color32::from_rgb(0, 200, 200),
+            5 => egui::Color32::from_rgb(200, 0, 200),
+            6 => egui::Color32::from_rgb(200, 200, 0),
+            _ => egui::Color32::from_gray(220),
+        };
+
+        // 绘制曲线（用 LUT 生成平滑曲线）
+        let lut = color::build_curve_lut(&curve_points[ch]);
+        let mut curve_line: Vec<egui::Pos2> = Vec::with_capacity(256);
+        for i in 0..256 {
+            let x = graph_rect.left() + i as f32 / 255.0 * graph_rect.width();
+            let y = graph_rect.bottom() - lut[i] as f32 / 255.0 * graph_rect.height();
+            curve_line.push(egui::pos2(x, y));
+        }
+        // 逐段绘制曲线
+        for pair in curve_line.windows(2) {
+            painter.line_segment([pair[0], pair[1]], egui::Stroke::new(1.5, curve_color));
+        }
+
+        // 绘制控制点
+        let point_radius = 4.0;
+        let pts = &curve_points[ch];
+        for (i, &(px, py, _)) in pts.iter().enumerate() {
+            let x = graph_rect.left() + px as f32 / 255.0 * graph_rect.width();
+            let y = graph_rect.bottom() - py as f32 / 255.0 * graph_rect.height();
+            let is_dragging = *curve_dragging == Some(i);
+            let fill = if is_dragging { egui::Color32::WHITE } else { curve_color };
+            painter.circle_filled(egui::pos2(x, y), point_radius, fill);
+            painter.circle_stroke(
+                egui::pos2(x, y), point_radius,
+                egui::Stroke::new(1.0, egui::Color32::from_gray(180)),
+            );
+        }
+
+        // ── 交互：拖拽控制点 / 添加 / 删除 ──
+        let to_curve = |pos: egui::Pos2| -> (i64, i64) {
+            let x = ((pos.x - graph_rect.left()) / graph_rect.width() * 255.0)
+                .round().clamp(0.0, 255.0) as i64;
+            let y = ((graph_rect.bottom() - pos.y) / graph_rect.height() * 255.0)
+                .round().clamp(0.0, 255.0) as i64;
+            (x, y)
+        };
+
+        let hit_radius = 10.0;
+        let find_closest_point = |pos: egui::Pos2, pts: &[(i64, i64, i64)]| -> Option<usize> {
+            let mut best_idx = None;
+            let mut best_dist = f32::MAX;
+            for (i, &(px, py, _)) in pts.iter().enumerate() {
+                let x = graph_rect.left() + px as f32 / 255.0 * graph_rect.width();
+                let y = graph_rect.bottom() - py as f32 / 255.0 * graph_rect.height();
+                let dist = pos.distance(egui::pos2(x, y));
+                if dist < hit_radius && dist < best_dist {
+                    best_dist = dist;
+                    best_idx = Some(i);
+                }
+            }
+            best_idx
+        };
+
+        // 右键或双击删除控制点
+        if response.double_clicked() || response.secondary_clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                if let Some(idx) = find_closest_point(pos, &curve_points[ch]) {
+                    // 不允许删除头尾端点
+                    if idx > 0 && idx < curve_points[ch].len() - 1 {
+                        curve_points[ch].remove(idx);
+                        *curve_dragging = None;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // 开始拖拽
+        if response.drag_started() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                *curve_dragging = find_closest_point(pos, &curve_points[ch]);
+
+                // 如果没有命中已有点，在曲线上添加新控制点
+                if curve_dragging.is_none() && graph_rect.contains(pos) {
+                    let (cx, cy) = to_curve(pos);
+                    // 按 x 坐标插入，保持排序
+                    let insert_pos = curve_points[ch]
+                        .iter()
+                        .position(|&(x, _, _)| x > cx)
+                        .unwrap_or(curve_points[ch].len());
+                    curve_points[ch].insert(insert_pos, (cx, cy, 0));
+                    *curve_dragging = Some(insert_pos);
+                    changed = true;
+                }
+            }
+        }
+
+        // 拖拽中
+        if response.dragged() {
+            if let Some(drag_idx) = *curve_dragging {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let (mut cx, cy) = to_curve(pos);
+                    let pts = &curve_points[ch];
+
+                    // 限制拖拽范围：不能越过相邻控制点
+                    // 起点和终点仅锁定 x 坐标，y 坐标可自由调整
+                    if drag_idx == 0 {
+                        cx = 0; // 起点 x 固定为 0
+                    } else if drag_idx == pts.len() - 1 {
+                        cx = 255; // 终点 x 固定为 255
+                    } else {
+                        let x_min = pts[drag_idx - 1].0 + 1;
+                        let x_max = pts[drag_idx + 1].0 - 1;
+                        cx = cx.clamp(x_min, x_max);
+                    }
+
+                    curve_points[ch][drag_idx] = (cx, cy, 0);
+                    changed = true;
+                }
+            }
+        }
+
+        // 结束拖拽
+        if response.drag_stopped() {
+            *curve_dragging = None;
+        }
+
+        changed
+    }
+
     /// 仅渲染直方图条形图（无色阶控制），用于处理后直方图的只读显示。
     fn render_histogram_bars(
         ui: &mut egui::Ui,
@@ -1559,10 +1777,13 @@ impl FffViewerApp {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(reset_adjust).clicked() {
-                    // 重置到色彩方案加载后的基线状态
+                    // 重置到色彩方案加载后的基线状态（包括曲线控制点）
                     self.manual_adjust = self.baseline_adjust.clone();
                     self.levels_processed = self.baseline_levels_processed.clone();
                     self.levels_raw = self.baseline_levels_raw.clone();
+                    self.curve_points = self.baseline_curve_points.clone();
+                    self.curve_channel = 0;
+                    self.curve_dragging = None;
                     rebuild = true;
                 }
             });
@@ -1684,13 +1905,26 @@ impl FffViewerApp {
 
         // ── Basic adjustment sliders (scrollable) ───────────────────────
         egui::ScrollArea::vertical().id_salt("adjust_sliders").show(ui, |ui| {
-            let adj = &mut self.manual_adjust;
-
-            // 渐变曲线开关
-            if ui.checkbox(&mut adj.apply_curves, s.gradation_curves).changed() {
+            // 渐变曲线开关（直方图始终显示原始数据，不随曲线变化）
+            if ui.checkbox(&mut self.manual_adjust.apply_curves, s.gradation_curves).changed() {
                 rebuild = true;
             }
+
+            // 曲线编辑器（仅当曲线开启时显示）
+            if self.manual_adjust.apply_curves {
+                if Self::render_curve_editor(
+                    ui,
+                    &mut self.curve_points,
+                    &mut self.curve_channel,
+                    &mut self.curve_dragging,
+                    s.curve_reset,
+                ) {
+                    rebuild = true;
+                }
+            }
             ui.add_space(4.0);
+
+            let adj = &mut self.manual_adjust;
 
             // 曝光
             ui.horizontal(|ui| {
@@ -1832,6 +2066,156 @@ impl FffViewerApp {
                         }
                         ui.end_row();
                     }
+                });
+
+            // ── USM 锐化 / 除尘 / 降噪 / 镜头校正 / 阴影增强 ──
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.sharpening_usm).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut adj.apply_usm, "").changed() { rebuild = true; }
+                        ui.label(s.enabled);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.amount);
+                        let mut val = adj.usm_amount as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=500).text("")).changed() {
+                            adj.usm_amount = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.radius);
+                        let mut val = adj.usm_radius as i32;
+                        if ui.add(egui::Slider::new(&mut val, 1..=20).text("")).changed() {
+                            adj.usm_radius = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.dark_limit);
+                        let mut val = adj.usm_dark_limit as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=255).text("")).changed() {
+                            adj.usm_dark_limit = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.noise_limit);
+                        let mut val = adj.usm_noise_limit as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=255).text("")).changed() {
+                            adj.usm_noise_limit = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ USM sharpening not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.dust_removal).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut adj.apply_dust, "").changed() { rebuild = true; }
+                        ui.label(s.enabled);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.dust_level);
+                        let mut val = adj.dust_level as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=100).text("")).changed() {
+                            adj.dust_level = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Dust removal not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.noise_filter).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut adj.apply_cn_filter, "").changed() { rebuild = true; }
+                        ui.label(s.enabled);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.noise_radius);
+                        let mut val = adj.color_noise_radius as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=20).text("")).changed() {
+                            adj.color_noise_radius = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.noise_bias);
+                        let mut val = adj.noise_filter_bias as i32;
+                        if ui.add(egui::Slider::new(&mut val, -100..=100).text("")).changed() {
+                            adj.noise_filter_bias = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Noise filter not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.lens_correction).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(s.lens_correction);
+                        let mut val = adj.lens_correction as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=100).text("")).changed() {
+                            adj.lens_correction = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.vignette_amount);
+                        let mut val = adj.vignette_amount as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=100).text("")).changed() {
+                            adj.vignette_amount = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Lens/vignette correction not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.enhanced_shadow).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    if ui.checkbox(&mut adj.enhanced_shadow, s.enhanced_shadow).changed() { rebuild = true; }
+                    if ui.checkbox(&mut adj.remove_cast_highlight, s.rm_cast_highlight).changed() { rebuild = true; }
+                    if ui.checkbox(&mut adj.remove_cast_shadow, s.rm_cast_shadow).changed() { rebuild = true; }
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Shadow/cast processing not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
                 });
         });
 
@@ -2022,12 +2406,18 @@ impl FffViewerApp {
             ui.close_menu();
         }
         ui.separator();
-        if ui.button(s.ctx_reveal_in_finder).clicked() {
+        if ui.button(s.ctx_reveal_in_file_manager).clicked() {
             #[cfg(target_os = "macos")]
             {
                 let _ = std::process::Command::new("open")
                     .arg("-R")
                     .arg(path)
+                    .spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer")
+                    .arg(format!("/select,{}", path.to_string_lossy()))
                     .spawn();
             }
             #[cfg(target_os = "linux")]
@@ -2039,7 +2429,23 @@ impl FffViewerApp {
             ui.close_menu();
         }
         if ui.button(s.ctx_open_default).clicked() {
-            let _ = std::process::Command::new("open").arg(path).spawn();
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(path).spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("cmd")
+                    .arg("/c")
+                    .arg("start")
+                    .arg("")
+                    .arg(path)
+                    .spawn();
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
+                let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+            }
             ui.close_menu();
         }
     }

@@ -83,6 +83,7 @@ pub struct Strings {
     pub processing_flags: &'static str,
     pub lens_other: &'static str,
     pub gradation_curves: &'static str,
+    pub curve_reset: &'static str,
     pub histogram_levels: &'static str,
     pub histogram_output: &'static str,
     pub levels_shadow: &'static str,
@@ -125,6 +126,8 @@ pub struct Strings {
     pub vignette_amount: &'static str,
     pub dust_level: &'static str,
     pub noise_radius: &'static str,
+    pub noise_limit: &'static str,
+    pub noise_bias: &'static str,
     pub auto_highlight: &'static str,
     pub auto_shadow: &'static str,
     pub yes: &'static str,
@@ -222,7 +225,7 @@ pub struct Strings {
     // Context menu
     pub ctx_copy_path: &'static str,
     pub ctx_copy_filename: &'static str,
-    pub ctx_reveal_in_finder: &'static str,
+    pub ctx_reveal_in_file_manager: &'static str,
     pub ctx_open_default: &'static str,
 
     // File filter
@@ -296,6 +299,7 @@ static EN: Strings = Strings {
     processing_flags: "⚙ Processing Flags",
     lens_other: "📐 Lens & Other",
     gradation_curves: "📈 Gradation Curves",
+    curve_reset: "Reset",
     histogram_levels: "📊 Histogram Levels",
     histogram_output: "📊 Output Histogram",
     levels_shadow: "Shadow",
@@ -337,6 +341,8 @@ static EN: Strings = Strings {
     vignette_amount: "Vignette Amount",
     dust_level: "Dust Level",
     noise_radius: "Noise Radius",
+    noise_limit: "Noise Limit",
+    noise_bias: "Noise Bias",
     auto_highlight: "Auto Highlight",
     auto_shadow: "Auto Shadow",
     yes: "Yes",
@@ -427,7 +433,13 @@ static EN: Strings = Strings {
 
     ctx_copy_path: "📋 Copy Path",
     ctx_copy_filename: "📋 Copy Filename",
-    ctx_reveal_in_finder: "📂 Reveal in Finder",
+    ctx_reveal_in_file_manager: if cfg!(target_os = "macos") {
+        "📂 Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "📂 Reveal in Explorer"
+    } else {
+        "📂 Reveal in File Manager"
+    },
     ctx_open_default: "🔗 Open with Default App",
 
     file_filter_placeholder: "🔎 Filter by name or format…",
@@ -497,6 +509,7 @@ static ZH: Strings = Strings {
     processing_flags: "⚙ 处理标志",
     lens_other: "📐 镜头与其他",
     gradation_curves: "📈 渐变曲线",
+    curve_reset: "重置",
     histogram_levels: "📊 直方图色阶",
     histogram_output: "📊 输出直方图",
     levels_shadow: "暗部",
@@ -538,6 +551,8 @@ static ZH: Strings = Strings {
     vignette_amount: "暗角强度",
     dust_level: "除尘等级",
     noise_radius: "降噪半径",
+    noise_limit: "噪声限制",
+    noise_bias: "噪声偏移",
     auto_highlight: "自动高光",
     auto_shadow: "自动暗部",
     yes: "是",
@@ -628,7 +643,13 @@ static ZH: Strings = Strings {
 
     ctx_copy_path: "📋 复制路径",
     ctx_copy_filename: "📋 复制文件名",
-    ctx_reveal_in_finder: "📂 在 Finder 中显示",
+    ctx_reveal_in_file_manager: if cfg!(target_os = "macos") {
+        "📂 在 Finder 中显示"
+    } else if cfg!(target_os = "windows") {
+        "📂 在资源管理器中显示"
+    } else {
+        "📂 在文件管理器中显示"
+    },
     ctx_open_default: "🔗 用默认应用打开",
 
     file_filter_placeholder: "🔎 按文件名或格式筛选…",

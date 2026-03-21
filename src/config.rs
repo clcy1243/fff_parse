@@ -8,12 +8,36 @@ use std::path::{Path, PathBuf};
 
 // ─── Directory layout ───────────────────────────────────────────────────────
 
-/// 根数据目录：`~/fff_parse/`
+/// 根数据目录：`~/fff_parse/`（macOS/Linux）或 `%USERPROFILE%\fff_parse\`（Windows）
 pub fn app_data_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join("fff_parse")
+}
+
+/// 获取用户主目录。Windows 优先使用 USERPROFILE，其次 HOMEDRIVE+HOMEPATH，最后 APPDATA
+/// 的上上级目录；macOS/Linux 使用 HOME。
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(p) = std::env::var_os("USERPROFILE") {
+            return Some(PathBuf::from(p));
+        }
+        if let (Some(drive), Some(path)) =
+            (std::env::var_os("HOMEDRIVE"), std::env::var_os("HOMEPATH"))
+        {
+            let mut buf = PathBuf::from(drive);
+            buf.push(path);
+            return Some(buf);
+        }
+        if let Some(p) = std::env::var_os("APPDATA") {
+            let p = PathBuf::from(p);
+            // 通常：C:\Users\<u>\AppData\Roaming -> C:\Users\<u>
+            if let Some(user) = p.parent().and_then(|pp| pp.parent()) {
+                return Some(user.to_path_buf());
+            }
+        }
+    }
+    std::env::var_os("HOME").map(PathBuf::from)
 }
 
 /// 日志目录：`~/fff_parse/logs/`
@@ -142,7 +166,7 @@ fn default_thread_count() -> usize {
 
 /// 检测系统语言。若为中文环境则返回 "zh"，否则返回 "en"。
 fn detect_system_language() -> String {
-    // macOS: check LANG, LC_ALL, then `defaults read`
+    // 通用：检查 LANG / LC_ALL / LC_MESSAGES 环境变量
     for var in ["LANG", "LC_ALL", "LC_MESSAGES"] {
         if let Ok(val) = std::env::var(var) {
             let lower = val.to_lowercase();
@@ -160,6 +184,20 @@ fn detect_system_language() -> String {
     {
         if let Ok(output) = std::process::Command::new("defaults")
             .args(["read", "-g", "AppleLocale"])
+            .output()
+        {
+            let locale = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            if locale.starts_with("zh") {
+                return "zh".to_string();
+            }
+        }
+    }
+
+    // Windows: 通过 PowerShell 获取用户语言
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "(Get-Culture).Name"])
             .output()
         {
             let locale = String::from_utf8_lossy(&output.stdout).to_lowercase();

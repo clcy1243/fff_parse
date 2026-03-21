@@ -1,4 +1,4 @@
-//! 手动图像调整：曝光、对比度、高光/阴影、饱和度、色彩平衡和色阶。
+//! 手动图像调整：曝光、对比度、高光/阴影、饱和度、色彩平衡、色阶及锐化/降噪/镜头校正。
 
 /// 手动图像调整参数，在色彩管道之后应用。
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +64,48 @@ pub struct ManualAdjust {
     pub levels_gamma: [f32; 4],
     /// 输入白点：0-255
     pub levels_white: [f32; 4],
+
+    // ── USM 锐化参数（尚未实现处理，仅保存/加载） ──
+    /// 是否应用 USM 锐化
+    pub apply_usm: bool,
+    /// USM 锐化强度：0-500
+    pub usm_amount: i64,
+    /// USM 锐化半径：1-20
+    pub usm_radius: i64,
+    /// USM 暗部限制：0-255
+    pub usm_dark_limit: i64,
+    /// USM 噪声限制：0-255
+    pub usm_noise_limit: i64,
+    /// USM 色彩因子 [R, G, B]
+    pub usm_col_factor: [i64; 3],
+
+    // ── 除尘参数（尚未实现处理，仅保存/加载） ──
+    /// 是否应用除尘
+    pub apply_dust: bool,
+    /// 除尘级别：0-100
+    pub dust_level: i64,
+
+    // ── 色彩噪声滤镜参数（尚未实现处理，仅保存/加载） ──
+    /// 是否应用色彩噪声滤镜
+    pub apply_cn_filter: bool,
+    /// 色彩噪声半径
+    pub color_noise_radius: i64,
+    /// 噪声滤镜偏移
+    pub noise_filter_bias: i64,
+
+    // ── 镜头/暗角校正参数（尚未实现处理，仅保存/加载） ──
+    /// 镜头校正
+    pub lens_correction: i64,
+    /// 暗角校正量
+    pub vignette_amount: i64,
+
+    // ── 阴影增强与色偏去除（尚未实现处理，仅保存/加载） ──
+    /// 是否增强阴影
+    pub enhanced_shadow: bool,
+    /// 是否去除高光色偏
+    pub remove_cast_highlight: bool,
+    /// 是否去除阴影色偏
+    pub remove_cast_shadow: bool,
 }
 
 impl Default for ManualAdjust {
@@ -85,6 +127,18 @@ impl Default for ManualAdjust {
             levels_black: [0.0; 4],
             levels_gamma: [1.0; 4],
             levels_white: [255.0; 4],
+            // USM 锐化
+            apply_usm: false,
+            usm_amount: 0, usm_radius: 1, usm_dark_limit: 0, usm_noise_limit: 0,
+            usm_col_factor: [100, 100, 100],
+            // 除尘
+            apply_dust: false, dust_level: 0,
+            // 色彩噪声滤镜
+            apply_cn_filter: false, color_noise_radius: 0, noise_filter_bias: 0,
+            // 镜头/暗角校正
+            lens_correction: 0, vignette_amount: 0,
+            // 阴影增强与色偏去除
+            enhanced_shadow: false, remove_cast_highlight: false, remove_cast_shadow: false,
         }
     }
 }
@@ -543,3 +597,167 @@ fn extract_tag_data(data: &[u8], target_tag: u16) -> Option<Vec<u8>> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_adjust_is_not_identity_with_film_curve() {
+        // 默认 ManualAdjust 因 apply_film_curve=true 不是恒等
+        let adj = ManualAdjust::default();
+        assert!(!adj.is_identity(), "default with film_curve enabled is not identity");
+    }
+
+    #[test]
+    fn adjust_without_film_curve_is_identity() {
+        let mut adj = ManualAdjust::default();
+        adj.apply_film_curve = false;
+        assert!(adj.is_identity(), "default with film_curve disabled should be identity");
+    }
+
+    #[test]
+    fn identity_adjust_preserves_image() {
+        // 恒等变换不应修改图像
+        let mut adj = ManualAdjust::default();
+        // 关闭 film_curve 使其为恒等
+        adj.apply_film_curve = false;
+        let w = 4u32;
+        let h = 2u32;
+        let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 256) as u8).collect();
+        let img = image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(w, h, pixels.clone()).unwrap(),
+        );
+        let result = apply_manual_adjust(&img, &adj);
+        let out = result.to_rgb8();
+        assert_eq!(out.as_raw(), &pixels, "identity adjust should not change pixels");
+    }
+
+    #[test]
+    fn levels_black_clips_dark() {
+        // 设置黑点=128 应将低于 128 的值映射到 0
+        let mut adj = ManualAdjust::default();
+        adj.apply_film_curve = false;
+        adj.levels_black = [128.0; 4];
+        let w = 4u32;
+        let h = 1u32;
+        let pixels = vec![0u8, 0, 0, 64, 64, 64, 128, 128, 128, 255, 255, 255];
+        let img = image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(w, h, pixels).unwrap(),
+        );
+        let result = apply_manual_adjust(&img, &adj);
+        let out = result.to_rgb8();
+        let raw = out.as_raw();
+        // 值 0 和 64 应映射到 0（低于黑点）
+        assert_eq!(raw[0], 0, "value 0 with black=128 should be 0");
+        assert_eq!(raw[3], 0, "value 64 with black=128 should be 0");
+        // 值 128 应映射到 0（刚好在黑点）
+        assert_eq!(raw[6], 0, "value 128 with black=128 should be 0");
+        // 值 255 应映射到 255（白点保持）
+        assert_eq!(raw[9], 255, "value 255 should stay 255");
+    }
+
+    #[test]
+    fn levels_white_clips_bright() {
+        // 设置白点=128 应将高于 128 的值映射到 255
+        let mut adj = ManualAdjust::default();
+        adj.apply_film_curve = false;
+        adj.levels_white = [128.0; 4];
+        let w = 4u32;
+        let h = 1u32;
+        let pixels = vec![0u8, 0, 0, 64, 64, 64, 128, 128, 128, 255, 255, 255];
+        let img = image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(w, h, pixels).unwrap(),
+        );
+        let result = apply_manual_adjust(&img, &adj);
+        let out = result.to_rgb8();
+        let raw = out.as_raw();
+        // 值 0 应映射到 0
+        assert_eq!(raw[0], 0, "value 0 should stay 0");
+        // 值 128 应映射到 255（刚好在白点）
+        assert_eq!(raw[6], 255, "value 128 with white=128 should be 255");
+        // 值 255 应映射到 255（超过白点）
+        assert_eq!(raw[9], 255, "value 255 should be 255");
+    }
+
+    #[test]
+    fn exposure_positive_brightens() {
+        let mut adj = ManualAdjust::default();
+        adj.apply_film_curve = false;
+        adj.exposure = 1.0; // +1 stop → 2x
+        let w = 1u32;
+        let h = 1u32;
+        let pixels = vec![64u8, 64, 64];
+        let img = image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(w, h, pixels).unwrap(),
+        );
+        let result = apply_manual_adjust(&img, &adj);
+        let out = result.to_rgb8();
+        let raw = out.as_raw();
+        // 64 * 2 = 128
+        assert_eq!(raw[0], 128, "exposure +1 stop should double value 64 to 128");
+    }
+
+    #[test]
+    fn manual_adjust_16bit_roundtrip() {
+        // 16-bit 恒等变换也应保持不变
+        let mut adj = ManualAdjust::default();
+        adj.apply_film_curve = false;
+        let w = 2u32;
+        let h = 2u32;
+        let pixels: Vec<u16> = vec![0, 0, 0, 32768, 32768, 32768, 65535, 65535, 65535, 16384, 32768, 49152];
+        let img = image::DynamicImage::ImageRgb16(
+            image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(w, h, pixels.clone()).unwrap(),
+        );
+        let result = apply_manual_adjust(&img, &adj);
+        match result {
+            image::DynamicImage::ImageRgb16(buf) => {
+                assert_eq!(buf.as_raw(), &pixels, "16-bit identity should preserve pixels");
+            }
+            _ => panic!("16-bit input should produce 16-bit output"),
+        }
+    }
+
+    #[test]
+    fn new_fields_have_correct_defaults() {
+        let adj = ManualAdjust::default();
+        // USM 默认关闭
+        assert!(!adj.apply_usm);
+        assert_eq!(adj.usm_amount, 0);
+        assert_eq!(adj.usm_radius, 1);
+        assert_eq!(adj.usm_dark_limit, 0);
+        assert_eq!(adj.usm_noise_limit, 0);
+        assert_eq!(adj.usm_col_factor, [100, 100, 100]);
+        // 除尘默认关闭
+        assert!(!adj.apply_dust);
+        assert_eq!(adj.dust_level, 0);
+        // 降噪默认关闭
+        assert!(!adj.apply_cn_filter);
+        assert_eq!(adj.color_noise_radius, 0);
+        assert_eq!(adj.noise_filter_bias, 0);
+        // 镜头/暗角校正默认为0
+        assert_eq!(adj.lens_correction, 0);
+        assert_eq!(adj.vignette_amount, 0);
+        // 阴影增强与色偏去除默认关闭
+        assert!(!adj.enhanced_shadow);
+        assert!(!adj.remove_cast_highlight);
+        assert!(!adj.remove_cast_shadow);
+    }
+
+    #[test]
+    fn new_fields_do_not_affect_identity() {
+        // 新增字段不影响恒等判断（它们不参与图像处理）
+        let mut adj = ManualAdjust::default();
+        adj.apply_film_curve = false;
+        // 设置新增字段的值
+        adj.apply_usm = true;
+        adj.usm_amount = 100;
+        adj.apply_dust = true;
+        adj.dust_level = 50;
+        adj.apply_cn_filter = true;
+        adj.enhanced_shadow = true;
+        // 恒等判断不受影响（新字段未参与 is_identity 判断）
+        assert!(adj.is_identity(), "new fields should not affect identity check");
+    }
+}
+

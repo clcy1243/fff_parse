@@ -136,6 +136,28 @@ fn to_xml(c: &SidecarConfig) -> String {
     // color correction matrix (36 values as comma-separated)
     let cc_str: Vec<String> = a.color_corr.iter().map(|v| v.to_string()).collect();
     let _ = writeln!(s, "    <adj_color_corr>{}</adj_color_corr>", cc_str.join(","));
+    // USM 锐化
+    let _ = writeln!(s, "    <adj_apply_usm>{}</adj_apply_usm>", a.apply_usm);
+    let _ = writeln!(s, "    <adj_usm_amount>{}</adj_usm_amount>", a.usm_amount);
+    let _ = writeln!(s, "    <adj_usm_radius>{}</adj_usm_radius>", a.usm_radius);
+    let _ = writeln!(s, "    <adj_usm_dark_limit>{}</adj_usm_dark_limit>", a.usm_dark_limit);
+    let _ = writeln!(s, "    <adj_usm_noise_limit>{}</adj_usm_noise_limit>", a.usm_noise_limit);
+    let _ = writeln!(s, "    <adj_usm_col_factor>{},{},{}</adj_usm_col_factor>",
+        a.usm_col_factor[0], a.usm_col_factor[1], a.usm_col_factor[2]);
+    // 除尘
+    let _ = writeln!(s, "    <adj_apply_dust>{}</adj_apply_dust>", a.apply_dust);
+    let _ = writeln!(s, "    <adj_dust_level>{}</adj_dust_level>", a.dust_level);
+    // 色彩噪声滤镜
+    let _ = writeln!(s, "    <adj_apply_cn_filter>{}</adj_apply_cn_filter>", a.apply_cn_filter);
+    let _ = writeln!(s, "    <adj_color_noise_radius>{}</adj_color_noise_radius>", a.color_noise_radius);
+    let _ = writeln!(s, "    <adj_noise_filter_bias>{}</adj_noise_filter_bias>", a.noise_filter_bias);
+    // 镜头/暗角校正
+    let _ = writeln!(s, "    <adj_lens_correction>{}</adj_lens_correction>", a.lens_correction);
+    let _ = writeln!(s, "    <adj_vignette_amount>{}</adj_vignette_amount>", a.vignette_amount);
+    // 阴影增强与色偏去除
+    let _ = writeln!(s, "    <adj_enhanced_shadow>{}</adj_enhanced_shadow>", a.enhanced_shadow);
+    let _ = writeln!(s, "    <adj_remove_cast_highlight>{}</adj_remove_cast_highlight>", a.remove_cast_highlight);
+    let _ = writeln!(s, "    <adj_remove_cast_shadow>{}</adj_remove_cast_shadow>", a.remove_cast_shadow);
     s.push_str("  </adjust>\n");
 
     // Split section
@@ -325,6 +347,50 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
             config.manual_adjust.color_corr = arr;
         }
     }
+    // USM 锐化
+    config.manual_adjust.apply_usm = tag_content(xml, "adj_apply_usm").map_or(false, |v| v == "true");
+    if let Some(v) = tag_content(xml, "adj_usm_amount") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.usm_amount = n; }
+    }
+    if let Some(v) = tag_content(xml, "adj_usm_radius") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.usm_radius = n; }
+    }
+    if let Some(v) = tag_content(xml, "adj_usm_dark_limit") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.usm_dark_limit = n; }
+    }
+    if let Some(v) = tag_content(xml, "adj_usm_noise_limit") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.usm_noise_limit = n; }
+    }
+    if let Some(v) = tag_content(xml, "adj_usm_col_factor") {
+        let vals: Vec<i64> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if vals.len() == 3 {
+            config.manual_adjust.usm_col_factor = [vals[0], vals[1], vals[2]];
+        }
+    }
+    // 除尘
+    config.manual_adjust.apply_dust = tag_content(xml, "adj_apply_dust").map_or(false, |v| v == "true");
+    if let Some(v) = tag_content(xml, "adj_dust_level") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.dust_level = n; }
+    }
+    // 色彩噪声滤镜
+    config.manual_adjust.apply_cn_filter = tag_content(xml, "adj_apply_cn_filter").map_or(false, |v| v == "true");
+    if let Some(v) = tag_content(xml, "adj_color_noise_radius") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.color_noise_radius = n; }
+    }
+    if let Some(v) = tag_content(xml, "adj_noise_filter_bias") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.noise_filter_bias = n; }
+    }
+    // 镜头/暗角校正
+    if let Some(v) = tag_content(xml, "adj_lens_correction") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.lens_correction = n; }
+    }
+    if let Some(v) = tag_content(xml, "adj_vignette_amount") {
+        if let Ok(n) = v.parse::<i64>() { config.manual_adjust.vignette_amount = n; }
+    }
+    // 阴影增强与色偏去除
+    config.manual_adjust.enhanced_shadow = tag_content(xml, "adj_enhanced_shadow").map_or(false, |v| v == "true");
+    config.manual_adjust.remove_cast_highlight = tag_content(xml, "adj_remove_cast_highlight").map_or(false, |v| v == "true");
+    config.manual_adjust.remove_cast_shadow = tag_content(xml, "adj_remove_cast_shadow").map_or(false, |v| v == "true");
 
     // Parse region elements: <region cx="..." cy="..." w="..." h="..." angle="..."/>
     let mut search_from = 0;
@@ -438,5 +504,66 @@ mod tests {
             parsed.input_profile_name.as_deref(),
             Some("Profile <special> & \"quoted\"")
         );
+    }
+
+    #[test]
+    fn roundtrip_new_adjust_fields() {
+        let mut adj = color::ManualAdjust::default();
+        adj.apply_usm = true;
+        adj.usm_amount = 200;
+        adj.usm_radius = 5;
+        adj.usm_dark_limit = 10;
+        adj.usm_noise_limit = 20;
+        adj.usm_col_factor = [80, 90, 100];
+        adj.apply_dust = true;
+        adj.dust_level = 50;
+        adj.apply_cn_filter = true;
+        adj.color_noise_radius = 8;
+        adj.noise_filter_bias = -5;
+        adj.lens_correction = 3;
+        adj.vignette_amount = 42;
+        adj.enhanced_shadow = true;
+        adj.remove_cast_highlight = true;
+        adj.remove_cast_shadow = false;
+
+        let config = SidecarConfig {
+            use_embedded_correction: false,
+            use_embedded_icc: false,
+            embedded_correction_index: None,
+            input_profile_name: None,
+            preset_name: None,
+            target_color_space: "sRGB".to_string(),
+            split_format: "Free".to_string(),
+            split_portrait: false,
+            split_naming_pattern: "{name}_{n}".to_string(),
+            split_regions: vec![],
+            manual_adjust: adj,
+        };
+
+        let xml = to_xml(&config);
+        let parsed = parse_xml(&xml).unwrap();
+        let a = &parsed.manual_adjust;
+
+        // USM
+        assert!(a.apply_usm);
+        assert_eq!(a.usm_amount, 200);
+        assert_eq!(a.usm_radius, 5);
+        assert_eq!(a.usm_dark_limit, 10);
+        assert_eq!(a.usm_noise_limit, 20);
+        assert_eq!(a.usm_col_factor, [80, 90, 100]);
+        // 除尘
+        assert!(a.apply_dust);
+        assert_eq!(a.dust_level, 50);
+        // 降噪
+        assert!(a.apply_cn_filter);
+        assert_eq!(a.color_noise_radius, 8);
+        assert_eq!(a.noise_filter_bias, -5);
+        // 镜头/暗角校正
+        assert_eq!(a.lens_correction, 3);
+        assert_eq!(a.vignette_amount, 42);
+        // 阴影/色偏
+        assert!(a.enhanced_shadow);
+        assert!(a.remove_cast_highlight);
+        assert!(!a.remove_cast_shadow);
     }
 }

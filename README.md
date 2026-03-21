@@ -22,6 +22,14 @@
 - **内嵌 ICC** — 使用 FFF 文件中嵌入的 ICC 配置文件（tag 0xC51A）
 - **实时预览** — 选择配置文件后点击应用，立即在预览中显示色彩变换效果
 
+### 渐变曲线编辑（v0.6.0 新增）
+
+- **7 通道独立编辑** — 支持 RGB / R / G / B / C / M / Y 七个通道的独立曲线调整，各通道可独立重置
+- **交互式控制点** — 在 256×256 曲线图上点击添加控制点、拖拽移动、右键或双击删除；端点 X 坐标固定，不可越过相邻控制点
+- **平滑插值** — 采用 Fritsch-Carlson 单调三次样条插值，保证曲线平滑且无过冲
+- **动态应用** — 曲线从 `raw_rgb` 动态计算，不烘焙到基础数据；直方图始终基于曲线前的原始数据
+- **色彩方案联动** — 加载 FlexColor 色彩方案时自动提取并应用嵌入的曲线控制点
+
 ### TIFF 导出
 
 - **导出当前文件** — 将选中的 FFF 文件导出为标准 TIFF（保留 16-bit 色深）
@@ -31,8 +39,9 @@
 ## 系统要求
 
 - Rust 1.70+（推荐 1.94+）
-- macOS / Linux / Windows（egui 跨平台）
+- macOS / Windows / Linux（egui 跨平台）
 - Little CMS 2（`lcms2`，通过 Cargo 自动编译）
+- Windows 额外依赖：MSVC 构建工具链（通过 Visual Studio Build Tools 安装 "C++ 桌面开发" 工作负载）
 
 ## 构建与运行
 
@@ -43,22 +52,88 @@ cargo build --release
 # 直接运行
 cargo run --release --bin fff_viewer
 
-# 打开指定文件
+# 打开指定文件（macOS / Linux）
 cargo run --release --bin fff_viewer -- "/path/to/scan.fff"
+
+# 打开指定文件（Windows）
+cargo run --release --bin fff_viewer -- "C:\path\to\scan.fff"
 ```
 
-### macOS App 打包
+### macOS 打包发布
+
+构建后手动创建 `.app` 包：
 
 ```bash
-# 构建后手动创建 .app 包
+cargo build --release
+
 APP="FFF Viewer.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/fff_viewer "$APP/Contents/MacOS/"
 cp icons/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp -R profiles "$APP/Contents/Resources/profiles"
 cp -R settings "$APP/Contents/Resources/settings"
-# 添加 Info.plist（参见项目内脚本或手动编写）
+
+# 创建 Info.plist
+cat > "$APP/Contents/Info.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>       <string>fff_viewer</string>
+  <key>CFBundleIconFile</key>         <string>AppIcon</string>
+  <key>CFBundleIdentifier</key>       <string>com.fff-viewer.app</string>
+  <key>CFBundleName</key>             <string>FFF Viewer</string>
+  <key>CFBundleVersion</key>          <string>0.6.0</string>
+  <key>CFBundlePackageType</key>      <string>APPL</string>
+  <key>NSHighResolutionCapable</key>  <true/>
+</dict>
+</plist>
+EOF
+
+echo "打包完成: $APP"
 ```
+
+分发时将整个 `FFF Viewer.app` 文件夹压缩为 zip 即可。
+
+### Windows 打包发布
+
+#### 前置条件
+
+1. 安装 [Rust](https://rustup.rs/)（选择 MSVC 工具链）
+2. 安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，勾选 **"C++ 桌面开发"** 工作负载
+
+#### 编译
+
+```powershell
+cargo build --release
+```
+
+生成的可执行文件位于 `target\release\fff_viewer.exe`。
+
+#### 打包为便携式发行包
+
+```powershell
+# 创建发行目录
+$dist = "FFF_Viewer_Windows"
+New-Item -ItemType Directory -Force -Path $dist
+
+# 复制可执行文件
+Copy-Item target\release\fff_viewer.exe $dist\
+
+# 复制资源目录（ICC 配置文件和设置预设）
+Copy-Item -Recurse profiles $dist\profiles
+Copy-Item -Recurse settings $dist\settings
+
+# 复制图标（可选）
+Copy-Item icons\icon.ico $dist\
+
+Write-Host "打包完成: $dist"
+```
+
+将 `FFF_Viewer_Windows` 文件夹压缩为 zip 即可分发。用户解压后双击 `fff_viewer.exe` 运行。
+
+> **提示：** Windows 版为绿色便携式软件，无需安装。`profiles/` 和 `settings/` 目录需与 `fff_viewer.exe` 放在同一文件夹中。
 
 ### CLI 解析工具
 
@@ -90,25 +165,46 @@ cargo run --release --bin parse_test -- "/path/to/scan.fff"
 | **📋 元数据** | 图像尺寸、色彩模式、扫描仪信息等摘要 |
 | **📝 历史** | FlexColor 编辑设置列表，点击可展开查看详细校正参数 |
 | **🏷 标签** | 所有 IFD 中的原始标签名称与值（支持筛选） |
-| **🎨 色彩** | ICC 配置文件选择、设置预设浏览与应用 |
+| **🎨 色彩** | ICC 配置文件选择、设置预设浏览与应用、渐变曲线编辑 |
 
 ## 项目结构
 
 ```
 src/
-├── main.rs        # 入口，解析命令行参数，日志初始化
-├── lib.rs         # 公共模块导出
-├── viewer.rs      # egui GUI（目录树 + 网格/胶片视图 + 信息面板 + 导出 + 色彩管理）
-├── tiff.rs        # TIFF/FFF 二进制解析器（IFD、EXIF、MakerNote）
-├── flexcolor.rs   # FlexColor 编辑历史 & 设置预设 plist XML 解析器
-├── color.rs       # ICC 色彩管理模块（配置文件加载、变换、内嵌 ICC 提取）
-├── i18n.rs        # 国际化（英语 / 简体中文）
-├── tags.rs        # 标签名称查找表与值解释器
-└── parse_test.rs  # CLI 解析测试工具
+├── main.rs            # 入口，解析命令行参数，日志初始化
+├── lib.rs             # 公共模块导出
+├── tiff.rs            # TIFF/FFF 二进制解析器（IFD、EXIF、MakerNote）
+├── tags.rs            # 标签名称查找表与值解释器
+├── i18n.rs            # 国际化（英语 / 简体中文）
+├── config.rs          # 配置文件读写
+├── sidecar.rs         # Sidecar 文件处理
+├── parse_test.rs      # CLI 解析测试工具
+├── color/             # ICC 色彩管理模块
+│   ├── mod.rs         #   模块导出
+│   ├── profile.rs     #   ICC 配置文件加载与扫描
+│   ├── transform.rs   #   色彩空间变换
+│   ├── processing.rs  #   图像处理、渐变曲线 LUT 生成
+│   └── adjust.rs      #   手动调整（曝光、色阶、曲线等）
+├── flexcolor/         # FlexColor 编辑历史 & 设置预设
+│   ├── mod.rs         #   模块导出
+│   ├── model.rs       #   数据结构定义
+│   └── parser.rs      #   plist XML 解析器
+└── viewer/            # egui GUI
+    ├── mod.rs          #   模块导出
+    ├── app.rs          #   应用状态与主逻辑
+    ├── panels.rs       #   右侧信息面板（元数据、历史、标签、色彩、曲线编辑）
+    ├── types.rs        #   类型定义
+    ├── file_list.rs    #   目录树与文件浏览器
+    ├── loupe.rs        #   放大查看视图
+    ├── navigation.rs   #   图像导航
+    ├── split.rs        #   分屏视图
+    └── helpers.rs      #   UI 工具函数
 icons/
-└── AppIcon.icns   # 应用图标（FlexColor 风格）
-profiles/          # FlexColor ICC 配置文件（15 个）
-settings/          # FlexColor 设置预设（123 个 XML 文件）
+├── AppIcon.icns       # 应用图标（macOS）
+├── icon_256.png       # 应用图标 256×256 PNG 源文件
+└── icon.ico           # 应用图标（Windows）
+profiles/              # FlexColor ICC 配置文件（15 个）
+settings/              # FlexColor 设置预设（123 个 XML 文件）
 ```
 
 ## 已知限制
@@ -119,6 +215,24 @@ settings/          # FlexColor 设置预设（123 个 XML 文件）
 - ICC 色彩变换目前应用于预览图（非全分辨率原图），导出暂不应用色彩变换
 
 ## Changelog
+
+### v0.6.0
+
+- **渐变曲线编辑**
+  - 新增交互式曲线编辑器，支持 RGB / R / G / B / C / M / Y 七个通道独立编辑
+  - 256×256 曲线图：网格参考线、对角恒等线、Fritsch-Carlson 单调三次插值平滑曲线
+  - 控制点交互：点击添加、拖拽移动、右键或双击删除；端点 X 固定，不可越过相邻点
+  - 各通道独立重置为线性曲线
+  - 加载 FlexColor 色彩方案时自动提取嵌入的曲线控制点
+- **渲染管线重构**
+  - 曲线不再静态烘焙到 `base_rgb`，改由 `rebuild_texture_from_base()` 从 `raw_rgb` 动态应用
+  - 直方图始终基于原始数据（曲线前），不受曲线调整影响
+  - 16-bit 图像曲线应用改为 rayon 并行处理，提升性能
+- `build_curve_lut` 改为 `pub`，供曲线编辑器预览渲染使用
+- 新增 `curve_reset` 中英文翻译
+- 新增 `FffViewerApp` 曲线状态字段：`curve_points`、`curve_channel`、`curve_dragging`
+- 新增 `color::adjust` 模块单元测试（恒等变换、色阶黑白点、曝光等）
+- 修正 `FILM_CURVE_LUT_R` 查找表中间段平滑度
 
 ### v0.5.0
 
