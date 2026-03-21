@@ -2230,7 +2230,7 @@ impl FffViewerApp {
             #[cfg(target_os = "windows")]
             {
                 let _ = std::process::Command::new("explorer")
-                    .arg(format!("/select,{}", path.display()))
+                    .arg(format!("/select,{}", path.to_string_lossy()))
                     .spawn();
             }
             #[cfg(target_os = "linux")]
@@ -2249,7 +2249,7 @@ impl FffViewerApp {
             #[cfg(target_os = "windows")]
             {
                 let _ = std::process::Command::new("cmd")
-                    .args(["/c", "start", "", &path.display().to_string()])
+                    .args(["/c", "start", "", &path.to_string_lossy()])
                     .spawn();
             }
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
