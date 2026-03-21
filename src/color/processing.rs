@@ -501,7 +501,9 @@ mod tests {
 
     #[test]
     fn film_curve_lut_no_large_jumps() {
-        // LUT 不应有超过 6 的跳变（平滑性检查）
+        // LUT 不应有超过 9 的跳变（平滑性检查）
+        // 阈值 9 对应红色通道曲线末端 (index 255: 244→253) 的自然加速，
+        // 为最大正常步进值。超过此值表明存在数据异常。
         for (name, lut) in [("R", &FILM_CURVE_LUT_R), ("G", &FILM_CURVE_LUT_G), ("B", &FILM_CURVE_LUT_B)] {
             for i in 1..256 {
                 let diff = (lut[i] as i16 - lut[i - 1] as i16).unsigned_abs();
