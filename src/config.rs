@@ -14,17 +14,27 @@ pub fn app_data_dir() -> PathBuf {
     home.join("fff_parse")
 }
 
-/// 获取用户主目录。Windows 优先使用 USERPROFILE，其次 APPDATA 的父目录；
-/// macOS/Linux 使用 HOME。
+/// 获取用户主目录。Windows 优先使用 USERPROFILE，其次 HOMEDRIVE+HOMEPATH，最后 APPDATA
+/// 的上上级目录；macOS/Linux 使用 HOME。
 fn home_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         if let Some(p) = std::env::var_os("USERPROFILE") {
             return Some(PathBuf::from(p));
         }
+        if let (Some(drive), Some(path)) =
+            (std::env::var_os("HOMEDRIVE"), std::env::var_os("HOMEPATH"))
+        {
+            let mut buf = PathBuf::from(drive);
+            buf.push(path);
+            return Some(buf);
+        }
         if let Some(p) = std::env::var_os("APPDATA") {
             let p = PathBuf::from(p);
-            return p.parent().map(|pp| pp.to_path_buf());
+            // 通常：C:\Users\<u>\AppData\Roaming -> C:\Users\<u>
+            if let Some(user) = p.parent().and_then(|pp| pp.parent()) {
+                return Some(user.to_path_buf());
+            }
         }
     }
     std::env::var_os("HOME").map(PathBuf::from)
