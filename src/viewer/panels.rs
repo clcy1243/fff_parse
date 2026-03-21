@@ -1094,8 +1094,8 @@ impl FffViewerApp {
 
             // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
             if let Some(detail) = &mut self.detail {
-                detail.raw_rgb = Some(raw_rgb.clone());
-                detail.base_rgb = Some(raw_rgb);
+                detail.base_rgb = Some(raw_rgb.clone());
+                detail.raw_rgb = Some(raw_rgb);
             }
 
             // 从色彩方案加载色阶到手柄（负片自动翻转）
@@ -1867,10 +1867,8 @@ impl FffViewerApp {
 
         // ── Basic adjustment sliders (scrollable) ───────────────────────
         egui::ScrollArea::vertical().id_salt("adjust_sliders").show(ui, |ui| {
-            let adj = &mut self.manual_adjust;
-
             // 渐变曲线开关（直方图始终显示原始数据，不随曲线变化）
-            if ui.checkbox(&mut adj.apply_curves, s.gradation_curves).changed() {
+            if ui.checkbox(&mut self.manual_adjust.apply_curves, s.gradation_curves).changed() {
                 rebuild = true;
             }
 
