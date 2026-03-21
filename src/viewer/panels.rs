@@ -942,6 +942,18 @@ impl FffViewerApp {
             }
             // 提取渐变曲线开关
             self.manual_adjust.apply_curves = correction.apply_curves && !correction.gradations.is_empty();
+            // 加载渐变曲线控制点到编辑器
+            if !correction.gradations.is_empty() {
+                self.curve_points = correction.gradations.clone();
+                // 确保至少有7个通道
+                while self.curve_points.len() < 7 {
+                    self.curve_points.push(vec![(0, 0, 0), (255, 255, 0)]);
+                }
+            } else {
+                self.curve_points = Self::default_curve_points();
+            }
+            self.curve_channel = 0;
+            self.curve_dragging = None;
             // 同步到两组手柄状态
             self.levels_processed = HistogramLevels {
                 black: self.manual_adjust.levels_black,
@@ -950,11 +962,7 @@ impl FffViewerApp {
             };
             self.levels_raw = self.levels_processed.clone();
 
-            // 应用渐变曲线（当 apply_curves 为 true 时）
-            if correction.apply_curves && !correction.gradations.is_empty() {
-                log::info!("Applying gradation curves: {} channels", correction.gradations.len());
-                result = color::apply_gradation_curves(&result, &correction.gradations);
-            }
+            // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
         }
 
         // 第3步：保存各阶段 16-bit 基准图像
@@ -1084,15 +1092,10 @@ impl FffViewerApp {
 
             let raw_rgb = to_rgb16(&result);
 
-            // 应用渐变曲线
-            if correction.apply_curves && !correction.gradations.is_empty() {
-                result = color::apply_gradation_curves(&result, &correction.gradations);
-            }
-
-            let rgb16 = to_rgb16(&result);
+            // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
             if let Some(detail) = &mut self.detail {
-                detail.raw_rgb = Some(raw_rgb);
-                detail.base_rgb = Some(rgb16);
+                detail.raw_rgb = Some(raw_rgb.clone());
+                detail.base_rgb = Some(raw_rgb);
             }
 
             // 从色彩方案加载色阶到手柄（负片自动翻转）
@@ -1113,19 +1116,23 @@ impl FffViewerApp {
     }
 
     /// 根据当前色彩方案的 base_rgb 应用手动调整后重建显示纹理。
-    /// 渲染始终基于 base_rgb（ICC + 胶片处理 + 渐变曲线），不受直方图数据源影响。
+    /// 当曲线开启时，从 raw_rgb 重新应用用户编辑的渐变曲线。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
 
-        // 根据渐变曲线开关选择起点：开=base_rgb(含曲线), 关=raw_rgb(无曲线)
-        let source = if self.manual_adjust.apply_curves {
-            detail.base_rgb.as_ref()
-        } else {
-            detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref())
-        };
+        // 根据渐变曲线开关选择起点：
+        // 开 = raw_rgb + 用户编辑的曲线
+        // 关 = raw_rgb（无曲线）
+        let source = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
         let Some(base) = source else { return };
 
-        let img = image::DynamicImage::ImageRgb16(base.clone());
+        let img = if self.manual_adjust.apply_curves && self.curve_points.len() >= 7 {
+            let raw_img = image::DynamicImage::ImageRgb16(base.clone());
+            color::apply_gradation_curves(&raw_img, &self.curve_points)
+        } else {
+            image::DynamicImage::ImageRgb16(base.clone())
+        };
+
         let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
         let rgb16 = to_rgb16(&adjusted);
 
@@ -1456,6 +1463,217 @@ impl FffViewerApp {
         changed
     }
 
+    /// 渲染曲线编辑器：通道选择 + 可视化曲线图 + 控制点拖拽交互。
+    /// 返回 true 表示曲线数据已修改，需要重建纹理。
+    fn render_curve_editor(
+        ui: &mut egui::Ui,
+        curve_points: &mut Vec<Vec<(i64, i64, i64)>>,
+        curve_channel: &mut usize,
+        curve_dragging: &mut Option<usize>,
+        reset_label: &str,
+    ) -> bool {
+        let mut changed = false;
+
+        // ── 通道选择按钮 ──
+        ui.horizontal(|ui| {
+            let channels = ["RGB", "R", "G", "B", "C", "M", "Y"];
+            let colors = [
+                egui::Color32::from_gray(200),
+                egui::Color32::from_rgb(255, 80, 80),
+                egui::Color32::from_rgb(80, 200, 80),
+                egui::Color32::from_rgb(80, 120, 255),
+                egui::Color32::from_rgb(0, 200, 200),
+                egui::Color32::from_rgb(200, 0, 200),
+                egui::Color32::from_rgb(200, 200, 0),
+            ];
+            for (i, &label) in channels.iter().enumerate() {
+                let selected = *curve_channel == i;
+                let text = egui::RichText::new(label).small();
+                let text = if selected { text.color(colors[i]) } else { text };
+                if ui.selectable_label(selected, text).clicked() {
+                    *curve_channel = i;
+                    *curve_dragging = None;
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button(reset_label).clicked() {
+                    let ch = *curve_channel;
+                    if ch < curve_points.len() {
+                        curve_points[ch] = vec![(0, 0, 0), (255, 255, 0)];
+                        changed = true;
+                    }
+                }
+            });
+        });
+
+        // ── 曲线图绘制 ──
+        let avail_w = ui.available_width();
+        let graph_size = avail_w.min(256.0).max(120.0);
+        let (graph_rect, response) = ui.allocate_exact_size(
+            egui::vec2(graph_size, graph_size),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(graph_rect);
+
+        // 背景
+        painter.rect_filled(graph_rect, 2.0, egui::Color32::from_gray(24));
+
+        // 网格线（4×4）
+        let grid_color = egui::Color32::from_gray(45);
+        for i in 1..4 {
+            let frac = i as f32 / 4.0;
+            let x = graph_rect.left() + frac * graph_rect.width();
+            let y = graph_rect.top() + frac * graph_rect.height();
+            painter.line_segment(
+                [egui::pos2(x, graph_rect.top()), egui::pos2(x, graph_rect.bottom())],
+                egui::Stroke::new(0.5, grid_color),
+            );
+            painter.line_segment(
+                [egui::pos2(graph_rect.left(), y), egui::pos2(graph_rect.right(), y)],
+                egui::Stroke::new(0.5, grid_color),
+            );
+        }
+
+        // 对角线（恒等映射参考线）
+        painter.line_segment(
+            [egui::pos2(graph_rect.left(), graph_rect.bottom()),
+             egui::pos2(graph_rect.right(), graph_rect.top())],
+            egui::Stroke::new(0.5, egui::Color32::from_gray(60)),
+        );
+
+        let ch = *curve_channel;
+        if ch >= curve_points.len() { return changed; }
+
+        // 曲线通道颜色
+        let curve_color = match ch {
+            1 => egui::Color32::from_rgb(255, 80, 80),
+            2 => egui::Color32::from_rgb(80, 200, 80),
+            3 => egui::Color32::from_rgb(80, 120, 255),
+            4 => egui::Color32::from_rgb(0, 200, 200),
+            5 => egui::Color32::from_rgb(200, 0, 200),
+            6 => egui::Color32::from_rgb(200, 200, 0),
+            _ => egui::Color32::from_gray(220),
+        };
+
+        // 绘制曲线（用 LUT 生成平滑曲线）
+        let lut = color::build_curve_lut(&curve_points[ch]);
+        let mut curve_line: Vec<egui::Pos2> = Vec::with_capacity(256);
+        for i in 0..256 {
+            let x = graph_rect.left() + i as f32 / 255.0 * graph_rect.width();
+            let y = graph_rect.bottom() - lut[i] as f32 / 255.0 * graph_rect.height();
+            curve_line.push(egui::pos2(x, y));
+        }
+        // 逐段绘制曲线
+        for pair in curve_line.windows(2) {
+            painter.line_segment([pair[0], pair[1]], egui::Stroke::new(1.5, curve_color));
+        }
+
+        // 绘制控制点
+        let point_radius = 4.0;
+        let pts = &curve_points[ch];
+        for (i, &(px, py, _)) in pts.iter().enumerate() {
+            let x = graph_rect.left() + px as f32 / 255.0 * graph_rect.width();
+            let y = graph_rect.bottom() - py as f32 / 255.0 * graph_rect.height();
+            let is_dragging = *curve_dragging == Some(i);
+            let fill = if is_dragging { egui::Color32::WHITE } else { curve_color };
+            painter.circle_filled(egui::pos2(x, y), point_radius, fill);
+            painter.circle_stroke(
+                egui::pos2(x, y), point_radius,
+                egui::Stroke::new(1.0, egui::Color32::from_gray(180)),
+            );
+        }
+
+        // ── 交互：拖拽控制点 / 添加 / 删除 ──
+        let to_curve = |pos: egui::Pos2| -> (i64, i64) {
+            let x = ((pos.x - graph_rect.left()) / graph_rect.width() * 255.0)
+                .round().clamp(0.0, 255.0) as i64;
+            let y = ((graph_rect.bottom() - pos.y) / graph_rect.height() * 255.0)
+                .round().clamp(0.0, 255.0) as i64;
+            (x, y)
+        };
+
+        let hit_radius = 10.0;
+        let find_closest_point = |pos: egui::Pos2, pts: &[(i64, i64, i64)]| -> Option<usize> {
+            let mut best_idx = None;
+            let mut best_dist = f32::MAX;
+            for (i, &(px, py, _)) in pts.iter().enumerate() {
+                let x = graph_rect.left() + px as f32 / 255.0 * graph_rect.width();
+                let y = graph_rect.bottom() - py as f32 / 255.0 * graph_rect.height();
+                let dist = pos.distance(egui::pos2(x, y));
+                if dist < hit_radius && dist < best_dist {
+                    best_dist = dist;
+                    best_idx = Some(i);
+                }
+            }
+            best_idx
+        };
+
+        // 右键或双击删除控制点
+        if response.double_clicked() || response.secondary_clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                if let Some(idx) = find_closest_point(pos, &curve_points[ch]) {
+                    // 不允许删除头尾端点
+                    if idx > 0 && idx < curve_points[ch].len() - 1 {
+                        curve_points[ch].remove(idx);
+                        *curve_dragging = None;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // 开始拖拽
+        if response.drag_started() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                *curve_dragging = find_closest_point(pos, &curve_points[ch]);
+
+                // 如果没有命中已有点，在曲线上添加新控制点
+                if curve_dragging.is_none() && graph_rect.contains(pos) {
+                    let (cx, cy) = to_curve(pos);
+                    // 按 x 坐标插入，保持排序
+                    let insert_pos = curve_points[ch]
+                        .iter()
+                        .position(|&(x, _, _)| x > cx)
+                        .unwrap_or(curve_points[ch].len());
+                    curve_points[ch].insert(insert_pos, (cx, cy, 0));
+                    *curve_dragging = Some(insert_pos);
+                    changed = true;
+                }
+            }
+        }
+
+        // 拖拽中
+        if response.dragged() {
+            if let Some(drag_idx) = *curve_dragging {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let (mut cx, cy) = to_curve(pos);
+                    let pts = &curve_points[ch];
+
+                    // 限制拖拽范围：不能越过相邻控制点
+                    if drag_idx == 0 {
+                        cx = 0; // 起点 x 固定为 0
+                    } else if drag_idx == pts.len() - 1 {
+                        cx = 255; // 终点 x 固定为 255
+                    } else {
+                        let x_min = pts[drag_idx - 1].0 + 1;
+                        let x_max = pts[drag_idx + 1].0 - 1;
+                        cx = cx.clamp(x_min, x_max);
+                    }
+
+                    curve_points[ch][drag_idx] = (cx, cy, 0);
+                    changed = true;
+                }
+            }
+        }
+
+        // 结束拖拽
+        if response.drag_stopped() {
+            *curve_dragging = None;
+        }
+
+        changed
+    }
+
     /// 仅渲染直方图条形图（无色阶控制），用于处理后直方图的只读显示。
     fn render_histogram_bars(
         ui: &mut egui::Ui,
@@ -1655,7 +1873,22 @@ impl FffViewerApp {
             if ui.checkbox(&mut adj.apply_curves, s.gradation_curves).changed() {
                 rebuild = true;
             }
+
+            // 曲线编辑器（仅当曲线开启时显示）
+            if self.manual_adjust.apply_curves {
+                if Self::render_curve_editor(
+                    ui,
+                    &mut self.curve_points,
+                    &mut self.curve_channel,
+                    &mut self.curve_dragging,
+                    s.curve_reset,
+                ) {
+                    rebuild = true;
+                }
+            }
             ui.add_space(4.0);
+
+            let adj = &mut self.manual_adjust;
 
             // 曝光
             ui.horizontal(|ui| {

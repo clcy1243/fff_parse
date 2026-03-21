@@ -278,7 +278,7 @@ pub fn apply_film_curve_lut(
 ///
 /// 控制点格式：(x, y, flag)，x/y 均为 0-255 范围。
 /// 使用 Fritsch-Carlson 方法保证单调性，避免过冲。
-fn build_curve_lut(points: &[(i64, i64, i64)]) -> [u8; 256] {
+pub fn build_curve_lut(points: &[(i64, i64, i64)]) -> [u8; 256] {
     let mut lut = [0u8; 256];
     if points.len() < 2 {
         for i in 0..256 { lut[i] = i as u8; }

@@ -102,6 +102,9 @@ impl FffViewerApp {
             language,
             app_config,
             settings_needs_restart: false,
+            curve_channel: 0,
+            curve_points: Self::default_curve_points(),
+            curve_dragging: None,
         };
 
         if let Some(path) = initial_file {
@@ -121,6 +124,11 @@ impl FffViewerApp {
     /// 获取当前语言的国际化字符串
     pub(super) fn s(&self) -> &'static Strings {
         i18n::strings(self.language)
+    }
+
+    /// 创建默认的曲线控制点（7个通道，每个都是恒等映射：(0,0)→(255,255)）
+    pub(super) fn default_curve_points() -> Vec<Vec<(i64, i64, i64)>> {
+        (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect()
     }
 
     /// 切换当前目录：展开祖先节点、扫描文件、启动缩略图加载线程

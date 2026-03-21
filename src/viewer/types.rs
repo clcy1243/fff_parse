@@ -547,6 +547,14 @@ pub struct FffViewerApp {
     // 应用配置（用于设置面板）
     pub(super) app_config: AppConfig,
     pub(super) settings_needs_restart: bool,
+
+    // 曲线编辑器状态
+    /// 当前选中的曲线通道索引：0=RGB, 1=R, 2=G, 3=B, 4=C, 5=M, 6=Y
+    pub(super) curve_channel: usize,
+    /// 用户编辑的渐变曲线控制点 [7通道][N个(x,y,flag)]
+    pub(super) curve_points: Vec<Vec<(i64, i64, i64)>>,
+    /// 当前正在拖拽的控制点索引
+    pub(super) curve_dragging: Option<usize>,
 }
 
 // ─── 字体加载 ───────────────────────────────────────────────────────────────
