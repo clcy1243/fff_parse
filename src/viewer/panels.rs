@@ -942,6 +942,33 @@ impl FffViewerApp {
             }
             // 提取渐变曲线开关
             self.manual_adjust.apply_curves = correction.apply_curves && !correction.gradations.is_empty();
+            // 提取 USM 锐化参数
+            self.manual_adjust.apply_usm = correction.apply_usm;
+            self.manual_adjust.usm_amount = correction.usm_amount;
+            self.manual_adjust.usm_radius = correction.usm_radius;
+            self.manual_adjust.usm_dark_limit = correction.usm_dark_limit;
+            self.manual_adjust.usm_noise_limit = correction.usm_noise_limit;
+            if correction.usm_col_factor.len() >= 3 {
+                self.manual_adjust.usm_col_factor = [
+                    correction.usm_col_factor[0],
+                    correction.usm_col_factor[1],
+                    correction.usm_col_factor[2],
+                ];
+            }
+            // 提取除尘参数
+            self.manual_adjust.apply_dust = correction.apply_dust;
+            self.manual_adjust.dust_level = correction.dust_level;
+            // 提取色彩噪声滤镜参数
+            self.manual_adjust.apply_cn_filter = correction.apply_cn_filter;
+            self.manual_adjust.color_noise_radius = correction.color_noise_radius;
+            self.manual_adjust.noise_filter_bias = correction.noise_filter_bias;
+            // 提取镜头/暗角校正参数
+            self.manual_adjust.lens_correction = correction.lens_correction;
+            self.manual_adjust.vignette_amount = correction.vignette_amount;
+            // 提取阴影增强与色偏去除参数
+            self.manual_adjust.enhanced_shadow = correction.enhanced_shadow;
+            self.manual_adjust.remove_cast_highlight = correction.remove_cast_highlight;
+            self.manual_adjust.remove_cast_shadow = correction.remove_cast_shadow;
             // 加载渐变曲线控制点到编辑器
             if !correction.gradations.is_empty() {
                 self.curve_points = correction.gradations.clone();
@@ -2029,6 +2056,156 @@ impl FffViewerApp {
                         }
                         ui.end_row();
                     }
+                });
+
+            // ── USM 锐化 / 除尘 / 降噪 / 镜头校正 / 阴影增强 ──
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.sharpening_usm).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut adj.apply_usm, "").changed() { rebuild = true; }
+                        ui.label(s.enabled);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.amount);
+                        let mut val = adj.usm_amount as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=500).text("")).changed() {
+                            adj.usm_amount = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.radius);
+                        let mut val = adj.usm_radius as i32;
+                        if ui.add(egui::Slider::new(&mut val, 1..=20).text("")).changed() {
+                            adj.usm_radius = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.dark_limit);
+                        let mut val = adj.usm_dark_limit as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=255).text("")).changed() {
+                            adj.usm_dark_limit = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.noise_limit);
+                        let mut val = adj.usm_noise_limit as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=255).text("")).changed() {
+                            adj.usm_noise_limit = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ USM sharpening not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.dust_removal).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut adj.apply_dust, "").changed() { rebuild = true; }
+                        ui.label(s.enabled);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.dust_level);
+                        let mut val = adj.dust_level as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=100).text("")).changed() {
+                            adj.dust_level = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Dust removal not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.noise_filter).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut adj.apply_cn_filter, "").changed() { rebuild = true; }
+                        ui.label(s.enabled);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.noise_radius);
+                        let mut val = adj.color_noise_radius as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=20).text("")).changed() {
+                            adj.color_noise_radius = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.noise_bias);
+                        let mut val = adj.noise_filter_bias as i32;
+                        if ui.add(egui::Slider::new(&mut val, -100..=100).text("")).changed() {
+                            adj.noise_filter_bias = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Noise filter not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.lens_correction).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(s.lens_correction);
+                        let mut val = adj.lens_correction as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=100).text("")).changed() {
+                            adj.lens_correction = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(s.vignette_amount);
+                        let mut val = adj.vignette_amount as i32;
+                        if ui.add(egui::Slider::new(&mut val, 0..=100).text("")).changed() {
+                            adj.vignette_amount = val as i64;
+                            rebuild = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Lens/vignette correction not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                });
+
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new(s.enhanced_shadow).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    if ui.checkbox(&mut adj.enhanced_shadow, s.enhanced_shadow).changed() { rebuild = true; }
+                    if ui.checkbox(&mut adj.remove_cast_highlight, s.rm_cast_highlight).changed() { rebuild = true; }
+                    if ui.checkbox(&mut adj.remove_cast_shadow, s.rm_cast_shadow).changed() { rebuild = true; }
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Shadow/cast processing not yet implemented")
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
                 });
         });
 
