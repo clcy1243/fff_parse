@@ -1172,7 +1172,7 @@ impl FffViewerApp {
     }
 
     /// 计算原始直方图（用于色阶调整的自动功能和显示）。
-    /// 数据源与渲染管线一致：曲线开启时使用 base_rgb（含曲线），关闭时使用 raw_rgb。
+    /// 直方图始终基于 raw_rgb（原始数据，不含渐变曲线），不受曲线调整影响。
     /// 处理后直方图在 rebuild_texture_from_base() 中从渲染结果计算。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
@@ -1650,6 +1650,7 @@ impl FffViewerApp {
                     let pts = &curve_points[ch];
 
                     // 限制拖拽范围：不能越过相邻控制点
+                    // 起点和终点仅锁定 x 坐标，y 坐标可自由调整
                     if drag_idx == 0 {
                         cx = 0; // 起点 x 固定为 0
                     } else if drag_idx == pts.len() - 1 {
