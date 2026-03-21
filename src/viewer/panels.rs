@@ -1174,14 +1174,9 @@ impl FffViewerApp {
             return;
         };
 
-        // 直方图数据源与色阶调整管线一致：
-        // 曲线开启时使用 base_rgb（ICC + 胶片处理 + 渐变曲线），
-        // 曲线关闭时使用 raw_rgb（ICC + 胶片处理，无渐变曲线）。
-        let source_img = if self.manual_adjust.apply_curves {
-            detail.base_rgb.as_ref()
-        } else {
-            detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref())
-        };
+        // 直方图始终基于 raw_rgb（ICC + 胶片处理，不含渐变曲线），
+        // 反映原始像素分布，不受曲线调整影响。
+        let source_img = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
 
         let Some(base) = source_img else {
             self.histogram_raw = None;
@@ -1505,7 +1500,6 @@ impl FffViewerApp {
         }
 
         let mut rebuild = false;
-        let mut curves_toggled = false;
 
         let adjust_heading = s.adjust_heading;
         let reset_adjust = s.reset_adjust;
@@ -1657,10 +1651,9 @@ impl FffViewerApp {
         egui::ScrollArea::vertical().id_salt("adjust_sliders").show(ui, |ui| {
             let adj = &mut self.manual_adjust;
 
-            // 渐变曲线开关（切换后需重算直方图，因为数据源随之改变）
+            // 渐变曲线开关（直方图始终显示原始数据，不随曲线变化）
             if ui.checkbox(&mut adj.apply_curves, s.gradation_curves).changed() {
                 rebuild = true;
-                curves_toggled = true;
             }
             ui.add_space(4.0);
 
@@ -1807,9 +1800,6 @@ impl FffViewerApp {
                 });
         });
 
-        if curves_toggled {
-            self.histogram_needs_update = true;
-        }
         if rebuild {
             self.rebuild_texture_from_base(ctx);
             self.save_sidecar();
