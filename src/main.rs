@@ -1,5 +1,8 @@
 //! FFF Viewer 应用程序入口，基于 egui/eframe 构建的 Flextight X5 扫描仪文件查看器。
 
+// Windows: 隐藏控制台窗口（双击运行 .exe 时不弹出黑色终端）
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod viewer;
 
 use std::io::Write;
