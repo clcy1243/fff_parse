@@ -1863,6 +1863,9 @@ impl FffViewerApp {
 
         ui.add_space(2.0);
 
+        // ── 整个调整区域放入可滚动容器 ──
+        egui::ScrollArea::vertical().id_salt("adjust_scroll").show(ui, |ui| {
+
         // ── 原始直方图色阶（可调整） ──
         if ui.checkbox(&mut self.manual_adjust.apply_levels, s.histogram_levels).changed() {
             rebuild = true;
@@ -1884,21 +1887,27 @@ impl FffViewerApp {
             let lvl_idx = levels_idx[section_pos];
             let hist = hist_raw_data.as_ref().map(|hd| &hd[*hist_ch]);
             let section_id = ui.id().with(section_pos);
-            if Self::render_levels_section(
-                ui,
-                section_id,
-                title,
-                hist,
-                *bar_color,
-                auto_bw[section_pos],
-                &mut self.manual_adjust.levels_black[lvl_idx],
-                &mut self.manual_adjust.levels_gamma[lvl_idx],
-                &mut self.manual_adjust.levels_white[lvl_idx],
-                config::HistogramScale::from_str(&self.app_config.histogram_scale),
-            ) {
-                rebuild = true;
-            }
-            ui.add_space(4.0);
+            // RGB 通道默认展开，其余默认折叠
+            let default_open = section_pos == 0;
+            egui::CollapsingHeader::new(egui::RichText::new(*title).small().strong())
+                .id_salt(format!("levels_{}", section_pos))
+                .default_open(default_open)
+                .show(ui, |ui| {
+                    if Self::render_levels_section(
+                        ui,
+                        section_id,
+                        title,
+                        hist,
+                        *bar_color,
+                        auto_bw[section_pos],
+                        &mut self.manual_adjust.levels_black[lvl_idx],
+                        &mut self.manual_adjust.levels_gamma[lvl_idx],
+                        &mut self.manual_adjust.levels_white[lvl_idx],
+                        config::HistogramScale::from_str(&self.app_config.histogram_scale),
+                    ) {
+                        rebuild = true;
+                    }
+                });
         }
 
         ui.separator();
@@ -1920,8 +1929,8 @@ impl FffViewerApp {
         ui.separator();
         ui.add_space(4.0);
 
-        // ── Basic adjustment sliders (scrollable) ───────────────────────
-        egui::ScrollArea::vertical().id_salt("adjust_sliders").show(ui, |ui| {
+        // ── Basic adjustment sliders ───────────────────────
+        {
             // 渐变曲线开关（直方图始终显示原始数据，不随曲线变化）
             if ui.checkbox(&mut self.manual_adjust.apply_curves, s.gradation_curves).changed() {
                 rebuild = true;
@@ -2236,7 +2245,9 @@ impl FffViewerApp {
                             .color(ui.visuals().warn_fg_color),
                     );
                 });
-        });
+        }
+
+        }); // ScrollArea
 
         if rebuild {
             self.rebuild_texture_from_base(ctx);
