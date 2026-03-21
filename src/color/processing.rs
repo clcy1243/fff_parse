@@ -276,6 +276,285 @@ pub fn apply_film_curve_lut(
 
 // ─── Gradation Curves ───────────────────────────────────────────────────────
 
+/// 曲线插值方法。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurveMethod {
+    /// 单调三次 Hermite (Fritsch-Carlson) — 保证不过冲
+    MonotoneHermite,
+    /// Catmull-Rom 样条 — 常用于图形/照片软件
+    CatmullRom,
+    /// 自然三次样条 — 经典数学样条，全局光滑
+    NaturalCubic,
+    /// 线性插值 — 最简单的折线
+    Linear,
+    /// Akima 样条 — 局部方法，避免抖动
+    Akima,
+}
+
+impl CurveMethod {
+    pub const ALL: [CurveMethod; 5] = [
+        CurveMethod::MonotoneHermite,
+        CurveMethod::CatmullRom,
+        CurveMethod::NaturalCubic,
+        CurveMethod::Linear,
+        CurveMethod::Akima,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            CurveMethod::MonotoneHermite => "Monotone Hermite",
+            CurveMethod::CatmullRom => "Catmull-Rom",
+            CurveMethod::NaturalCubic => "Natural Cubic",
+            CurveMethod::Linear => "Linear",
+            CurveMethod::Akima => "Akima",
+        }
+    }
+}
+
+/// 从控制点构建 256 级查找表，使用指定的插值方法。
+pub fn build_curve_lut_with_method(points: &[(i64, i64, i64)], method: CurveMethod) -> [u8; 256] {
+    match method {
+        CurveMethod::MonotoneHermite => build_curve_lut(points),
+        CurveMethod::CatmullRom => build_curve_lut_catmull_rom(points),
+        CurveMethod::NaturalCubic => build_curve_lut_natural_cubic(points),
+        CurveMethod::Linear => build_curve_lut_linear(points),
+        CurveMethod::Akima => build_curve_lut_akima(points),
+    }
+}
+
+/// 预处理控制点：转 f64、排序、去重。
+fn prepare_points(points: &[(i64, i64, i64)]) -> Vec<(f64, f64)> {
+    let mut pts: Vec<(f64, f64)> = points.iter()
+        .map(|&(x, y, _)| (x as f64, y as f64))
+        .collect();
+    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    pts.dedup_by(|a, b| (a.0 - b.0).abs() < 0.5);
+    pts
+}
+
+/// 用 Hermite 基函数对区间 [lo, hi] 插值。
+fn hermite_interp(x: f64, pts: &[(f64, f64)], m: &[f64], lo: usize, hi: usize) -> f64 {
+    let h = pts[hi].0 - pts[lo].0;
+    if h.abs() < 1e-10 { return pts[lo].1; }
+    let t = (x - pts[lo].0) / h;
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = t3 - 2.0 * t2 + t;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = t3 - t2;
+    h00 * pts[lo].1 + h10 * h * m[lo] + h01 * pts[hi].1 + h11 * h * m[hi]
+}
+
+/// 二分搜索找到 x 所在区间。
+fn find_segment(x: f64, pts: &[(f64, f64)]) -> (usize, usize) {
+    let n = pts.len();
+    let mut lo = 0;
+    let mut hi = n - 1;
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
+    }
+    (lo, hi)
+}
+
+/// 为所有 256 个值生成 LUT，给定点集和每点切线。
+fn fill_lut_hermite(pts: &[(f64, f64)], m: &[f64]) -> [u8; 256] {
+    let mut lut = [0u8; 256];
+    let n = pts.len();
+    for i in 0..256 {
+        let x = i as f64;
+        if x <= pts[0].0 {
+            lut[i] = pts[0].1.clamp(0.0, 255.0) as u8;
+        } else if x >= pts[n - 1].0 {
+            lut[i] = pts[n - 1].1.clamp(0.0, 255.0) as u8;
+        } else {
+            let (lo, hi) = find_segment(x, pts);
+            let y = hermite_interp(x, pts, m, lo, hi);
+            lut[i] = y.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    lut
+}
+
+// ─── Catmull-Rom ─────────────────────────────────────────────────────────────
+
+fn build_curve_lut_catmull_rom(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 {
+        let mut lut = [0u8; 256];
+        for i in 0..256 { lut[i] = i as u8; }
+        return lut;
+    }
+    // Catmull-Rom 切线：m[k] = (y[k+1] - y[k-1]) / (x[k+1] - x[k-1])
+    let mut m = vec![0.0f64; n];
+    for k in 0..n {
+        if k == 0 {
+            m[k] = (pts[1].1 - pts[0].1) / (pts[1].0 - pts[0].0).max(1e-10);
+        } else if k == n - 1 {
+            m[k] = (pts[n - 1].1 - pts[n - 2].1) / (pts[n - 1].0 - pts[n - 2].0).max(1e-10);
+        } else {
+            let dx = pts[k + 1].0 - pts[k - 1].0;
+            m[k] = if dx.abs() < 1e-10 { 0.0 } else { (pts[k + 1].1 - pts[k - 1].1) / dx };
+        }
+    }
+    fill_lut_hermite(&pts, &m)
+}
+
+// ─── Natural Cubic Spline ────────────────────────────────────────────────────
+
+fn build_curve_lut_natural_cubic(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 {
+        let mut lut = [0u8; 256];
+        for i in 0..256 { lut[i] = i as u8; }
+        return lut;
+    }
+    if n == 2 {
+        return build_curve_lut_linear(points);
+    }
+
+    // 求解自然三次样条系数（三对角方程组）
+    let m = n - 1; // 区间数
+    let mut h = vec![0.0f64; m];
+    for i in 0..m { h[i] = pts[i + 1].0 - pts[i].0; }
+
+    // 构建三对角系统求二阶导数 sigma
+    let sys_n = n - 2;
+    let mut a = vec![0.0f64; sys_n]; // 下对角
+    let mut b = vec![0.0f64; sys_n]; // 主对角
+    let mut c = vec![0.0f64; sys_n]; // 上对角
+    let mut d = vec![0.0f64; sys_n]; // 右侧
+
+    for i in 0..sys_n {
+        let ii = i + 1; // 对应 pts 索引
+        if i > 0 { a[i] = h[ii - 1]; }
+        b[i] = 2.0 * (h[ii - 1] + h[ii]);
+        if i < sys_n - 1 { c[i] = h[ii]; }
+        d[i] = 6.0 * ((pts[ii + 1].1 - pts[ii].1) / h[ii] - (pts[ii].1 - pts[ii - 1].1) / h[ii - 1]);
+    }
+
+    // Thomas 算法（追赶法）
+    for i in 1..sys_n {
+        let w = a[i] / b[i - 1];
+        b[i] -= w * c[i - 1];
+        d[i] -= w * d[i - 1];
+    }
+    let mut sigma = vec![0.0f64; n]; // 自然边界条件：sigma[0]=sigma[n-1]=0
+    if sys_n > 0 {
+        sigma[sys_n] = d[sys_n - 1] / b[sys_n - 1];
+        for i in (0..sys_n - 1).rev() {
+            sigma[i + 1] = (d[i] - c[i] * sigma[i + 2]) / b[i];
+        }
+    }
+
+    // 生成 LUT
+    let mut lut = [0u8; 256];
+    for i in 0..256 {
+        let x = i as f64;
+        if x <= pts[0].0 {
+            lut[i] = pts[0].1.clamp(0.0, 255.0) as u8;
+            continue;
+        }
+        if x >= pts[n - 1].0 {
+            lut[i] = pts[n - 1].1.clamp(0.0, 255.0) as u8;
+            continue;
+        }
+        let (lo, hi) = find_segment(x, &pts);
+        let hi_x = pts[hi].0 - x;
+        let lo_x = x - pts[lo].0;
+        let hh = h[lo];
+        let y = sigma[lo] * hi_x.powi(3) / (6.0 * hh)
+            + sigma[hi] * lo_x.powi(3) / (6.0 * hh)
+            + (pts[lo].1 / hh - sigma[lo] * hh / 6.0) * hi_x
+            + (pts[hi].1 / hh - sigma[hi] * hh / 6.0) * lo_x;
+        lut[i] = y.round().clamp(0.0, 255.0) as u8;
+    }
+    lut
+}
+
+// ─── Linear ──────────────────────────────────────────────────────────────────
+
+fn build_curve_lut_linear(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    let mut lut = [0u8; 256];
+    if n < 2 {
+        for i in 0..256 { lut[i] = i as u8; }
+        return lut;
+    }
+    for i in 0..256 {
+        let x = i as f64;
+        if x <= pts[0].0 {
+            lut[i] = pts[0].1.clamp(0.0, 255.0) as u8;
+        } else if x >= pts[n - 1].0 {
+            lut[i] = pts[n - 1].1.clamp(0.0, 255.0) as u8;
+        } else {
+            let (lo, hi) = find_segment(x, &pts);
+            let dx = pts[hi].0 - pts[lo].0;
+            let t = if dx.abs() < 1e-10 { 0.0 } else { (x - pts[lo].0) / dx };
+            let y = pts[lo].1 * (1.0 - t) + pts[hi].1 * t;
+            lut[i] = y.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    lut
+}
+
+// ─── Akima ───────────────────────────────────────────────────────────────────
+
+fn build_curve_lut_akima(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 {
+        let mut lut = [0u8; 256];
+        for i in 0..256 { lut[i] = i as u8; }
+        return lut;
+    }
+    if n <= 3 {
+        return build_curve_lut_catmull_rom(points);
+    }
+
+    // 计算差商
+    let nm1 = n - 1;
+    let mut d = vec![0.0f64; nm1];
+    for i in 0..nm1 {
+        let dx = pts[i + 1].0 - pts[i].0;
+        d[i] = if dx.abs() < 1e-10 { 0.0 } else { (pts[i + 1].1 - pts[i].1) / dx };
+    }
+
+    // 扩展差商（边界外推）
+    let d_m2 = 2.0 * d[0] - d[1];
+    let d_m1 = 2.0 * d[0] - d_m2;
+    let d_np1 = 2.0 * d[nm1 - 1] - d[nm1 - 2];
+    let d_np2 = 2.0 * d_np1 - d[nm1 - 1];
+
+    let ext_d: Vec<f64> = std::iter::once(d_m1)
+        .chain(std::iter::once(d_m2))
+        .chain(d.iter().copied())
+        .chain(std::iter::once(d_np1))
+        .chain(std::iter::once(d_np2))
+        .collect();
+
+    // Akima 切线
+    let mut m = vec![0.0f64; n];
+    for i in 0..n {
+        let ei = i + 2; // ext_d 中对应 d[i-2]..d[i+1]
+        let w1 = (ext_d[ei + 1] - ext_d[ei]).abs();
+        let w2 = (ext_d[ei - 1] - ext_d[ei - 2]).abs();
+        if (w1 + w2).abs() < 1e-10 {
+            m[i] = (ext_d[ei - 1] + ext_d[ei]) / 2.0;
+        } else {
+            m[i] = (w1 * ext_d[ei - 1] + w2 * ext_d[ei]) / (w1 + w2);
+        }
+    }
+
+    fill_lut_hermite(&pts, &m)
+}
+
+// ─── Monotone Hermite (Fritsch-Carlson) ──────────────────────────────────────
+
 /// 用单调三次 Hermite 插值从控制点构建 256 级查找表。
 ///
 /// 控制点格式：(x, y, flag)，x/y 均为 0-255 范围。
@@ -377,7 +656,7 @@ pub fn build_curve_lut(points: &[(i64, i64, i64)]) -> [u8; 256] {
 ///
 /// 渐变曲线通道顺序：[RGB主通道, R, G, B, C(青), M(品红), Y(黄)]
 /// 应用顺序：先逐通道 R/G/B → CMY（反转通道）→ 主通道 RGB
-pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64, i64, i64)>]) -> image::DynamicImage {
+pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64, i64, i64)>], method: CurveMethod) -> image::DynamicImage {
     if gradations.len() < 7 { return img.clone(); }
 
     let is_identity = |pts: &[(i64, i64, i64)]| -> bool {
@@ -386,13 +665,13 @@ pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64,
     };
     if gradations.iter().all(|ch| is_identity(ch)) { return img.clone(); }
 
-    let lut_rgb = build_curve_lut(&gradations[0]);
-    let lut_r   = build_curve_lut(&gradations[1]);
-    let lut_g   = build_curve_lut(&gradations[2]);
-    let lut_b   = build_curve_lut(&gradations[3]);
-    let lut_c   = build_curve_lut(&gradations[4]);
-    let lut_m   = build_curve_lut(&gradations[5]);
-    let lut_y   = build_curve_lut(&gradations[6]);
+    let lut_rgb = build_curve_lut_with_method(&gradations[0], method);
+    let lut_r   = build_curve_lut_with_method(&gradations[1], method);
+    let lut_g   = build_curve_lut_with_method(&gradations[2], method);
+    let lut_b   = build_curve_lut_with_method(&gradations[3], method);
+    let lut_c   = build_curve_lut_with_method(&gradations[4], method);
+    let lut_m   = build_curve_lut_with_method(&gradations[5], method);
+    let lut_y   = build_curve_lut_with_method(&gradations[6], method);
 
     match img {
         image::DynamicImage::ImageRgb16(rgb16) => {
@@ -592,7 +871,7 @@ mod tests {
         let identity_grads: Vec<Vec<(i64, i64, i64)>> = (0..7)
             .map(|_| vec![(0, 0, 0), (255, 255, 0)])
             .collect();
-        let result = apply_gradation_curves(&img, &identity_grads);
+        let result = apply_gradation_curves(&img, &identity_grads, CurveMethod::MonotoneHermite);
         let out = result.to_rgb8();
         assert_eq!(out.as_raw(), &pixels);
     }

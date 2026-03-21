@@ -139,6 +139,7 @@ impl FffViewerApp {
             icc_data,
             target_color_space: self.target_color_space,
             manual_adjust: self.manual_adjust.clone(),
+            curve_method: self.curve_method,
         }
     }
 
@@ -196,7 +197,7 @@ impl FffViewerApp {
 
             // 渐变曲线
             if correction.apply_curves && !correction.gradations.is_empty() {
-                img = color::apply_gradation_curves(&img, &correction.gradations);
+                img = color::apply_gradation_curves(&img, &correction.gradations, pipeline.curve_method);
             }
         }
 
@@ -682,7 +683,7 @@ impl FffViewerApp {
             img = color::apply_film_processing(&img, &film_corr);
 
             if correction.apply_curves && !correction.gradations.is_empty() {
-                img = color::apply_gradation_curves(&img, &correction.gradations);
+                img = color::apply_gradation_curves(&img, &correction.gradations, pipeline.curve_method);
             }
         }
         if !pipeline.manual_adjust.is_identity() {
