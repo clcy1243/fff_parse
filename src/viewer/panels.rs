@@ -2426,7 +2426,10 @@ impl FffViewerApp {
             #[cfg(target_os = "windows")]
             {
                 let _ = std::process::Command::new("cmd")
-                    .args(["/c", "start", "", &path.to_string_lossy()])
+                    .arg("/c")
+                    .arg("start")
+                    .arg("")
+                    .arg(path)
                     .spawn();
             }
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
