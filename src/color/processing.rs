@@ -279,34 +279,34 @@ pub fn apply_film_curve_lut(
 /// 曲线插值方法。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CurveMethod {
-    /// 单调三次 Hermite (Fritsch-Carlson) — 保证不过冲
-    MonotoneHermite,
-    /// Catmull-Rom 样条 — 常用于图形/照片软件
+    /// Clamped Cubic B-Spline — 经过首尾点的逼近曲线
+    BSplineClamped,
+    /// Uniform Cubic B-Spline — 均匀三次 B 样条
+    BSplineUniform,
+    /// Quadratic B-Spline — 二次 B 样条
+    BSplineQuadratic,
+    /// Catmull-Rom 样条 — 通过所有控制点
     CatmullRom,
-    /// 自然三次样条 — 经典数学样条，全局光滑
-    NaturalCubic,
-    /// 线性插值 — 最简单的折线
+    /// 线性插值 — 折线基准
     Linear,
-    /// Akima 样条 — 局部方法，避免抖动
-    Akima,
 }
 
 impl CurveMethod {
     pub const ALL: [CurveMethod; 5] = [
-        CurveMethod::MonotoneHermite,
+        CurveMethod::BSplineClamped,
+        CurveMethod::BSplineUniform,
+        CurveMethod::BSplineQuadratic,
         CurveMethod::CatmullRom,
-        CurveMethod::NaturalCubic,
         CurveMethod::Linear,
-        CurveMethod::Akima,
     ];
 
     pub fn label(&self) -> &'static str {
         match self {
-            CurveMethod::MonotoneHermite => "Monotone Hermite",
+            CurveMethod::BSplineClamped => "B-Spline (Clamped)",
+            CurveMethod::BSplineUniform => "B-Spline (Uniform)",
+            CurveMethod::BSplineQuadratic => "B-Spline (Quadratic)",
             CurveMethod::CatmullRom => "Catmull-Rom",
-            CurveMethod::NaturalCubic => "Natural Cubic",
             CurveMethod::Linear => "Linear",
-            CurveMethod::Akima => "Akima",
         }
     }
 }
@@ -314,11 +314,11 @@ impl CurveMethod {
 /// 从控制点构建 256 级查找表，使用指定的插值方法。
 pub fn build_curve_lut_with_method(points: &[(i64, i64, i64)], method: CurveMethod) -> [u8; 256] {
     match method {
-        CurveMethod::MonotoneHermite => build_curve_lut(points),
+        CurveMethod::BSplineClamped => build_curve_lut_bspline_clamped(points),
+        CurveMethod::BSplineUniform => build_curve_lut_bspline_uniform(points),
+        CurveMethod::BSplineQuadratic => build_curve_lut_bspline_quadratic(points),
         CurveMethod::CatmullRom => build_curve_lut_catmull_rom(points),
-        CurveMethod::NaturalCubic => build_curve_lut_natural_cubic(points),
         CurveMethod::Linear => build_curve_lut_linear(points),
-        CurveMethod::Akima => build_curve_lut_akima(points),
     }
 }
 
@@ -330,6 +330,243 @@ fn prepare_points(points: &[(i64, i64, i64)]) -> Vec<(f64, f64)> {
     pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     pts.dedup_by(|a, b| (a.0 - b.0).abs() < 0.5);
     pts
+}
+
+/// 二分搜索找到 x 所在区间。
+fn find_segment(x: f64, pts: &[(f64, f64)]) -> (usize, usize) {
+    let n = pts.len();
+    let mut lo = 0;
+    let mut hi = n - 1;
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
+    }
+    (lo, hi)
+}
+
+fn identity_lut() -> [u8; 256] {
+    let mut lut = [0u8; 256];
+    for i in 0..256 { lut[i] = i as u8; }
+    lut
+}
+
+// ─── Clamped Cubic B-Spline ─────────────────────────────────────────────────
+// 经过首尾控制点的三次 B 样条。通过在首尾重复节点实现端点插值。
+// 控制点不在曲线上（除首尾），曲线被控制点"吸引"。
+
+fn build_curve_lut_bspline_clamped(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 { return identity_lut(); }
+    if n == 2 { return build_curve_lut_linear(points); }
+
+    // Clamped B-Spline: 在首尾各重复 3 次节点
+    // 节点向量: [0,0,0, t1, t2, ..., tn-2, 1,1,1] (n+4 个节点，用于 n 个控制点)
+    // 参数化使用弦长参数
+    let total_len: f64 = (0..n - 1).map(|i| {
+        let dx = pts[i + 1].0 - pts[i].0;
+        let dy = pts[i + 1].1 - pts[i].1;
+        (dx * dx + dy * dy).sqrt().max(1.0)
+    }).sum();
+
+    // 累积弦长参数
+    let mut chord = vec![0.0f64; n];
+    for i in 1..n {
+        let dx = pts[i].0 - pts[i - 1].0;
+        let dy = pts[i].1 - pts[i - 1].1;
+        chord[i] = chord[i - 1] + (dx * dx + dy * dy).sqrt().max(1.0);
+    }
+    for i in 0..n { chord[i] /= total_len; }
+
+    // Clamped 节点向量
+    let k = 4; // order (degree 3 + 1)
+    let num_knots = n + k;
+    let mut knots = vec![0.0f64; num_knots];
+    // 前 k 个为 0，后 k 个为 1
+    for i in 0..k { knots[i] = 0.0; }
+    for i in (num_knots - k)..num_knots { knots[i] = 1.0; }
+    // 内部节点：使用平均参数法
+    for j in 1..=(n - k) {
+        let mut sum = 0.0;
+        for i in j..(j + k - 1) {
+            sum += chord[i];
+        }
+        knots[j + k - 1] = sum / (k - 1) as f64;
+    }
+
+    // De Boor 算法求值
+    let sample_bspline = |t: f64| -> (f64, f64) {
+        let t = t.clamp(0.0, 1.0 - 1e-10);
+        // 找到 t 所在的节点区间
+        let mut span = k - 1;
+        for i in k..num_knots - k {
+            if knots[i] <= t && t < knots[i + 1] { span = i; break; }
+        }
+
+        // De Boor 递归
+        let mut dx = vec![0.0f64; k];
+        let mut dy = vec![0.0f64; k];
+        for j in 0..k {
+            let idx = (span as isize - (k as isize - 1) + j as isize) as usize;
+            let idx = idx.min(n - 1);
+            dx[j] = pts[idx].0;
+            dy[j] = pts[idx].1;
+        }
+
+        for r in 1..k {
+            for j in (r..k).rev() {
+                let left = span + j - (k - 1);
+                let right = span + j - r + 1;
+                if right >= num_knots || left >= num_knots { continue; }
+                let denom = knots[right] - knots[left];
+                let alpha = if denom.abs() < 1e-10 { 0.5 } else { (t - knots[left]) / denom };
+                dx[j] = (1.0 - alpha) * dx[j - 1] + alpha * dx[j];
+                dy[j] = (1.0 - alpha) * dy[j - 1] + alpha * dy[j];
+            }
+        }
+
+        (dx[k - 1], dy[k - 1])
+    };
+
+    // 采样足够多的点，然后映射到 LUT
+    let num_samples = 1024;
+    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
+    for i in 0..num_samples {
+        let t = i as f64 / (num_samples - 1) as f64;
+        samples.push(sample_bspline(t));
+    }
+
+    // 从采样点构建 LUT（x → y 映射）
+    let mut lut = [0u8; 256];
+    for i in 0..256 {
+        let x = i as f64;
+        // 找到最近的采样点
+        let mut best_y = if x <= samples[0].0 { samples[0].1 }
+            else if x >= samples[num_samples - 1].0 { samples[num_samples - 1].1 }
+            else {
+                // 二分查找
+                let mut lo = 0;
+                let mut hi = num_samples - 1;
+                while hi - lo > 1 {
+                    let mid = (lo + hi) / 2;
+                    if samples[mid].0 <= x { lo = mid; } else { hi = mid; }
+                }
+                let dx = samples[hi].0 - samples[lo].0;
+                if dx.abs() < 1e-10 { samples[lo].1 }
+                else {
+                    let t = (x - samples[lo].0) / dx;
+                    samples[lo].1 * (1.0 - t) + samples[hi].1 * t
+                }
+            };
+        lut[i] = best_y.round().clamp(0.0, 255.0) as u8;
+    }
+    lut
+}
+
+// ─── Uniform Cubic B-Spline ─────────────────────────────────────────────────
+// 均匀三次 B 样条，控制点不在曲线上（全部），使用均匀节点。
+
+fn build_curve_lut_bspline_uniform(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 { return identity_lut(); }
+    if n == 2 { return build_curve_lut_linear(points); }
+    if n == 3 {
+        // 对 3 个点退化为 quadratic
+        return build_curve_lut_bspline_quadratic(points);
+    }
+
+    // 均匀三次 B 样条基函数（局部参数 t ∈ [0,1]）
+    // N0(t) = (1 - t)^3 / 6
+    // N1(t) = (3t^3 - 6t^2 + 4) / 6
+    // N2(t) = (-3t^3 + 3t^2 + 3t + 1) / 6
+    // N3(t) = t^3 / 6
+    let basis = |t: f64| -> [f64; 4] {
+        let t2 = t * t;
+        let t3 = t2 * t;
+        [
+            (1.0 - t).powi(3) / 6.0,
+            (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0,
+            (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0,
+            t3 / 6.0,
+        ]
+    };
+
+    let num_seg = n - 3; // 有效段数
+    let num_samples = 1024;
+    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
+
+    for s in 0..num_samples {
+        let u = s as f64 / (num_samples - 1) as f64 * num_seg as f64;
+        let seg = (u.floor() as usize).min(num_seg - 1);
+        let t = u - seg as f64;
+        let b = basis(t);
+        let x = b[0] * pts[seg].0 + b[1] * pts[seg + 1].0 + b[2] * pts[seg + 2].0 + b[3] * pts[seg + 3].0;
+        let y = b[0] * pts[seg].1 + b[1] * pts[seg + 1].1 + b[2] * pts[seg + 2].1 + b[3] * pts[seg + 3].1;
+        samples.push((x, y));
+    }
+
+    samples_to_lut(&samples)
+}
+
+// ─── Quadratic B-Spline ─────────────────────────────────────────────────────
+
+fn build_curve_lut_bspline_quadratic(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 { return identity_lut(); }
+    if n == 2 { return build_curve_lut_linear(points); }
+
+    // 均匀二次 B 样条基函数
+    // N0(t) = (1-t)^2 / 2
+    // N1(t) = (-2t^2 + 2t + 1) / 2
+    // N2(t) = t^2 / 2
+    let basis = |t: f64| -> [f64; 3] {
+        let t2 = t * t;
+        [
+            (1.0 - t).powi(2) / 2.0,
+            (-2.0 * t2 + 2.0 * t + 1.0) / 2.0,
+            t2 / 2.0,
+        ]
+    };
+
+    let num_seg = n - 2;
+    let num_samples = 1024;
+    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
+
+    for s in 0..num_samples {
+        let u = s as f64 / (num_samples - 1) as f64 * num_seg as f64;
+        let seg = (u.floor() as usize).min(num_seg - 1);
+        let t = u - seg as f64;
+        let b = basis(t);
+        let x = b[0] * pts[seg].0 + b[1] * pts[seg + 1].0 + b[2] * pts[seg + 2].0;
+        let y = b[0] * pts[seg].1 + b[1] * pts[seg + 1].1 + b[2] * pts[seg + 2].1;
+        samples.push((x, y));
+    }
+
+    samples_to_lut(&samples)
+}
+
+// ─── Catmull-Rom ─────────────────────────────────────────────────────────────
+
+fn build_curve_lut_catmull_rom(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 { return identity_lut(); }
+    if n == 2 { return build_curve_lut_linear(points); }
+
+    let mut m = vec![0.0f64; n];
+    for k in 0..n {
+        if k == 0 {
+            m[k] = (pts[1].1 - pts[0].1) / (pts[1].0 - pts[0].0).max(1e-10);
+        } else if k == n - 1 {
+            m[k] = (pts[n - 1].1 - pts[n - 2].1) / (pts[n - 1].0 - pts[n - 2].0).max(1e-10);
+        } else {
+            let dx = pts[k + 1].0 - pts[k - 1].0;
+            m[k] = if dx.abs() < 1e-10 { 0.0 } else { (pts[k + 1].1 - pts[k - 1].1) / dx };
+        }
+    }
+    fill_lut_hermite(&pts, &m)
 }
 
 /// 用 Hermite 基函数对区间 [lo, hi] 插值。
@@ -344,18 +581,6 @@ fn hermite_interp(x: f64, pts: &[(f64, f64)], m: &[f64], lo: usize, hi: usize) -
     let h01 = -2.0 * t3 + 3.0 * t2;
     let h11 = t3 - t2;
     h00 * pts[lo].1 + h10 * h * m[lo] + h01 * pts[hi].1 + h11 * h * m[hi]
-}
-
-/// 二分搜索找到 x 所在区间。
-fn find_segment(x: f64, pts: &[(f64, f64)]) -> (usize, usize) {
-    let n = pts.len();
-    let mut lo = 0;
-    let mut hi = n - 1;
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
-    }
-    (lo, hi)
 }
 
 /// 为所有 256 个值生成 LUT，给定点集和每点切线。
@@ -377,114 +602,13 @@ fn fill_lut_hermite(pts: &[(f64, f64)], m: &[f64]) -> [u8; 256] {
     lut
 }
 
-// ─── Catmull-Rom ─────────────────────────────────────────────────────────────
-
-fn build_curve_lut_catmull_rom(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 {
-        let mut lut = [0u8; 256];
-        for i in 0..256 { lut[i] = i as u8; }
-        return lut;
-    }
-    // Catmull-Rom 切线：m[k] = (y[k+1] - y[k-1]) / (x[k+1] - x[k-1])
-    let mut m = vec![0.0f64; n];
-    for k in 0..n {
-        if k == 0 {
-            m[k] = (pts[1].1 - pts[0].1) / (pts[1].0 - pts[0].0).max(1e-10);
-        } else if k == n - 1 {
-            m[k] = (pts[n - 1].1 - pts[n - 2].1) / (pts[n - 1].0 - pts[n - 2].0).max(1e-10);
-        } else {
-            let dx = pts[k + 1].0 - pts[k - 1].0;
-            m[k] = if dx.abs() < 1e-10 { 0.0 } else { (pts[k + 1].1 - pts[k - 1].1) / dx };
-        }
-    }
-    fill_lut_hermite(&pts, &m)
-}
-
-// ─── Natural Cubic Spline ────────────────────────────────────────────────────
-
-fn build_curve_lut_natural_cubic(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 {
-        let mut lut = [0u8; 256];
-        for i in 0..256 { lut[i] = i as u8; }
-        return lut;
-    }
-    if n == 2 {
-        return build_curve_lut_linear(points);
-    }
-
-    // 求解自然三次样条系数（三对角方程组）
-    let m = n - 1; // 区间数
-    let mut h = vec![0.0f64; m];
-    for i in 0..m { h[i] = pts[i + 1].0 - pts[i].0; }
-
-    // 构建三对角系统求二阶导数 sigma
-    let sys_n = n - 2;
-    let mut a = vec![0.0f64; sys_n]; // 下对角
-    let mut b = vec![0.0f64; sys_n]; // 主对角
-    let mut c = vec![0.0f64; sys_n]; // 上对角
-    let mut d = vec![0.0f64; sys_n]; // 右侧
-
-    for i in 0..sys_n {
-        let ii = i + 1; // 对应 pts 索引
-        if i > 0 { a[i] = h[ii - 1]; }
-        b[i] = 2.0 * (h[ii - 1] + h[ii]);
-        if i < sys_n - 1 { c[i] = h[ii]; }
-        d[i] = 6.0 * ((pts[ii + 1].1 - pts[ii].1) / h[ii] - (pts[ii].1 - pts[ii - 1].1) / h[ii - 1]);
-    }
-
-    // Thomas 算法（追赶法）
-    for i in 1..sys_n {
-        let w = a[i] / b[i - 1];
-        b[i] -= w * c[i - 1];
-        d[i] -= w * d[i - 1];
-    }
-    let mut sigma = vec![0.0f64; n]; // 自然边界条件：sigma[0]=sigma[n-1]=0
-    if sys_n > 0 {
-        sigma[sys_n] = d[sys_n - 1] / b[sys_n - 1];
-        for i in (0..sys_n - 1).rev() {
-            sigma[i + 1] = (d[i] - c[i] * sigma[i + 2]) / b[i];
-        }
-    }
-
-    // 生成 LUT
-    let mut lut = [0u8; 256];
-    for i in 0..256 {
-        let x = i as f64;
-        if x <= pts[0].0 {
-            lut[i] = pts[0].1.clamp(0.0, 255.0) as u8;
-            continue;
-        }
-        if x >= pts[n - 1].0 {
-            lut[i] = pts[n - 1].1.clamp(0.0, 255.0) as u8;
-            continue;
-        }
-        let (lo, hi) = find_segment(x, &pts);
-        let hi_x = pts[hi].0 - x;
-        let lo_x = x - pts[lo].0;
-        let hh = h[lo];
-        let y = sigma[lo] * hi_x.powi(3) / (6.0 * hh)
-            + sigma[hi] * lo_x.powi(3) / (6.0 * hh)
-            + (pts[lo].1 / hh - sigma[lo] * hh / 6.0) * hi_x
-            + (pts[hi].1 / hh - sigma[hi] * hh / 6.0) * lo_x;
-        lut[i] = y.round().clamp(0.0, 255.0) as u8;
-    }
-    lut
-}
-
 // ─── Linear ──────────────────────────────────────────────────────────────────
 
 fn build_curve_lut_linear(points: &[(i64, i64, i64)]) -> [u8; 256] {
     let pts = prepare_points(points);
     let n = pts.len();
+    if n < 2 { return identity_lut(); }
     let mut lut = [0u8; 256];
-    if n < 2 {
-        for i in 0..256 { lut[i] = i as u8; }
-        return lut;
-    }
     for i in 0..256 {
         let x = i as f64;
         if x <= pts[0].0 {
@@ -502,55 +626,36 @@ fn build_curve_lut_linear(points: &[(i64, i64, i64)]) -> [u8; 256] {
     lut
 }
 
-// ─── Akima ───────────────────────────────────────────────────────────────────
+// ─── 工具函数 ────────────────────────────────────────────────────────────────
 
-fn build_curve_lut_akima(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 {
-        let mut lut = [0u8; 256];
-        for i in 0..256 { lut[i] = i as u8; }
-        return lut;
-    }
-    if n <= 3 {
-        return build_curve_lut_catmull_rom(points);
-    }
-
-    // 计算差商
-    let nm1 = n - 1;
-    let mut d = vec![0.0f64; nm1];
-    for i in 0..nm1 {
-        let dx = pts[i + 1].0 - pts[i].0;
-        d[i] = if dx.abs() < 1e-10 { 0.0 } else { (pts[i + 1].1 - pts[i].1) / dx };
-    }
-
-    // 扩展差商（边界外推）
-    let d_m2 = 2.0 * d[0] - d[1];
-    let d_m1 = 2.0 * d[0] - d_m2;
-    let d_np1 = 2.0 * d[nm1 - 1] - d[nm1 - 2];
-    let d_np2 = 2.0 * d_np1 - d[nm1 - 1];
-
-    let ext_d: Vec<f64> = std::iter::once(d_m1)
-        .chain(std::iter::once(d_m2))
-        .chain(d.iter().copied())
-        .chain(std::iter::once(d_np1))
-        .chain(std::iter::once(d_np2))
-        .collect();
-
-    // Akima 切线
-    let mut m = vec![0.0f64; n];
-    for i in 0..n {
-        let ei = i + 2; // ext_d 中对应 d[i-2]..d[i+1]
-        let w1 = (ext_d[ei + 1] - ext_d[ei]).abs();
-        let w2 = (ext_d[ei - 1] - ext_d[ei - 2]).abs();
-        if (w1 + w2).abs() < 1e-10 {
-            m[i] = (ext_d[ei - 1] + ext_d[ei]) / 2.0;
+/// 从参数化采样点 (x, y) 构建 256 级 LUT。
+fn samples_to_lut(samples: &[(f64, f64)]) -> [u8; 256] {
+    let mut lut = [0u8; 256];
+    let ns = samples.len();
+    if ns == 0 { return identity_lut(); }
+    for i in 0..256 {
+        let x = i as f64;
+        let y = if x <= samples[0].0 {
+            samples[0].1
+        } else if x >= samples[ns - 1].0 {
+            samples[ns - 1].1
         } else {
-            m[i] = (w1 * ext_d[ei - 1] + w2 * ext_d[ei]) / (w1 + w2);
-        }
+            let mut lo = 0;
+            let mut hi = ns - 1;
+            while hi - lo > 1 {
+                let mid = (lo + hi) / 2;
+                if samples[mid].0 <= x { lo = mid; } else { hi = mid; }
+            }
+            let dx = samples[hi].0 - samples[lo].0;
+            if dx.abs() < 1e-10 { samples[lo].1 }
+            else {
+                let t = (x - samples[lo].0) / dx;
+                samples[lo].1 * (1.0 - t) + samples[hi].1 * t
+            }
+        };
+        lut[i] = y.round().clamp(0.0, 255.0) as u8;
     }
-
-    fill_lut_hermite(&pts, &m)
+    lut
 }
 
 // ─── Monotone Hermite (Fritsch-Carlson) ──────────────────────────────────────
@@ -871,7 +976,7 @@ mod tests {
         let identity_grads: Vec<Vec<(i64, i64, i64)>> = (0..7)
             .map(|_| vec![(0, 0, 0), (255, 255, 0)])
             .collect();
-        let result = apply_gradation_curves(&img, &identity_grads, CurveMethod::MonotoneHermite);
+        let result = apply_gradation_curves(&img, &identity_grads, CurveMethod::Linear);
         let out = result.to_rgb8();
         assert_eq!(out.as_raw(), &pixels);
     }
