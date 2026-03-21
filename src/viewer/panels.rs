@@ -2227,6 +2227,12 @@ impl FffViewerApp {
                     .arg(path)
                     .spawn();
             }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer")
+                    .arg(format!("/select,{}", path.display()))
+                    .spawn();
+            }
             #[cfg(target_os = "linux")]
             {
                 if let Some(dir) = path.parent() {
@@ -2236,7 +2242,20 @@ impl FffViewerApp {
             ui.close_menu();
         }
         if ui.button(s.ctx_open_default).clicked() {
-            let _ = std::process::Command::new("open").arg(path).spawn();
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(path).spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "start", "", &path.display().to_string()])
+                    .spawn();
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
+                let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+            }
             ui.close_menu();
         }
     }

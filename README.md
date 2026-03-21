@@ -39,8 +39,9 @@
 ## 系统要求
 
 - Rust 1.70+（推荐 1.94+）
-- macOS / Linux / Windows（egui 跨平台）
+- macOS / Windows / Linux（egui 跨平台）
 - Little CMS 2（`lcms2`，通过 Cargo 自动编译）
+- Windows 额外依赖：MSVC 构建工具链（通过 Visual Studio Build Tools 安装 "C++ 桌面开发" 工作负载）
 
 ## 构建与运行
 
@@ -51,22 +52,88 @@ cargo build --release
 # 直接运行
 cargo run --release --bin fff_viewer
 
-# 打开指定文件
+# 打开指定文件（macOS / Linux）
 cargo run --release --bin fff_viewer -- "/path/to/scan.fff"
+
+# 打开指定文件（Windows）
+cargo run --release --bin fff_viewer -- "C:\path\to\scan.fff"
 ```
 
-### macOS App 打包
+### macOS 打包发布
+
+构建后手动创建 `.app` 包：
 
 ```bash
-# 构建后手动创建 .app 包
+cargo build --release
+
 APP="FFF Viewer.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/fff_viewer "$APP/Contents/MacOS/"
 cp icons/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp -R profiles "$APP/Contents/Resources/profiles"
 cp -R settings "$APP/Contents/Resources/settings"
-# 添加 Info.plist（参见项目内脚本或手动编写）
+
+# 创建 Info.plist
+cat > "$APP/Contents/Info.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>       <string>fff_viewer</string>
+  <key>CFBundleIconFile</key>         <string>AppIcon</string>
+  <key>CFBundleIdentifier</key>       <string>com.fff-viewer.app</string>
+  <key>CFBundleName</key>             <string>FFF Viewer</string>
+  <key>CFBundleVersion</key>          <string>0.6.0</string>
+  <key>CFBundlePackageType</key>      <string>APPL</string>
+  <key>NSHighResolutionCapable</key>  <true/>
+</dict>
+</plist>
+EOF
+
+echo "打包完成: $APP"
 ```
+
+分发时将整个 `FFF Viewer.app` 文件夹压缩为 zip 即可。
+
+### Windows 打包发布
+
+#### 前置条件
+
+1. 安装 [Rust](https://rustup.rs/)（选择 MSVC 工具链）
+2. 安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，勾选 **"C++ 桌面开发"** 工作负载
+
+#### 编译
+
+```powershell
+cargo build --release
+```
+
+生成的可执行文件位于 `target\release\fff_viewer.exe`。
+
+#### 打包为便携式发行包
+
+```powershell
+# 创建发行目录
+$dist = "FFF_Viewer_Windows"
+New-Item -ItemType Directory -Force -Path $dist
+
+# 复制可执行文件
+Copy-Item target\release\fff_viewer.exe $dist\
+
+# 复制资源目录（ICC 配置文件和设置预设）
+Copy-Item -Recurse profiles $dist\profiles
+Copy-Item -Recurse settings $dist\settings
+
+# 复制图标（可选）
+Copy-Item icons\icon.ico $dist\
+
+Write-Host "打包完成: $dist"
+```
+
+将 `FFF_Viewer_Windows` 文件夹压缩为 zip 即可分发。用户解压后双击 `fff_viewer.exe` 运行。
+
+> **提示：** Windows 版为绿色便携式软件，无需安装。`profiles/` 和 `settings/` 目录需与 `fff_viewer.exe` 放在同一文件夹中。
 
 ### CLI 解析工具
 
@@ -133,7 +200,9 @@ src/
     ├── split.rs        #   分屏视图
     └── helpers.rs      #   UI 工具函数
 icons/
-└── AppIcon.icns       # 应用图标（FlexColor 风格）
+├── AppIcon.icns       # 应用图标（macOS）
+├── icon_256.png       # 应用图标 256×256 PNG 源文件
+└── icon.ico           # 应用图标（Windows）
 profiles/              # FlexColor ICC 配置文件（15 个）
 settings/              # FlexColor 设置预设（123 个 XML 文件）
 ```

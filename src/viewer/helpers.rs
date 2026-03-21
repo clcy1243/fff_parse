@@ -60,28 +60,44 @@ pub(super) fn get_root_dirs() -> Vec<PathBuf> {
         roots.push(home);
     }
 
-    let volumes = PathBuf::from("/Volumes");
-    if volumes.exists() {
-        if let Ok(entries) = std::fs::read_dir(&volumes) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                // Skip symlinks — "Macintosh HD" is a symlink to "/" on macOS.
-                // Real external / removable drives are actual directories.
-                let is_symlink = path
-                    .symlink_metadata()
-                    .map(|m| m.file_type().is_symlink())
-                    .unwrap_or(false);
-                // Skip hidden system volumes (e.g. .Spotlight-V100, .timemachine)
-                let is_hidden = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().starts_with('.'))
-                    .unwrap_or(false);
-                // Skip volumes that are not readable (e.g. "Macintosh HD - Data"
-                // has d--x--x--x permissions — only the kernel can list it).
-                // External USB drives always have normal read permissions.
-                let is_readable = std::fs::read_dir(&path).is_ok();
-                if !is_symlink && !is_hidden && is_readable {
-                    roots.push(path);
+    // Windows: 枚举盘符 A:-Z:
+    #[cfg(target_os = "windows")]
+    {
+        for letter in b'A'..=b'Z' {
+            let drive = format!("{}:\\", letter as char);
+            let p = PathBuf::from(&drive);
+            if p.exists() {
+                roots.push(p);
+            }
+        }
+    }
+
+    // macOS: 枚举 /Volumes 下的外部驱动器
+    #[cfg(target_os = "macos")]
+    {
+        let volumes = PathBuf::from("/Volumes");
+        if volumes.exists() {
+            if let Ok(entries) = std::fs::read_dir(&volumes) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    // Skip symlinks — "Macintosh HD" is a symlink to "/" on macOS.
+                    // Real external / removable drives are actual directories.
+                    let is_symlink = path
+                        .symlink_metadata()
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+                    // Skip hidden system volumes (e.g. .Spotlight-V100, .timemachine)
+                    let is_hidden = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().starts_with('.'))
+                        .unwrap_or(false);
+                    // Skip volumes that are not readable (e.g. "Macintosh HD - Data"
+                    // has d--x--x--x permissions — only the kernel can list it).
+                    // External USB drives always have normal read permissions.
+                    let is_readable = std::fs::read_dir(&path).is_ok();
+                    if !is_symlink && !is_hidden && is_readable {
+                        roots.push(path);
+                    }
                 }
             }
         }
@@ -98,6 +114,12 @@ pub(super) fn get_root_dirs() -> Vec<PathBuf> {
 
 /// 获取用户主目录路径
 pub(super) fn dirs_home() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(p) = std::env::var_os("USERPROFILE") {
+            return Some(PathBuf::from(p));
+        }
+    }
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
