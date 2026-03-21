@@ -1164,7 +1164,8 @@ impl FffViewerApp {
         self.manual_adjust.levels_white = self.levels_processed.white;
     }
 
-    /// 计算原始直方图（从 base_rgb/raw_rgb，用于色阶调整的自动功能）。
+    /// 计算原始直方图（用于色阶调整的自动功能和显示）。
+    /// 数据源与渲染管线一致：曲线开启时使用 base_rgb（含曲线），关闭时使用 raw_rgb。
     /// 处理后直方图在 rebuild_texture_from_base() 中从渲染结果计算。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
@@ -1173,8 +1174,14 @@ impl FffViewerApp {
             return;
         };
 
-        // 原始直方图：永远使用 raw_rgb（ICC + 胶片处理，无渐变曲线）
-        let source_img = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
+        // 直方图数据源与色阶调整管线一致：
+        // 曲线开启时使用 base_rgb（ICC + 胶片处理 + 渐变曲线），
+        // 曲线关闭时使用 raw_rgb（ICC + 胶片处理，无渐变曲线）。
+        let source_img = if self.manual_adjust.apply_curves {
+            detail.base_rgb.as_ref()
+        } else {
+            detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref())
+        };
 
         let Some(base) = source_img else {
             self.histogram_raw = None;
@@ -1215,43 +1222,6 @@ impl FffViewerApp {
         self.histogram_raw = Some(hist);
         self.histogram_raw_16 = Some(hist_16);
         self.histogram_needs_update = false;
-    }
-
-    /// 渲染 RGB 三通道叠加直方图
-    pub(super) fn render_histogram(&self, ui: &mut egui::Ui) {
-        let Some(ref hist) = self.histogram_raw else { return };
-
-        let desired_size = egui::vec2(ui.available_width(), 80.0);
-        let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-
-        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(20));
-
-        let max_count = hist[0].iter().chain(hist[1].iter()).chain(hist[2].iter())
-            .copied().max().unwrap_or(1).max(1) as f32;
-
-        let w = rect.width();
-        let h = rect.height();
-
-        let colors = [
-            egui::Color32::from_rgba_unmultiplied(220, 50, 50, 100),
-            egui::Color32::from_rgba_unmultiplied(50, 200, 50, 100),
-            egui::Color32::from_rgba_unmultiplied(50, 100, 255, 100),
-        ];
-
-        for ch in 0..3 {
-            for i in 0..256 {
-                let bar_h = (hist[ch][i] as f32 / max_count * h).min(h);
-                if bar_h < 0.5 { continue; }
-                let x = rect.left() + i as f32 / 255.0 * w;
-                let bar_w = (w / 256.0).max(1.0);
-                let bar_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, rect.bottom() - bar_h),
-                    egui::vec2(bar_w, bar_h),
-                );
-                painter.rect_filled(bar_rect, 0.0, colors[ch]);
-            }
-        }
     }
 
     /// 根据 65536-bin 直方图按指定百分位计算黑白点（返回 0-255 浮点精度值）。
@@ -1535,6 +1505,7 @@ impl FffViewerApp {
         }
 
         let mut rebuild = false;
+        let mut curves_toggled = false;
 
         let adjust_heading = s.adjust_heading;
         let reset_adjust = s.reset_adjust;
@@ -1686,9 +1657,10 @@ impl FffViewerApp {
         egui::ScrollArea::vertical().id_salt("adjust_sliders").show(ui, |ui| {
             let adj = &mut self.manual_adjust;
 
-            // 渐变曲线开关
+            // 渐变曲线开关（切换后需重算直方图，因为数据源随之改变）
             if ui.checkbox(&mut adj.apply_curves, s.gradation_curves).changed() {
                 rebuild = true;
+                curves_toggled = true;
             }
             ui.add_space(4.0);
 
@@ -1835,6 +1807,9 @@ impl FffViewerApp {
                 });
         });
 
+        if curves_toggled {
+            self.histogram_needs_update = true;
+        }
         if rebuild {
             self.rebuild_texture_from_base(ctx);
             self.save_sidecar();

@@ -27,7 +27,7 @@ pub const FILM_CURVE_LUT_R: [u8; 256] = [
       0,   0,   1,   1,   1,   1,   1,   1,   2,   2,   2,   3,   4,   5,   5,   5,
       6,   7,   8,   9,  10,  11,  12,  13,  13,  14,  14,  15,  16,  17,  17,  19,
      21,  24,  26,  28,  30,  32,  34,  36,  38,  40,  41,  41,  41,  41,  41,  41,
-     41,  41,  41,  41,  41,  41,  41,  41,  44,  46,  47,  49,  50,  52,  54,  57,
+     41,  42,  42,  42,  43,  43,  43,  44,  44,  46,  47,  49,  50,  52,  54,  57,
      59,  61,  63,  65,  67,  68,  69,  71,  73,  75,  76,  77,  78,  80,  82,  83,
      85,  87,  89,  91,  92,  94,  96,  97,  99, 101, 104, 106, 108, 111, 113, 115,
     117, 119, 121, 124, 126, 128, 130, 133, 135, 137, 139, 141, 144, 146, 148, 150,
@@ -394,6 +394,8 @@ pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64,
 
     match img {
         image::DynamicImage::ImageRgb16(rgb16) => {
+            use rayon::prelude::*;
+
             // 扩展 8-bit LUT 到 16-bit
             let expand = |lut8: &[u8; 256]| -> Vec<u16> {
                 let mut lut16 = vec![0u16; 65536];
@@ -418,24 +420,34 @@ pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64,
 
             let (w, h) = (rgb16.width(), rgb16.height());
             let src = rgb16.as_raw();
-            let mut out = Vec::with_capacity(src.len());
-            for chunk in src.chunks_exact(3) {
-                let mut r = lr[chunk[0] as usize];
-                let mut g = lg[chunk[1] as usize];
-                let mut b = lb[chunk[2] as usize];
+            let row_len = w as usize * 3;
+            let mut out = vec![0u16; row_len * h as usize];
 
-                r = 65535 - lc[(65535 - r) as usize];
-                g = 65535 - lm[(65535 - g) as usize];
-                b = 65535 - ly[(65535 - b) as usize];
+            out.par_chunks_mut(row_len)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    let src_start = y * row_len;
+                    for x in 0..w as usize {
+                        let base = x * 3;
+                        let si = src_start + base;
+                        let mut r = lr[src[si] as usize];
+                        let mut g = lg[src[si + 1] as usize];
+                        let mut b = lb[src[si + 2] as usize];
 
-                r = lrgb[r as usize];
-                g = lrgb[g as usize];
-                b = lrgb[b as usize];
+                        r = 65535 - lc[(65535 - r) as usize];
+                        g = 65535 - lm[(65535 - g) as usize];
+                        b = 65535 - ly[(65535 - b) as usize];
 
-                out.push(r);
-                out.push(g);
-                out.push(b);
-            }
+                        r = lrgb[r as usize];
+                        g = lrgb[g as usize];
+                        b = lrgb[b as usize];
+
+                        row[base] = r;
+                        row[base + 1] = g;
+                        row[base + 2] = b;
+                    }
+                });
+
             let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(w, h, out)
                 .expect("gradation 16-bit: buffer size mismatch");
             image::DynamicImage::ImageRgb16(buf)
@@ -466,5 +478,118 @@ pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64,
                 .expect("gradation 8-bit: buffer size mismatch");
             image::DynamicImage::ImageRgb8(buf)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn film_curve_lut_monotonic() {
+        // 每个通道 LUT 必须单调非递减
+        for (name, lut) in [("R", &FILM_CURVE_LUT_R), ("G", &FILM_CURVE_LUT_G), ("B", &FILM_CURVE_LUT_B)] {
+            for i in 1..256 {
+                assert!(
+                    lut[i] >= lut[i - 1],
+                    "{} channel LUT not monotonic at index {}: {} < {}",
+                    name, i, lut[i], lut[i - 1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn film_curve_lut_no_large_jumps() {
+        // LUT 不应有超过 6 的跳变（平滑性检查）
+        for (name, lut) in [("R", &FILM_CURVE_LUT_R), ("G", &FILM_CURVE_LUT_G), ("B", &FILM_CURVE_LUT_B)] {
+            for i in 1..256 {
+                let diff = (lut[i] as i16 - lut[i - 1] as i16).unsigned_abs();
+                assert!(
+                    diff <= 9,
+                    "{} channel LUT has jump of {} at index {} ({} → {})",
+                    name, diff, i, lut[i - 1], lut[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lut_interp_16_boundaries() {
+        // 测试边界值：0.0 和 1.0
+        let lut = &FILM_CURVE_LUT_G;
+        let v0 = lut_interp_16(0.0, lut);
+        let v1 = lut_interp_16(1.0, lut);
+        assert_eq!(v0, lut[0] as f32 * 257.0);
+        assert_eq!(v1, lut[255] as f32 * 257.0);
+    }
+
+    #[test]
+    fn lut_interp_16_midpoint() {
+        // 中间值应落在 LUT 范围内
+        let lut = &FILM_CURVE_LUT_G;
+        let v = lut_interp_16(0.5, lut);
+        assert!(v >= 0.0 && v <= 65535.0, "midpoint value {} out of range", v);
+    }
+
+    #[test]
+    fn build_curve_lut_identity() {
+        // 两点对角线 [(0,0), (255,255)] 应产生恒等映射
+        let pts = vec![(0i64, 0i64, 0i64), (255, 255, 0)];
+        let lut = build_curve_lut(&pts);
+        for i in 0..256 {
+            assert_eq!(lut[i], i as u8, "identity LUT mismatch at {}", i);
+        }
+    }
+
+    #[test]
+    fn build_curve_lut_invert() {
+        // [(0,255), (255,0)] 应产生反转映射
+        let pts = vec![(0i64, 255i64, 0i64), (255, 0, 0)];
+        let lut = build_curve_lut(&pts);
+        assert_eq!(lut[0], 255);
+        assert_eq!(lut[255], 0);
+        assert!((lut[128] as i16 - 127).abs() <= 1, "invert midpoint {} != ~127", lut[128]);
+    }
+
+    #[test]
+    fn build_curve_lut_monotonic_with_three_points() {
+        // 三个点构成的曲线应保持单调性（Fritsch-Carlson 保证）
+        let pts = vec![(0i64, 0i64, 0i64), (128, 200, 0), (255, 255, 0)];
+        let lut = build_curve_lut(&pts);
+        for i in 1..256 {
+            assert!(
+                lut[i] >= lut[i - 1],
+                "three-point curve not monotonic at {}: {} < {}",
+                i, lut[i], lut[i - 1]
+            );
+        }
+    }
+
+    #[test]
+    fn build_curve_lut_single_point_identity() {
+        // 单点应返回恒等映射
+        let pts = vec![(128i64, 128i64, 0i64)];
+        let lut = build_curve_lut(&pts);
+        for i in 0..256 {
+            assert_eq!(lut[i], i as u8, "single-point LUT should be identity at {}", i);
+        }
+    }
+
+    #[test]
+    fn gradation_curves_identity_passthrough() {
+        // 恒等曲线不应修改图像
+        let w = 4u32;
+        let h = 2u32;
+        let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 256) as u8).collect();
+        let img = image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(w, h, pixels.clone()).unwrap(),
+        );
+        let identity_grads: Vec<Vec<(i64, i64, i64)>> = (0..7)
+            .map(|_| vec![(0, 0, 0), (255, 255, 0)])
+            .collect();
+        let result = apply_gradation_curves(&img, &identity_grads);
+        let out = result.to_rgb8();
+        assert_eq!(out.as_raw(), &pixels);
     }
 }
