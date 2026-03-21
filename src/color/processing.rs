@@ -359,6 +359,7 @@ fn build_curve_lut_bspline_clamped(points: &[(i64, i64, i64)]) -> [u8; 256] {
     let n = pts.len();
     if n < 2 { return identity_lut(); }
     if n == 2 { return build_curve_lut_linear(points); }
+    if n == 3 { return build_curve_lut_bspline_quadratic(points); }
 
     // Clamped B-Spline: 在首尾各重复 3 次节点
     // 节点向量: [0,0,0, t1, t2, ..., tn-2, 1,1,1] (n+4 个节点，用于 n 个控制点)
