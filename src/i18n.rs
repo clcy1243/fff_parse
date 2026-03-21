@@ -225,7 +225,7 @@ pub struct Strings {
     // Context menu
     pub ctx_copy_path: &'static str,
     pub ctx_copy_filename: &'static str,
-    pub ctx_reveal_in_finder: &'static str,
+    pub ctx_reveal_in_file_manager: &'static str,
     pub ctx_open_default: &'static str,
 
     // File filter
@@ -433,7 +433,13 @@ static EN: Strings = Strings {
 
     ctx_copy_path: "📋 Copy Path",
     ctx_copy_filename: "📋 Copy Filename",
-    ctx_reveal_in_finder: "📂 Reveal in Finder",
+    ctx_reveal_in_file_manager: if cfg!(target_os = "macos") {
+        "📂 Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "📂 Reveal in Explorer"
+    } else {
+        "📂 Reveal in File Manager"
+    },
     ctx_open_default: "🔗 Open with Default App",
 
     file_filter_placeholder: "🔎 Filter by name or format…",
@@ -637,7 +643,13 @@ static ZH: Strings = Strings {
 
     ctx_copy_path: "📋 复制路径",
     ctx_copy_filename: "📋 复制文件名",
-    ctx_reveal_in_finder: "📂 在 Finder 中显示",
+    ctx_reveal_in_file_manager: if cfg!(target_os = "macos") {
+        "📂 在 Finder 中显示"
+    } else if cfg!(target_os = "windows") {
+        "📂 在资源管理器中显示"
+    } else {
+        "📂 在文件管理器中显示"
+    },
     ctx_open_default: "🔗 用默认应用打开",
 
     file_filter_placeholder: "🔎 按文件名或格式筛选…",

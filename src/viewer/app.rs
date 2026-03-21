@@ -95,6 +95,7 @@ impl FffViewerApp {
             baseline_adjust: color::ManualAdjust::default(),
             baseline_levels_processed: HistogramLevels::default(),
             baseline_levels_raw: HistogramLevels::default(),
+            baseline_curve_points: Self::default_curve_points(),
             split_state: SplitState::default(),
             loading_status: LoadingStatus::Idle,
             error_msg: None,

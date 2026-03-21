@@ -528,6 +528,8 @@ pub struct FffViewerApp {
     /// 应用色彩方案后的色阶基线
     pub(super) baseline_levels_processed: HistogramLevels,
     pub(super) baseline_levels_raw: HistogramLevels,
+    /// 应用色彩方案后的曲线控制点基线
+    pub(super) baseline_curve_points: Vec<Vec<(i64, i64, i64)>>,
 
     // 底片分割与导出
     pub(super) split_state: SplitState,

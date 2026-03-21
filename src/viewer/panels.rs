@@ -1007,6 +1007,7 @@ impl FffViewerApp {
         self.baseline_adjust = self.manual_adjust.clone();
         self.baseline_levels_processed = self.levels_processed.clone();
         self.baseline_levels_raw = self.levels_raw.clone();
+        self.baseline_curve_points = self.curve_points.clone();
 
         self.histogram_needs_update = true;
         self.rebuild_texture_from_base(ctx);
@@ -1142,18 +1143,24 @@ impl FffViewerApp {
         self.rebuild_texture_from_base(ctx);
     }
 
-    /// 根据当前色彩方案的 base_rgb 应用手动调整后重建显示纹理。
-    /// 当曲线开启时，从 raw_rgb 重新应用用户编辑的渐变曲线。
+    /// 根据 raw_rgb 应用渐变曲线（若开启且非恒等）和手动调整后重建显示纹理。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
 
-        // 根据渐变曲线开关选择起点：
-        // 开 = raw_rgb + 用户编辑的曲线
-        // 关 = raw_rgb（无曲线）
         let source = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
         let Some(base) = source else { return };
 
-        let img = if self.manual_adjust.apply_curves && self.curve_points.len() >= 7 {
+        // 判断曲线是否全恒等（仅两个端点 (0,0)→(255,255)）
+        let curves_are_identity = self.curve_points.iter().all(|pts| {
+            pts.len() == 2
+                && pts[0].0 == 0 && pts[0].1 == 0
+                && pts[1].0 == 255 && pts[1].1 == 255
+        });
+
+        let img = if self.manual_adjust.apply_curves
+            && self.curve_points.len() >= 7
+            && !curves_are_identity
+        {
             let raw_img = image::DynamicImage::ImageRgb16(base.clone());
             color::apply_gradation_curves(&raw_img, &self.curve_points)
         } else {
@@ -1770,10 +1777,13 @@ impl FffViewerApp {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(reset_adjust).clicked() {
-                    // 重置到色彩方案加载后的基线状态
+                    // 重置到色彩方案加载后的基线状态（包括曲线控制点）
                     self.manual_adjust = self.baseline_adjust.clone();
                     self.levels_processed = self.baseline_levels_processed.clone();
                     self.levels_raw = self.baseline_levels_raw.clone();
+                    self.curve_points = self.baseline_curve_points.clone();
+                    self.curve_channel = 0;
+                    self.curve_dragging = None;
                     rebuild = true;
                 }
             });
@@ -2396,7 +2406,7 @@ impl FffViewerApp {
             ui.close_menu();
         }
         ui.separator();
-        if ui.button(s.ctx_reveal_in_finder).clicked() {
+        if ui.button(s.ctx_reveal_in_file_manager).clicked() {
             #[cfg(target_os = "macos")]
             {
                 let _ = std::process::Command::new("open")
