@@ -279,6 +279,12 @@ pub fn apply_film_curve_lut(
 /// 曲线插值方法。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CurveMethod {
+    /// Bézier (De Casteljau) — 单条 n 阶贝塞尔曲线，经过首尾点
+    BezierDeCasteljau,
+    /// Bézier (Composite Quadratic) — 分段二次贝塞尔，中间点在曲线外
+    BezierCompositeQuad,
+    /// Bézier (Composite Cubic) — 分段三次贝塞尔，中间点在曲线外
+    BezierCompositeCubic,
     /// Clamped Cubic B-Spline — 经过首尾点的逼近曲线
     BSplineClamped,
     /// Uniform Cubic B-Spline — 均匀三次 B 样条
@@ -292,7 +298,10 @@ pub enum CurveMethod {
 }
 
 impl CurveMethod {
-    pub const ALL: [CurveMethod; 5] = [
+    pub const ALL: [CurveMethod; 8] = [
+        CurveMethod::BezierDeCasteljau,
+        CurveMethod::BezierCompositeQuad,
+        CurveMethod::BezierCompositeCubic,
         CurveMethod::BSplineClamped,
         CurveMethod::BSplineUniform,
         CurveMethod::BSplineQuadratic,
@@ -302,6 +311,9 @@ impl CurveMethod {
 
     pub fn label(&self) -> &'static str {
         match self {
+            CurveMethod::BezierDeCasteljau => "Bézier (N-degree)",
+            CurveMethod::BezierCompositeQuad => "Bézier (Quad)",
+            CurveMethod::BezierCompositeCubic => "Bézier (Cubic)",
             CurveMethod::BSplineClamped => "B-Spline (Clamped)",
             CurveMethod::BSplineUniform => "B-Spline (Uniform)",
             CurveMethod::BSplineQuadratic => "B-Spline (Quadratic)",
@@ -314,6 +326,9 @@ impl CurveMethod {
 /// 从控制点构建 256 级查找表，使用指定的插值方法。
 pub fn build_curve_lut_with_method(points: &[(i64, i64, i64)], method: CurveMethod) -> [u8; 256] {
     match method {
+        CurveMethod::BezierDeCasteljau => build_curve_lut_bezier_decasteljau(points),
+        CurveMethod::BezierCompositeQuad => build_curve_lut_bezier_composite_quad(points),
+        CurveMethod::BezierCompositeCubic => build_curve_lut_bezier_composite_cubic(points),
         CurveMethod::BSplineClamped => build_curve_lut_bspline_clamped(points),
         CurveMethod::BSplineUniform => build_curve_lut_bspline_uniform(points),
         CurveMethod::BSplineQuadratic => build_curve_lut_bspline_quadratic(points),
@@ -342,6 +357,202 @@ fn find_segment(x: f64, pts: &[(f64, f64)]) -> (usize, usize) {
         if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
     }
     (lo, hi)
+}
+
+// ─── Bézier (De Casteljau) ──────────────────────────────────────────────────
+// 单条 n 阶贝塞尔曲线，所有控制点作为贝塞尔控制点。
+// 只有首尾点在曲线上，中间控制点在曲线外侧。
+
+fn build_curve_lut_bezier_decasteljau(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 { return identity_lut(); }
+    if n == 2 { return build_curve_lut_linear(points); }
+
+    let num_samples = 1024;
+    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
+
+    for s in 0..num_samples {
+        let t = s as f64 / (num_samples - 1) as f64;
+        // De Casteljau 递归求值
+        let mut work_x: Vec<f64> = pts.iter().map(|p| p.0).collect();
+        let mut work_y: Vec<f64> = pts.iter().map(|p| p.1).collect();
+        for level in 1..n {
+            for i in 0..n - level {
+                work_x[i] = (1.0 - t) * work_x[i] + t * work_x[i + 1];
+                work_y[i] = (1.0 - t) * work_y[i] + t * work_y[i + 1];
+            }
+        }
+        samples.push((work_x[0], work_y[0]));
+    }
+
+    samples_to_lut(&samples)
+}
+
+// ─── Bézier (Composite Quadratic) ───────────────────────────────────────────
+// 分段二次贝塞尔曲线（类似 TrueType 字体方式）。
+// 给定控制点直接作为二次贝塞尔的控制点，段间连接点取相邻控制点中点。
+// 首尾点在曲线上，中间控制点在曲线外侧。
+
+fn build_curve_lut_bezier_composite_quad(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 { return identity_lut(); }
+    if n == 2 { return build_curve_lut_linear(points); }
+
+    // 生成 on-curve 连接点（相邻控制点中点）+ 首尾端点
+    // 段 i: P_start → ctrl[i+1] → P_end
+    // P_start = midpoint(ctrl[i], ctrl[i+1])  (or ctrl[0] for first)
+    // P_end   = midpoint(ctrl[i+1], ctrl[i+2])  (or ctrl[n-1] for last)
+    let num_samples = 1024;
+    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
+
+    let num_seg = n - 1;
+    let samples_per_seg = num_samples / num_seg;
+
+    for seg in 0..num_seg {
+        // 起点
+        let (sx, sy) = if seg == 0 {
+            pts[0]
+        } else {
+            ((pts[seg].0 + pts[seg + 1].0) * 0.5, (pts[seg].1 + pts[seg + 1].1) * 0.5)
+        };
+        // 终点
+        let (ex, ey) = if seg == num_seg - 1 {
+            pts[n - 1]
+        } else {
+            ((pts[seg + 1].0 + pts[seg + 2].0) * 0.5, (pts[seg + 1].1 + pts[seg + 2].1) * 0.5)
+        };
+        // 控制点: 对于第0段用pts[1]，其余用pts[seg+1]（但第0段也是seg+1=1）
+        // 第一段：start=pts[0], ctrl=pts[1], end=mid(pts[1],pts[2])
+        // 中间段：start=mid(pts[seg],pts[seg+1]), ctrl=pts[seg+1]（但这不对）
+        // 实际上对于 n 个控制点，有 n-2 个中间控制点形成 n-2 段（或 n-1 段？）
+        // TrueType 方式：n-1 段，每段有一个控制点
+        // 段 seg: 控制点是 pts[seg] 和 pts[seg+1] 之间的那个... 
+        // 重新设计：控制点序列中，奇数索引是 off-curve，偶数是 on-curve
+        // 但我们的情况是所有中间点都是 off-curve
+        // 正确做法：对于 n 个点（首尾 on-curve，中间 off-curve），有 n-2 个 off-curve 点
+        // 产生 max(1, n-2) 段。段间连接点为相邻 off-curve 点的中点。
+        
+        // 控制点就是 pts[seg] 到 pts[seg+1] 区间中的那个 off-curve 点
+        // 简化：每段使用当前段的两端点和它们中间对应的控制点
+        let (cx, cy) = if n == 3 {
+            // 只有一个中间控制点
+            pts[1]
+        } else if seg == 0 {
+            // 第一段：控制点 = pts[1]（第一个中间点）
+            pts[1]
+        } else if seg == num_seg - 1 {
+            // 最后一段：控制点 = pts[n-2]（最后一个中间点）
+            pts[n - 2]
+        } else {
+            // 中间段：控制点 = pts[seg+1]（注意 seg 从0开始，第一个中间控制点从1开始）
+            pts[seg + 1]
+        };
+
+        let count = if seg == num_seg - 1 { num_samples - samples.len() } else { samples_per_seg };
+        for i in 0..count {
+            let t = i as f64 / count as f64;
+            let mt = 1.0 - t;
+            // 二次贝塞尔: B(t) = (1-t)²·P0 + 2(1-t)t·P1 + t²·P2
+            let x = mt * mt * sx + 2.0 * mt * t * cx + t * t * ex;
+            let y = mt * mt * sy + 2.0 * mt * t * cy + t * t * ey;
+            samples.push((x, y));
+        }
+    }
+
+    samples_to_lut(&samples)
+}
+
+// ─── Bézier (Composite Cubic) ───────────────────────────────────────────────
+// 分段三次贝塞尔曲线。给定控制点序列，首尾在曲线上，中间控制点在曲线外。
+// 每两个相邻控制点之间自动在中点处分段连接。
+
+fn build_curve_lut_bezier_composite_cubic(points: &[(i64, i64, i64)]) -> [u8; 256] {
+    let pts = prepare_points(points);
+    let n = pts.len();
+    if n < 2 { return identity_lut(); }
+    if n == 2 { return build_curve_lut_linear(points); }
+    if n == 3 { return build_curve_lut_bezier_composite_quad(points); }
+
+    // 对于 n >= 4，构建分段三次贝塞尔
+    // 策略：每 3 个连续中间点形成一个三次段（2 个控制点 + 2 个端点）
+    // 端点取相邻控制点中点，首尾除外
+    
+    // 生成 on-curve 节点列表（首尾 + 中间控制点对之间的中点）
+    let interior = &pts[1..n - 1]; // 中间控制点
+    let ni = interior.len();
+    
+    // 每两个中间控制点形成一个三次段
+    // 如果中间点是奇数个，最后一段退化为二次
+    let num_samples = 1024;
+    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
+
+    // 构建段：每段有 start, ctrl1, ctrl2, end
+    struct CubicSeg { s: (f64, f64), c1: (f64, f64), c2: (f64, f64), e: (f64, f64) }
+    let mut segs: Vec<CubicSeg> = Vec::new();
+
+    let mut i = 0;
+    while i < ni {
+        if i + 1 < ni {
+            // 有两个控制点可用，形成一个三次段
+            let start = if i == 0 {
+                pts[0]
+            } else {
+                // 中点
+                let prev = interior[i - 1];
+                let cur = interior[i];
+                ((prev.0 + cur.0) * 0.5, (prev.1 + cur.1) * 0.5)
+            };
+            let end = if i + 2 >= ni {
+                pts[n - 1]
+            } else {
+                let cur = interior[i + 1];
+                let next = interior[i + 2];
+                ((cur.0 + next.0) * 0.5, (cur.1 + next.1) * 0.5)
+            };
+            segs.push(CubicSeg {
+                s: start,
+                c1: interior[i],
+                c2: interior[i + 1],
+                e: end,
+            });
+            i += 2;
+        } else {
+            // 奇数个中间控制点，最后一个单独形成二次段（提升为三次）
+            let start = if i == 0 {
+                pts[0]
+            } else {
+                let prev = interior[i - 1];
+                let cur = interior[i];
+                ((prev.0 + cur.0) * 0.5, (prev.1 + cur.1) * 0.5)
+            };
+            let end = pts[n - 1];
+            let ctrl = interior[i];
+            // 二次提升为三次：C1 = S + 2/3*(C-S), C2 = E + 2/3*(C-E)
+            let c1 = (start.0 + 2.0 / 3.0 * (ctrl.0 - start.0), start.1 + 2.0 / 3.0 * (ctrl.1 - start.1));
+            let c2 = (end.0 + 2.0 / 3.0 * (ctrl.0 - end.0), end.1 + 2.0 / 3.0 * (ctrl.1 - end.1));
+            segs.push(CubicSeg { s: start, c1, c2, e: end });
+            i += 1;
+        }
+    }
+
+    if segs.is_empty() { return identity_lut(); }
+
+    let samples_per_seg = num_samples / segs.len();
+    for (si, seg) in segs.iter().enumerate() {
+        let count = if si == segs.len() - 1 { num_samples - samples.len() } else { samples_per_seg };
+        for j in 0..count {
+            let t = j as f64 / count as f64;
+            let mt = 1.0 - t;
+            // 三次贝塞尔: B(t) = (1-t)³·P0 + 3(1-t)²t·P1 + 3(1-t)t²·P2 + t³·P3
+            let x = mt.powi(3) * seg.s.0 + 3.0 * mt * mt * t * seg.c1.0 + 3.0 * mt * t * t * seg.c2.0 + t.powi(3) * seg.e.0;
+            let y = mt.powi(3) * seg.s.1 + 3.0 * mt * mt * t * seg.c1.1 + 3.0 * mt * t * t * seg.c2.1 + t.powi(3) * seg.e.1;
+            samples.push((x, y));
+        }
+    }
+
+    samples_to_lut(&samples)
 }
 
 fn identity_lut() -> [u8; 256] {
