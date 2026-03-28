@@ -1162,7 +1162,7 @@ impl FffViewerApp {
             && !curves_are_identity
         {
             let raw_img = image::DynamicImage::ImageRgb16(base.clone());
-            color::apply_gradation_curves(&raw_img, &self.curve_points, self.curve_method)
+            color::apply_gradation_curves(&raw_img, &self.curve_points)
         } else {
             image::DynamicImage::ImageRgb16(base.clone())
         };
@@ -1504,9 +1504,7 @@ impl FffViewerApp {
         curve_points: &mut Vec<Vec<(i64, i64, i64)>>,
         curve_channel: &mut usize,
         curve_dragging: &mut Option<usize>,
-        curve_method: &mut color::CurveMethod,
         reset_label: &str,
-        method_label: &str,
     ) -> bool {
         let mut changed = false;
 
@@ -1592,7 +1590,7 @@ impl FffViewerApp {
         };
 
         // 绘制曲线（用 LUT 生成平滑曲线）
-        let lut = color::build_curve_lut_with_method(&curve_points[ch], *curve_method);
+        let lut = color::build_curve_lut(&curve_points[ch]);
         let mut curve_line: Vec<egui::Pos2> = Vec::with_capacity(256);
         for i in 0..256 {
             let x = graph_rect.left() + i as f32 / 255.0 * graph_rect.width();
@@ -1707,21 +1705,6 @@ impl FffViewerApp {
         if response.drag_stopped() {
             *curve_dragging = None;
         }
-
-        // ── 插值方式选择 ──
-        ui.horizontal(|ui| {
-            ui.label(method_label);
-            egui::ComboBox::from_id_salt("curve_method")
-                .selected_text(curve_method.label())
-                .width(140.0)
-                .show_ui(ui, |ui| {
-                    for m in color::CurveMethod::ALL {
-                        if ui.selectable_value(curve_method, m, m.label()).clicked() {
-                            changed = true;
-                        }
-                    }
-                });
-        });
 
         changed
     }
@@ -1943,9 +1926,7 @@ impl FffViewerApp {
                     &mut self.curve_points,
                     &mut self.curve_channel,
                     &mut self.curve_dragging,
-                    &mut self.curve_method,
                     s.curve_reset,
-                    s.curve_method,
                 ) {
                     rebuild = true;
                 }

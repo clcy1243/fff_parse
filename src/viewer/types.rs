@@ -405,8 +405,6 @@ pub(super) struct ExportPipeline {
     pub(super) target_color_space: TargetColorSpace,
     /// 手动调整参数
     pub(super) manual_adjust: color::ManualAdjust,
-    /// 曲线插值方法
-    pub(super) curve_method: color::CurveMethod,
 }
 
 // ─── 加载状态 ───────────────────────────────────────────────────────────────
@@ -559,8 +557,6 @@ pub struct FffViewerApp {
     pub(super) curve_points: Vec<Vec<(i64, i64, i64)>>,
     /// 当前正在拖拽的控制点索引
     pub(super) curve_dragging: Option<usize>,
-    /// 曲线插值方法
-    pub(super) curve_method: color::CurveMethod,
 }
 
 // ─── 字体加载 ───────────────────────────────────────────────────────────────

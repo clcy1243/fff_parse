@@ -275,95 +275,21 @@ pub fn apply_film_curve_lut(
 }
 
 // ─── Gradation Curves ───────────────────────────────────────────────────────
+// FlexColor 使用 N 阶贝塞尔曲线（De Casteljau 算法）。
+// 给定 n 个控制点，形成一条 (n-1) 阶贝塞尔曲线。
+// 只有首尾两个控制点在曲线上，中间控制点在曲线外侧"吸引"曲线走向。
+// 曲线始终在控制点的凸包内。
+//
+// De Casteljau 递归求值（参数 t ∈ [0,1]）：
+//   第0层: P₀⁰=P₀, P₁⁰=P₁, ..., Pₙ₋₁⁰=Pₙ₋₁
+//   第r层: Pᵢʳ = (1-t)·Pᵢʳ⁻¹ + t·Pᵢ₊₁ʳ⁻¹
+//   最终值: P₀ⁿ⁻¹ 即为曲线上的点
 
-/// 曲线插值方法。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CurveMethod {
-    /// Bézier (De Casteljau) — 单条 n 阶贝塞尔曲线，经过首尾点
-    BezierDeCasteljau,
-    /// Bézier (Composite Quadratic) — 分段二次贝塞尔，中间点在曲线外
-    BezierCompositeQuad,
-    /// Bézier (Composite Cubic) — 分段三次贝塞尔，中间点在曲线外
-    BezierCompositeCubic,
-    /// Clamped Cubic B-Spline — 经过首尾点的逼近曲线
-    BSplineClamped,
-    /// Uniform Cubic B-Spline — 均匀三次 B 样条
-    BSplineUniform,
-    /// Quadratic B-Spline — 二次 B 样条
-    BSplineQuadratic,
-    /// Catmull-Rom 样条 — 通过所有控制点
-    CatmullRom,
-    /// 线性插值 — 折线基准
-    Linear,
-}
-
-impl CurveMethod {
-    pub const ALL: [CurveMethod; 8] = [
-        CurveMethod::BezierDeCasteljau,
-        CurveMethod::BezierCompositeQuad,
-        CurveMethod::BezierCompositeCubic,
-        CurveMethod::BSplineClamped,
-        CurveMethod::BSplineUniform,
-        CurveMethod::BSplineQuadratic,
-        CurveMethod::CatmullRom,
-        CurveMethod::Linear,
-    ];
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            CurveMethod::BezierDeCasteljau => "Bézier (N-degree)",
-            CurveMethod::BezierCompositeQuad => "Bézier (Quad)",
-            CurveMethod::BezierCompositeCubic => "Bézier (Cubic)",
-            CurveMethod::BSplineClamped => "B-Spline (Clamped)",
-            CurveMethod::BSplineUniform => "B-Spline (Uniform)",
-            CurveMethod::BSplineQuadratic => "B-Spline (Quadratic)",
-            CurveMethod::CatmullRom => "Catmull-Rom",
-            CurveMethod::Linear => "Linear",
-        }
-    }
-}
-
-/// 从控制点构建 256 级查找表，使用指定的插值方法。
-pub fn build_curve_lut_with_method(points: &[(i64, i64, i64)], method: CurveMethod) -> [u8; 256] {
-    match method {
-        CurveMethod::BezierDeCasteljau => build_curve_lut_bezier_decasteljau(points),
-        CurveMethod::BezierCompositeQuad => build_curve_lut_bezier_composite_quad(points),
-        CurveMethod::BezierCompositeCubic => build_curve_lut_bezier_composite_cubic(points),
-        CurveMethod::BSplineClamped => build_curve_lut_bspline_clamped(points),
-        CurveMethod::BSplineUniform => build_curve_lut_bspline_uniform(points),
-        CurveMethod::BSplineQuadratic => build_curve_lut_bspline_quadratic(points),
-        CurveMethod::CatmullRom => build_curve_lut_catmull_rom(points),
-        CurveMethod::Linear => build_curve_lut_linear(points),
-    }
-}
-
-/// 预处理控制点：转 f64、排序、去重。
-fn prepare_points(points: &[(i64, i64, i64)]) -> Vec<(f64, f64)> {
-    let mut pts: Vec<(f64, f64)> = points.iter()
-        .map(|&(x, y, _)| (x as f64, y as f64))
-        .collect();
-    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    pts.dedup_by(|a, b| (a.0 - b.0).abs() < 0.5);
-    pts
-}
-
-/// 二分搜索找到 x 所在区间。
-fn find_segment(x: f64, pts: &[(f64, f64)]) -> (usize, usize) {
-    let n = pts.len();
-    let mut lo = 0;
-    let mut hi = n - 1;
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
-    }
-    (lo, hi)
-}
-
-// ─── Bézier (De Casteljau) ──────────────────────────────────────────────────
-// 单条 n 阶贝塞尔曲线，所有控制点作为贝塞尔控制点。
-// 只有首尾点在曲线上，中间控制点在曲线外侧。
-
-fn build_curve_lut_bezier_decasteljau(points: &[(i64, i64, i64)]) -> [u8; 256] {
+/// 从控制点构建 256 级查找表（N 阶贝塞尔曲线，De Casteljau 算法）。
+///
+/// 控制点格式：(x, y, flag)，x/y 均为 0-255 范围。
+/// 首尾点在曲线上，中间控制点在曲线外侧。
+pub fn build_curve_lut(points: &[(i64, i64, i64)]) -> [u8; 256] {
     let pts = prepare_points(points);
     let n = pts.len();
     if n < 2 { return identity_lut(); }
@@ -389,170 +315,14 @@ fn build_curve_lut_bezier_decasteljau(points: &[(i64, i64, i64)]) -> [u8; 256] {
     samples_to_lut(&samples)
 }
 
-// ─── Bézier (Composite Quadratic) ───────────────────────────────────────────
-// 分段二次贝塞尔曲线（类似 TrueType 字体方式）。
-// 给定控制点直接作为二次贝塞尔的控制点，段间连接点取相邻控制点中点。
-// 首尾点在曲线上，中间控制点在曲线外侧。
-
-fn build_curve_lut_bezier_composite_quad(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 { return identity_lut(); }
-    if n == 2 { return build_curve_lut_linear(points); }
-
-    // 生成 on-curve 连接点（相邻控制点中点）+ 首尾端点
-    // 段 i: P_start → ctrl[i+1] → P_end
-    // P_start = midpoint(ctrl[i], ctrl[i+1])  (or ctrl[0] for first)
-    // P_end   = midpoint(ctrl[i+1], ctrl[i+2])  (or ctrl[n-1] for last)
-    let num_samples = 1024;
-    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
-
-    let num_seg = n - 1;
-    let samples_per_seg = num_samples / num_seg;
-
-    for seg in 0..num_seg {
-        // 起点
-        let (sx, sy) = if seg == 0 {
-            pts[0]
-        } else {
-            ((pts[seg].0 + pts[seg + 1].0) * 0.5, (pts[seg].1 + pts[seg + 1].1) * 0.5)
-        };
-        // 终点
-        let (ex, ey) = if seg == num_seg - 1 {
-            pts[n - 1]
-        } else {
-            ((pts[seg + 1].0 + pts[seg + 2].0) * 0.5, (pts[seg + 1].1 + pts[seg + 2].1) * 0.5)
-        };
-        // 控制点: 对于第0段用pts[1]，其余用pts[seg+1]（但第0段也是seg+1=1）
-        // 第一段：start=pts[0], ctrl=pts[1], end=mid(pts[1],pts[2])
-        // 中间段：start=mid(pts[seg],pts[seg+1]), ctrl=pts[seg+1]（但这不对）
-        // 实际上对于 n 个控制点，有 n-2 个中间控制点形成 n-2 段（或 n-1 段？）
-        // TrueType 方式：n-1 段，每段有一个控制点
-        // 段 seg: 控制点是 pts[seg] 和 pts[seg+1] 之间的那个... 
-        // 重新设计：控制点序列中，奇数索引是 off-curve，偶数是 on-curve
-        // 但我们的情况是所有中间点都是 off-curve
-        // 正确做法：对于 n 个点（首尾 on-curve，中间 off-curve），有 n-2 个 off-curve 点
-        // 产生 max(1, n-2) 段。段间连接点为相邻 off-curve 点的中点。
-        
-        // 控制点就是 pts[seg] 到 pts[seg+1] 区间中的那个 off-curve 点
-        // 简化：每段使用当前段的两端点和它们中间对应的控制点
-        let (cx, cy) = if n == 3 {
-            // 只有一个中间控制点
-            pts[1]
-        } else if seg == 0 {
-            // 第一段：控制点 = pts[1]（第一个中间点）
-            pts[1]
-        } else if seg == num_seg - 1 {
-            // 最后一段：控制点 = pts[n-2]（最后一个中间点）
-            pts[n - 2]
-        } else {
-            // 中间段：控制点 = pts[seg+1]（注意 seg 从0开始，第一个中间控制点从1开始）
-            pts[seg + 1]
-        };
-
-        let count = if seg == num_seg - 1 { num_samples - samples.len() } else { samples_per_seg };
-        for i in 0..count {
-            let t = i as f64 / count as f64;
-            let mt = 1.0 - t;
-            // 二次贝塞尔: B(t) = (1-t)²·P0 + 2(1-t)t·P1 + t²·P2
-            let x = mt * mt * sx + 2.0 * mt * t * cx + t * t * ex;
-            let y = mt * mt * sy + 2.0 * mt * t * cy + t * t * ey;
-            samples.push((x, y));
-        }
-    }
-
-    samples_to_lut(&samples)
-}
-
-// ─── Bézier (Composite Cubic) ───────────────────────────────────────────────
-// 分段三次贝塞尔曲线。给定控制点序列，首尾在曲线上，中间控制点在曲线外。
-// 每两个相邻控制点之间自动在中点处分段连接。
-
-fn build_curve_lut_bezier_composite_cubic(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 { return identity_lut(); }
-    if n == 2 { return build_curve_lut_linear(points); }
-    if n == 3 { return build_curve_lut_bezier_composite_quad(points); }
-
-    // 对于 n >= 4，构建分段三次贝塞尔
-    // 策略：每 3 个连续中间点形成一个三次段（2 个控制点 + 2 个端点）
-    // 端点取相邻控制点中点，首尾除外
-    
-    // 生成 on-curve 节点列表（首尾 + 中间控制点对之间的中点）
-    let interior = &pts[1..n - 1]; // 中间控制点
-    let ni = interior.len();
-    
-    // 每两个中间控制点形成一个三次段
-    // 如果中间点是奇数个，最后一段退化为二次
-    let num_samples = 1024;
-    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
-
-    // 构建段：每段有 start, ctrl1, ctrl2, end
-    struct CubicSeg { s: (f64, f64), c1: (f64, f64), c2: (f64, f64), e: (f64, f64) }
-    let mut segs: Vec<CubicSeg> = Vec::new();
-
-    let mut i = 0;
-    while i < ni {
-        if i + 1 < ni {
-            // 有两个控制点可用，形成一个三次段
-            let start = if i == 0 {
-                pts[0]
-            } else {
-                // 中点
-                let prev = interior[i - 1];
-                let cur = interior[i];
-                ((prev.0 + cur.0) * 0.5, (prev.1 + cur.1) * 0.5)
-            };
-            let end = if i + 2 >= ni {
-                pts[n - 1]
-            } else {
-                let cur = interior[i + 1];
-                let next = interior[i + 2];
-                ((cur.0 + next.0) * 0.5, (cur.1 + next.1) * 0.5)
-            };
-            segs.push(CubicSeg {
-                s: start,
-                c1: interior[i],
-                c2: interior[i + 1],
-                e: end,
-            });
-            i += 2;
-        } else {
-            // 奇数个中间控制点，最后一个单独形成二次段（提升为三次）
-            let start = if i == 0 {
-                pts[0]
-            } else {
-                let prev = interior[i - 1];
-                let cur = interior[i];
-                ((prev.0 + cur.0) * 0.5, (prev.1 + cur.1) * 0.5)
-            };
-            let end = pts[n - 1];
-            let ctrl = interior[i];
-            // 二次提升为三次：C1 = S + 2/3*(C-S), C2 = E + 2/3*(C-E)
-            let c1 = (start.0 + 2.0 / 3.0 * (ctrl.0 - start.0), start.1 + 2.0 / 3.0 * (ctrl.1 - start.1));
-            let c2 = (end.0 + 2.0 / 3.0 * (ctrl.0 - end.0), end.1 + 2.0 / 3.0 * (ctrl.1 - end.1));
-            segs.push(CubicSeg { s: start, c1, c2, e: end });
-            i += 1;
-        }
-    }
-
-    if segs.is_empty() { return identity_lut(); }
-
-    let samples_per_seg = num_samples / segs.len();
-    for (si, seg) in segs.iter().enumerate() {
-        let count = if si == segs.len() - 1 { num_samples - samples.len() } else { samples_per_seg };
-        for j in 0..count {
-            let t = j as f64 / count as f64;
-            let mt = 1.0 - t;
-            // 三次贝塞尔: B(t) = (1-t)³·P0 + 3(1-t)²t·P1 + 3(1-t)t²·P2 + t³·P3
-            let x = mt.powi(3) * seg.s.0 + 3.0 * mt * mt * t * seg.c1.0 + 3.0 * mt * t * t * seg.c2.0 + t.powi(3) * seg.e.0;
-            let y = mt.powi(3) * seg.s.1 + 3.0 * mt * mt * t * seg.c1.1 + 3.0 * mt * t * t * seg.c2.1 + t.powi(3) * seg.e.1;
-            samples.push((x, y));
-        }
-    }
-
-    samples_to_lut(&samples)
+/// 预处理控制点：转 f64、排序、去重。
+fn prepare_points(points: &[(i64, i64, i64)]) -> Vec<(f64, f64)> {
+    let mut pts: Vec<(f64, f64)> = points.iter()
+        .map(|&(x, y, _)| (x as f64, y as f64))
+        .collect();
+    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    pts.dedup_by(|a, b| (a.0 - b.0).abs() < 0.5);
+    pts
 }
 
 fn identity_lut() -> [u8; 256] {
@@ -561,260 +331,17 @@ fn identity_lut() -> [u8; 256] {
     lut
 }
 
-// ─── Clamped Cubic B-Spline ─────────────────────────────────────────────────
-// 经过首尾控制点的三次 B 样条。通过在首尾重复节点实现端点插值。
-// 控制点不在曲线上（除首尾），曲线被控制点"吸引"。
-
-fn build_curve_lut_bspline_clamped(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
+/// 二分搜索找到 x 所在区间。
+fn find_segment(x: f64, pts: &[(f64, f64)]) -> (usize, usize) {
     let n = pts.len();
-    if n < 2 { return identity_lut(); }
-    if n == 2 { return build_curve_lut_linear(points); }
-    if n == 3 { return build_curve_lut_bspline_quadratic(points); }
-
-    // Clamped B-Spline: 在首尾各重复 3 次节点
-    // 节点向量: [0,0,0, t1, t2, ..., tn-2, 1,1,1] (n+4 个节点，用于 n 个控制点)
-    // 参数化使用弦长参数
-    let total_len: f64 = (0..n - 1).map(|i| {
-        let dx = pts[i + 1].0 - pts[i].0;
-        let dy = pts[i + 1].1 - pts[i].1;
-        (dx * dx + dy * dy).sqrt().max(1.0)
-    }).sum();
-
-    // 累积弦长参数
-    let mut chord = vec![0.0f64; n];
-    for i in 1..n {
-        let dx = pts[i].0 - pts[i - 1].0;
-        let dy = pts[i].1 - pts[i - 1].1;
-        chord[i] = chord[i - 1] + (dx * dx + dy * dy).sqrt().max(1.0);
+    let mut lo = 0;
+    let mut hi = n - 1;
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
     }
-    for i in 0..n { chord[i] /= total_len; }
-
-    // Clamped 节点向量
-    let k = 4; // order (degree 3 + 1)
-    let num_knots = n + k;
-    let mut knots = vec![0.0f64; num_knots];
-    // 前 k 个为 0，后 k 个为 1
-    for i in 0..k { knots[i] = 0.0; }
-    for i in (num_knots - k)..num_knots { knots[i] = 1.0; }
-    // 内部节点：使用平均参数法
-    for j in 1..=(n - k) {
-        let mut sum = 0.0;
-        for i in j..(j + k - 1) {
-            sum += chord[i];
-        }
-        knots[j + k - 1] = sum / (k - 1) as f64;
-    }
-
-    // De Boor 算法求值
-    let sample_bspline = |t: f64| -> (f64, f64) {
-        let t = t.clamp(0.0, 1.0 - 1e-10);
-        // 找到 t 所在的节点区间
-        let mut span = k - 1;
-        for i in k..num_knots - k {
-            if knots[i] <= t && t < knots[i + 1] { span = i; break; }
-        }
-
-        // De Boor 递归
-        let mut dx = vec![0.0f64; k];
-        let mut dy = vec![0.0f64; k];
-        for j in 0..k {
-            let idx = (span as isize - (k as isize - 1) + j as isize) as usize;
-            let idx = idx.min(n - 1);
-            dx[j] = pts[idx].0;
-            dy[j] = pts[idx].1;
-        }
-
-        for r in 1..k {
-            for j in (r..k).rev() {
-                let left = span + j - (k - 1);
-                let right = span + j - r + 1;
-                if right >= num_knots || left >= num_knots { continue; }
-                let denom = knots[right] - knots[left];
-                let alpha = if denom.abs() < 1e-10 { 0.5 } else { (t - knots[left]) / denom };
-                dx[j] = (1.0 - alpha) * dx[j - 1] + alpha * dx[j];
-                dy[j] = (1.0 - alpha) * dy[j - 1] + alpha * dy[j];
-            }
-        }
-
-        (dx[k - 1], dy[k - 1])
-    };
-
-    // 采样足够多的点，然后映射到 LUT
-    let num_samples = 1024;
-    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
-    for i in 0..num_samples {
-        let t = i as f64 / (num_samples - 1) as f64;
-        samples.push(sample_bspline(t));
-    }
-
-    // 从采样点构建 LUT（x → y 映射）
-    let mut lut = [0u8; 256];
-    for i in 0..256 {
-        let x = i as f64;
-        // 找到最近的采样点
-        let mut best_y = if x <= samples[0].0 { samples[0].1 }
-            else if x >= samples[num_samples - 1].0 { samples[num_samples - 1].1 }
-            else {
-                // 二分查找
-                let mut lo = 0;
-                let mut hi = num_samples - 1;
-                while hi - lo > 1 {
-                    let mid = (lo + hi) / 2;
-                    if samples[mid].0 <= x { lo = mid; } else { hi = mid; }
-                }
-                let dx = samples[hi].0 - samples[lo].0;
-                if dx.abs() < 1e-10 { samples[lo].1 }
-                else {
-                    let t = (x - samples[lo].0) / dx;
-                    samples[lo].1 * (1.0 - t) + samples[hi].1 * t
-                }
-            };
-        lut[i] = best_y.round().clamp(0.0, 255.0) as u8;
-    }
-    lut
+    (lo, hi)
 }
-
-// ─── Uniform Cubic B-Spline ─────────────────────────────────────────────────
-// 均匀三次 B 样条，控制点不在曲线上（全部），使用均匀节点。
-
-fn build_curve_lut_bspline_uniform(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 { return identity_lut(); }
-    if n == 2 { return build_curve_lut_linear(points); }
-    if n == 3 {
-        // 对 3 个点退化为 quadratic
-        return build_curve_lut_bspline_quadratic(points);
-    }
-
-    // 均匀三次 B 样条基函数（局部参数 t ∈ [0,1]）
-    // N0(t) = (1 - t)^3 / 6
-    // N1(t) = (3t^3 - 6t^2 + 4) / 6
-    // N2(t) = (-3t^3 + 3t^2 + 3t + 1) / 6
-    // N3(t) = t^3 / 6
-    let basis = |t: f64| -> [f64; 4] {
-        let t2 = t * t;
-        let t3 = t2 * t;
-        [
-            (1.0 - t).powi(3) / 6.0,
-            (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0,
-            (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0,
-            t3 / 6.0,
-        ]
-    };
-
-    let num_seg = n - 3; // 有效段数
-    let num_samples = 1024;
-    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
-
-    for s in 0..num_samples {
-        let u = s as f64 / (num_samples - 1) as f64 * num_seg as f64;
-        let seg = (u.floor() as usize).min(num_seg - 1);
-        let t = u - seg as f64;
-        let b = basis(t);
-        let x = b[0] * pts[seg].0 + b[1] * pts[seg + 1].0 + b[2] * pts[seg + 2].0 + b[3] * pts[seg + 3].0;
-        let y = b[0] * pts[seg].1 + b[1] * pts[seg + 1].1 + b[2] * pts[seg + 2].1 + b[3] * pts[seg + 3].1;
-        samples.push((x, y));
-    }
-
-    samples_to_lut(&samples)
-}
-
-// ─── Quadratic B-Spline ─────────────────────────────────────────────────────
-
-fn build_curve_lut_bspline_quadratic(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 { return identity_lut(); }
-    if n == 2 { return build_curve_lut_linear(points); }
-
-    // 均匀二次 B 样条基函数
-    // N0(t) = (1-t)^2 / 2
-    // N1(t) = (-2t^2 + 2t + 1) / 2
-    // N2(t) = t^2 / 2
-    let basis = |t: f64| -> [f64; 3] {
-        let t2 = t * t;
-        [
-            (1.0 - t).powi(2) / 2.0,
-            (-2.0 * t2 + 2.0 * t + 1.0) / 2.0,
-            t2 / 2.0,
-        ]
-    };
-
-    let num_seg = n - 2;
-    let num_samples = 1024;
-    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(num_samples);
-
-    for s in 0..num_samples {
-        let u = s as f64 / (num_samples - 1) as f64 * num_seg as f64;
-        let seg = (u.floor() as usize).min(num_seg - 1);
-        let t = u - seg as f64;
-        let b = basis(t);
-        let x = b[0] * pts[seg].0 + b[1] * pts[seg + 1].0 + b[2] * pts[seg + 2].0;
-        let y = b[0] * pts[seg].1 + b[1] * pts[seg + 1].1 + b[2] * pts[seg + 2].1;
-        samples.push((x, y));
-    }
-
-    samples_to_lut(&samples)
-}
-
-// ─── Catmull-Rom ─────────────────────────────────────────────────────────────
-
-fn build_curve_lut_catmull_rom(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let pts = prepare_points(points);
-    let n = pts.len();
-    if n < 2 { return identity_lut(); }
-    if n == 2 { return build_curve_lut_linear(points); }
-
-    let mut m = vec![0.0f64; n];
-    for k in 0..n {
-        if k == 0 {
-            m[k] = (pts[1].1 - pts[0].1) / (pts[1].0 - pts[0].0).max(1e-10);
-        } else if k == n - 1 {
-            m[k] = (pts[n - 1].1 - pts[n - 2].1) / (pts[n - 1].0 - pts[n - 2].0).max(1e-10);
-        } else {
-            let dx = pts[k + 1].0 - pts[k - 1].0;
-            m[k] = if dx.abs() < 1e-10 { 0.0 } else { (pts[k + 1].1 - pts[k - 1].1) / dx };
-        }
-    }
-    fill_lut_hermite(&pts, &m)
-}
-
-/// 用 Hermite 基函数对区间 [lo, hi] 插值。
-fn hermite_interp(x: f64, pts: &[(f64, f64)], m: &[f64], lo: usize, hi: usize) -> f64 {
-    let h = pts[hi].0 - pts[lo].0;
-    if h.abs() < 1e-10 { return pts[lo].1; }
-    let t = (x - pts[lo].0) / h;
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
-    let h10 = t3 - 2.0 * t2 + t;
-    let h01 = -2.0 * t3 + 3.0 * t2;
-    let h11 = t3 - t2;
-    h00 * pts[lo].1 + h10 * h * m[lo] + h01 * pts[hi].1 + h11 * h * m[hi]
-}
-
-/// 为所有 256 个值生成 LUT，给定点集和每点切线。
-fn fill_lut_hermite(pts: &[(f64, f64)], m: &[f64]) -> [u8; 256] {
-    let mut lut = [0u8; 256];
-    let n = pts.len();
-    for i in 0..256 {
-        let x = i as f64;
-        if x <= pts[0].0 {
-            lut[i] = pts[0].1.clamp(0.0, 255.0) as u8;
-        } else if x >= pts[n - 1].0 {
-            lut[i] = pts[n - 1].1.clamp(0.0, 255.0) as u8;
-        } else {
-            let (lo, hi) = find_segment(x, pts);
-            let y = hermite_interp(x, pts, m, lo, hi);
-            lut[i] = y.round().clamp(0.0, 255.0) as u8;
-        }
-    }
-    lut
-}
-
-// ─── Linear ──────────────────────────────────────────────────────────────────
 
 fn build_curve_lut_linear(points: &[(i64, i64, i64)]) -> [u8; 256] {
     let pts = prepare_points(points);
@@ -837,8 +364,6 @@ fn build_curve_lut_linear(points: &[(i64, i64, i64)]) -> [u8; 256] {
     }
     lut
 }
-
-// ─── 工具函数 ────────────────────────────────────────────────────────────────
 
 /// 从参数化采样点 (x, y) 构建 256 级 LUT。
 fn samples_to_lut(samples: &[(f64, f64)]) -> [u8; 256] {
@@ -870,110 +395,11 @@ fn samples_to_lut(samples: &[(f64, f64)]) -> [u8; 256] {
     lut
 }
 
-// ─── Monotone Hermite (Fritsch-Carlson) ──────────────────────────────────────
-
-/// 用单调三次 Hermite 插值从控制点构建 256 级查找表。
-///
-/// 控制点格式：(x, y, flag)，x/y 均为 0-255 范围。
-/// 使用 Fritsch-Carlson 方法保证单调性，避免过冲。
-pub fn build_curve_lut(points: &[(i64, i64, i64)]) -> [u8; 256] {
-    let mut lut = [0u8; 256];
-    if points.len() < 2 {
-        for i in 0..256 { lut[i] = i as u8; }
-        return lut;
-    }
-
-    let mut pts: Vec<(f64, f64)> = points.iter()
-        .map(|&(x, y, _)| (x as f64, y as f64))
-        .collect();
-    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    pts.dedup_by(|a, b| (a.0 - b.0).abs() < 0.5);
-
-    let n = pts.len();
-    if n < 2 {
-        for i in 0..256 { lut[i] = i as u8; }
-        return lut;
-    }
-
-    let mut delta = vec![0.0f64; n - 1];
-    for k in 0..n - 1 {
-        let dx = pts[k + 1].0 - pts[k].0;
-        if dx.abs() < 1e-10 { delta[k] = 0.0; }
-        else { delta[k] = (pts[k + 1].1 - pts[k].1) / dx; }
-    }
-
-    // Fritsch-Carlson 单调三次切线
-    let mut m = vec![0.0f64; n];
-    m[0] = delta[0];
-    m[n - 1] = delta[n - 2];
-    for k in 1..n - 1 {
-        if delta[k - 1] * delta[k] <= 0.0 {
-            m[k] = 0.0;
-        } else {
-            m[k] = (delta[k - 1] + delta[k]) / 2.0;
-        }
-    }
-    for k in 0..n - 1 {
-        if delta[k].abs() < 1e-10 {
-            m[k] = 0.0;
-            m[k + 1] = 0.0;
-        } else {
-            let alpha = m[k] / delta[k];
-            let beta = m[k + 1] / delta[k];
-            let s2 = alpha * alpha + beta * beta;
-            if s2 > 9.0 {
-                let tau = 3.0 / s2.sqrt();
-                m[k] = tau * alpha * delta[k];
-                m[k + 1] = tau * beta * delta[k];
-            }
-        }
-    }
-
-    for i in 0..256 {
-        let x = i as f64;
-        if x <= pts[0].0 {
-            lut[i] = pts[0].1.clamp(0.0, 255.0) as u8;
-            continue;
-        }
-        if x >= pts[n - 1].0 {
-            lut[i] = pts[n - 1].1.clamp(0.0, 255.0) as u8;
-            continue;
-        }
-
-        let mut lo = 0;
-        let mut hi = n - 1;
-        while hi - lo > 1 {
-            let mid = (lo + hi) / 2;
-            if pts[mid].0 <= x { lo = mid; } else { hi = mid; }
-        }
-
-        let h = pts[hi].0 - pts[lo].0;
-        if h.abs() < 1e-10 {
-            lut[i] = pts[lo].1.clamp(0.0, 255.0) as u8;
-            continue;
-        }
-
-        let t = (x - pts[lo].0) / h;
-        let t2 = t * t;
-        let t3 = t2 * t;
-
-        let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
-        let h10 = t3 - 2.0 * t2 + t;
-        let h01 = -2.0 * t3 + 3.0 * t2;
-        let h11 = t3 - t2;
-
-        let y = h00 * pts[lo].1 + h10 * h * m[lo] + h01 * pts[hi].1 + h11 * h * m[hi];
-        lut[i] = y.round().clamp(0.0, 255.0) as u8;
-    }
-
-    lut
-}
-
 /// 将渐变曲线应用到 RGB 图像上（自动处理 8-bit 和 16-bit）。
 ///
 /// 渐变曲线通道顺序：[RGB主通道, R, G, B, C(青), M(品红), Y(黄)]
 /// 应用顺序：先逐通道 R/G/B → CMY（反转通道）→ 主通道 RGB
-pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64, i64, i64)>], method: CurveMethod) -> image::DynamicImage {
+pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64, i64, i64)>]) -> image::DynamicImage {
     if gradations.len() < 7 { return img.clone(); }
 
     let is_identity = |pts: &[(i64, i64, i64)]| -> bool {
@@ -982,13 +408,13 @@ pub fn apply_gradation_curves(img: &image::DynamicImage, gradations: &[Vec<(i64,
     };
     if gradations.iter().all(|ch| is_identity(ch)) { return img.clone(); }
 
-    let lut_rgb = build_curve_lut_with_method(&gradations[0], method);
-    let lut_r   = build_curve_lut_with_method(&gradations[1], method);
-    let lut_g   = build_curve_lut_with_method(&gradations[2], method);
-    let lut_b   = build_curve_lut_with_method(&gradations[3], method);
-    let lut_c   = build_curve_lut_with_method(&gradations[4], method);
-    let lut_m   = build_curve_lut_with_method(&gradations[5], method);
-    let lut_y   = build_curve_lut_with_method(&gradations[6], method);
+    let lut_rgb = build_curve_lut(&gradations[0]);
+    let lut_r   = build_curve_lut(&gradations[1]);
+    let lut_g   = build_curve_lut(&gradations[2]);
+    let lut_b   = build_curve_lut(&gradations[3]);
+    let lut_c   = build_curve_lut(&gradations[4]);
+    let lut_m   = build_curve_lut(&gradations[5]);
+    let lut_y   = build_curve_lut(&gradations[6]);
 
     match img {
         image::DynamicImage::ImageRgb16(rgb16) => {
@@ -1188,7 +614,7 @@ mod tests {
         let identity_grads: Vec<Vec<(i64, i64, i64)>> = (0..7)
             .map(|_| vec![(0, 0, 0), (255, 255, 0)])
             .collect();
-        let result = apply_gradation_curves(&img, &identity_grads, CurveMethod::Linear);
+        let result = apply_gradation_curves(&img, &identity_grads);
         let out = result.to_rgb8();
         assert_eq!(out.as_raw(), &pixels);
     }

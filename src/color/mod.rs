@@ -7,5 +7,5 @@ mod adjust;
 
 pub use profile::{IccProfileInfo, IccProfileDetail, SettingsPreset, scan_icc_profiles, scan_settings_presets, parse_icc_detail};
 pub use transform::{TargetColorSpace, apply_icc_transform};
-pub use processing::{apply_film_processing, apply_film_curve_lut, apply_gradation_curves, build_curve_lut, build_curve_lut_with_method, CurveMethod, FILM_CURVE_LUT_R, FILM_CURVE_LUT_G, FILM_CURVE_LUT_B, lut_interp_16};
+pub use processing::{apply_film_processing, apply_film_curve_lut, apply_gradation_curves, build_curve_lut, FILM_CURVE_LUT_R, FILM_CURVE_LUT_G, FILM_CURVE_LUT_B, lut_interp_16};
 pub use adjust::{ManualAdjust, apply_manual_adjust, extract_embedded_icc};

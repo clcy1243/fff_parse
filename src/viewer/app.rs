@@ -106,7 +106,6 @@ impl FffViewerApp {
             curve_channel: 0,
             curve_points: Self::default_curve_points(),
             curve_dragging: None,
-            curve_method: color::CurveMethod::BezierDeCasteljau,
         };
 
         if let Some(path) = initial_file {
