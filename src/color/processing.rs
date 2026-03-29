@@ -1033,25 +1033,10 @@ pub fn apply_color_pipeline(
     icc_data: Option<&[u8]>,
     target_color_space: TargetColorSpace,
 ) -> image::DynamicImage {
-    // 1. 渐变曲线
-    let curves_are_identity = curve_points.iter().all(|pts| {
-        pts.len() == 2
-            && pts[0].0 == 0 && pts[0].1 == 0
-            && pts[1].0 == 255 && pts[1].1 == 255
-    });
-    let img = if adjust.apply_curves
-        && curve_points.len() >= 7
-        && !curves_are_identity
-    {
-        apply_gradation_curves(&img, curve_points)
-    } else {
-        img
-    };
-
-    // 2. 扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
+    // 1. 扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
     let img = super::adjust::apply_scanner_levels(&img, adjust, film_lut);
 
-    // 3. ICC 色彩空间转换（扫描仪 → 输出色域）
+    // 2. ICC 色彩空间转换（扫描仪 → 输出色域）
     let img = if let Some(icc) = icc_data {
         match super::transform::apply_icc_transform(&img, icc, target_color_space) {
             Ok(transformed) => transformed,
@@ -1064,6 +1049,21 @@ pub fn apply_color_pipeline(
         img
     };
 
-    // 4. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在 ICC 之后
-    super::adjust::apply_display_adjust(&img, adjust)
+    // 3. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在 ICC 之后
+    let img = super::adjust::apply_display_adjust(&img, adjust);
+
+    // 4. 渐变曲线 — 在显示空间最后应用（FlexColor 行为）
+    let curves_are_identity = curve_points.iter().all(|pts| {
+        pts.len() == 2
+            && pts[0].0 == 0 && pts[0].1 == 0
+            && pts[1].0 == 255 && pts[1].1 == 255
+    });
+    if adjust.apply_curves
+        && curve_points.len() >= 7
+        && !curves_are_identity
+    {
+        apply_gradation_curves(&img, curve_points)
+    } else {
+        img
+    }
 }
