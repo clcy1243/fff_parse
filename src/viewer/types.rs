@@ -407,6 +407,8 @@ pub(super) struct ExportPipeline {
     pub(super) manual_adjust: color::ManualAdjust,
     /// 从缩略图提取的胶片曲线 LUT
     pub(super) film_lut: Option<[Vec<f32>; 3]>,
+    /// 渐变曲线控制点（与渲染管线一致）
+    pub(super) curve_points: Vec<Vec<(i64, i64, i64)>>,
 }
 
 // ─── 加载状态 ───────────────────────────────────────────────────────────────
