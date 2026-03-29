@@ -97,6 +97,9 @@ fn main() {
                         "        Shadow={:?} Gray={:?} Highlight={:?}",
                         c.shadow, c.gray, c.highlight
                     );
+                    if !c.dot_color.is_empty() {
+                        println!("        DotColor={:?}", c.dot_color);
+                    }
                     println!(
                         "        apply: sliders={} curves={} histogram={} usm={} dust={} cc={} cn_filter={}",
                         c.apply_sliders, c.apply_curves, c.apply_histogram,

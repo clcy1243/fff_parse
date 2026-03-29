@@ -383,6 +383,9 @@ fn parse_image_correction(dict_node: &XmlNode) -> ImageCorrection {
                     corr.rgb_profile_name = Some(name);
                 }
             }
+            "DotColor" => {
+                corr.dot_color = parse_int_array(val);
+            }
             _ => {}
         }
 

@@ -1684,7 +1684,7 @@ impl TiffFile {
     }
 
     /// 解码指定 IFD 的未压缩 RGB 数据为 DynamicImage，支持 8 位和 16 位
-    fn decode_uncompressed_rgb(&self, ifd: &Ifd) -> Option<image::DynamicImage> {
+    pub fn decode_uncompressed_rgb(&self, ifd: &Ifd) -> Option<image::DynamicImage> {
         let width = ifd.get_u32(0x0100)? as u32;
         let height = ifd.get_u32(0x0101)? as u32;
         let bps = ifd.get(0x0102).and_then(|v| v.as_u32()).unwrap_or(8);
@@ -1751,6 +1751,67 @@ impl TiffFile {
         }
 
         None
+    }
+
+    /// 同时解码 8-bit 缩略图（IFD#1, SubfileType=1）和同分辨率的 16-bit 预览（IFD#2）。
+    /// 用于负片胶片曲线提取：8-bit 缩略图包含 FlexColor 完整处理效果，
+    /// 16-bit 预览为原始扫描数据（降采样），两者分辨率一致可逐像素比对。
+    pub fn decode_thumbnail_pair(
+        &self,
+    ) -> Option<(
+        image::RgbImage,
+        image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    )> {
+        // 收集所有未压缩 RGB IFD 的信息
+        let mut ifds_info: Vec<(usize, u32, u32, u32, u32)> = Vec::new(); // (idx, w, h, bps, subfile_type)
+        for (idx, ifd) in self.ifds.iter().enumerate() {
+            let width = ifd.get_u32(0x0100).unwrap_or(0);
+            let height = ifd.get_u32(0x0101).unwrap_or(0);
+            let bps = ifd.get(0x0102).and_then(|v| v.as_u32()).unwrap_or(8);
+            let compression = ifd.get_u32(0x0103).unwrap_or(1);
+            let photometric = ifd.get_u32(0x0106).unwrap_or(0);
+            let spp = ifd.get_u32(0x0115).unwrap_or(1);
+            let subfile_type = ifd.get_u32(0x00FE).unwrap_or(0);
+
+            if compression == 1 && photometric == 2 && spp >= 3 && width > 0 && height > 0 {
+                ifds_info.push((idx, width, height, bps, subfile_type));
+            }
+        }
+
+        // 找到 8-bit 缩略图 (SubfileType=1)
+        let thumb_info = ifds_info.iter().find(|i| i.4 == 1 && i.3 == 8)?;
+        let thumb_w = thumb_info.1;
+        let thumb_h = thumb_info.2;
+
+        // 找到同分辨率的 16-bit 预览 (SubfileType=0, 非最大尺寸)
+        let max_pixels = ifds_info
+            .iter()
+            .map(|i| i.1 as u64 * i.2 as u64)
+            .max()
+            .unwrap_or(0);
+        let preview_info = ifds_info.iter().find(|i| {
+            i.3 == 16
+                && i.4 == 0
+                && (i.1 as u64 * i.2 as u64) < max_pixels
+                && i.1 == thumb_w
+                && i.2 == thumb_h
+        })?;
+
+        // 解码两个 IFD
+        let thumb_img = self.decode_uncompressed_rgb(&self.ifds[thumb_info.0])?;
+        let preview_img = self.decode_uncompressed_rgb(&self.ifds[preview_info.0])?;
+
+        let thumb_8 = thumb_img.to_rgb8();
+        let preview_16 = match preview_img {
+            image::DynamicImage::ImageRgb16(rgb16) => rgb16,
+            _ => return None,
+        };
+
+        if thumb_8.width() != preview_16.width() || thumb_8.height() != preview_16.height() {
+            return None;
+        }
+
+        Some((thumb_8, preview_16))
     }
 
     /// 解码全分辨率图像用于 TIFF 导出，保留 16 位数据不降级为 8 位

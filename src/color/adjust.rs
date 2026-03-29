@@ -64,6 +64,10 @@ pub struct ManualAdjust {
     pub levels_gamma: [f32; 4],
     /// 输入白点：0-255
     pub levels_white: [f32; 4],
+    /// 输出色阶暗部端点：0-255（DotColor 暗部，同时影响 RGB 三通道）
+    pub output_shadow: f32,
+    /// 输出色阶亮部端点：0-255（DotColor 亮部，同时影响 RGB 三通道）
+    pub output_highlight: f32,
 
     // ── USM 锐化参数（尚未实现处理，仅保存/加载） ──
     /// 是否应用 USM 锐化
@@ -127,6 +131,8 @@ impl Default for ManualAdjust {
             levels_black: [0.0; 4],
             levels_gamma: [1.0; 4],
             levels_white: [255.0; 4],
+            output_shadow: 0.0,
+            output_highlight: 255.0,
             // USM 锐化
             apply_usm: false,
             usm_amount: 0, usm_radius: 1, usm_dark_limit: 0, usm_noise_limit: 0,
@@ -149,7 +155,9 @@ impl ManualAdjust {
         let levels_id = !self.apply_levels
             || (self.levels_black.iter().all(|&v| v < 0.5)
                 && self.levels_gamma.iter().all(|&v| (v - 1.0).abs() < 0.01)
-                && self.levels_white.iter().all(|&v| v > 254.5));
+                && self.levels_white.iter().all(|&v| v > 254.5)
+                && self.output_shadow < 0.5
+                && self.output_highlight > 254.5);
         let exposure_id = !self.apply_exposure || self.exposure.abs() < 0.001;
         let brightness_id = !self.apply_brightness || self.brightness.abs() < 0.1;
         let shadow_depth_id = !self.apply_shadow_depth || self.lightness.abs() < 0.1;
@@ -179,18 +187,25 @@ impl ManualAdjust {
 /// 支持 16-bit 和 8-bit 输入，始终返回与输入相同的位深。
 /// 色阶参数 (levels_black/white) 范围为 0-255（用户空间），内部自动映射到实际位深。
 /// 使用 65536 项 LUT（16-bit）或 256 项 LUT（8-bit）提升性能。
-pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> image::DynamicImage {
-    if adj.is_identity() {
+///
+/// `film_lut`: 可选的逐通道胶片曲线 LUT（65536 项 f32），从缩略图提取。
+/// 提供时在色阶之前应用，替代内置硬编码曲线。
+pub fn apply_manual_adjust(
+    img: &image::DynamicImage,
+    adj: &ManualAdjust,
+    film_lut: Option<&[Vec<f32>; 3]>,
+) -> image::DynamicImage {
+    if adj.is_identity() && film_lut.is_none() {
         return img.clone();
     }
 
     match img {
         image::DynamicImage::ImageRgb16(rgb16) => {
-            image::DynamicImage::ImageRgb16(apply_adjust_16(rgb16, adj))
+            image::DynamicImage::ImageRgb16(apply_adjust_16(rgb16, adj, film_lut))
         }
         _ => {
             let rgb8 = img.to_rgb8();
-            image::DynamicImage::ImageRgb8(apply_adjust_8(&rgb8, adj))
+            image::DynamicImage::ImageRgb8(apply_adjust_8(&rgb8, adj, film_lut))
         }
     }
 }
@@ -199,6 +214,7 @@ pub fn apply_manual_adjust(img: &image::DynamicImage, adj: &ManualAdjust) -> ima
 fn apply_adjust_16(
     rgb16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
     adj: &ManualAdjust,
+    film_lut: Option<&[Vec<f32>; 3]>,
 ) -> image::ImageBuffer<image::Rgb<u16>, Vec<u16>> {
     use rayon::prelude::*;
 
@@ -208,13 +224,12 @@ fn apply_adjust_16(
     let exposure_mult = if adj.apply_exposure { 2.0_f32.powf(adj.exposure) } else { 1.0 };
     let sat = if adj.apply_saturation { adj.saturation / 100.0 } else { 0.0 };
 
-    // 色阶参数从用户空间 (0-255) 映射到归一化 (0-1)
-    let (bl_m, wh_m, gamma_m) = if adj.apply_levels {
-        (adj.levels_black[0] / 255.0, adj.levels_white[0] / 255.0, adj.levels_gamma[0].clamp(0.01, 99.0))
+    // Master gamma（RGB 通道独立参数，不受 shadow/highlight 影响）
+    let gamma_m = if adj.apply_levels {
+        adj.levels_gamma[0].clamp(0.01, 99.0)
     } else {
-        (0.0, 1.0, 1.0)
+        1.0
     };
-    let range_m = (wh_m - bl_m).max(0.001);
 
     // 色温/色调 per-channel 乘数
     let temp_mults = if adj.apply_color_temp && (adj.color_temperature.abs() > 0.1 || adj.tint.abs() > 0.1) {
@@ -233,7 +248,10 @@ fn apply_adjust_16(
     };
     let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
 
-    let use_film_lut = adj.apply_film_curve
+    // 提取的 LUT 优先；若无提取 LUT，回退到硬编码 LUT
+    let use_extracted_lut = adj.apply_film_curve && film_lut.is_some();
+    let use_hardcoded_lut = adj.apply_film_curve
+        && !use_extracted_lut
         && (adj.film_type == 1 || adj.film_type == 2)
         && adj.film_curve == 4
         && (adj.film_gamma - 2.0).abs() < 0.01;
@@ -247,14 +265,27 @@ fn apply_adjust_16(
         };
         let range_c = (wh_c - bl_c).max(0.001);
 
+        // 输出色阶 (DotColor) 归一化
+        let (out_lo, out_hi) = if adj.apply_levels {
+            (adj.output_shadow / 255.0, adj.output_highlight / 255.0)
+        } else {
+            (0.0, 1.0)
+        };
+        let out_range = (out_hi - out_lo).max(0.001);
+
         let mut lut = vec![0u16; 65536];
         for i in 0..65536u32 {
             let mut v = i as f32 / 65535.0;
 
-            v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
-            v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
-
-            if use_film_lut {
+            // ① 胶片曲线（提取或硬编码）—— 在色阶之前应用
+            if use_extracted_lut {
+                let extracted = &film_lut.unwrap()[ch];
+                // 线性插值 65536 项 LUT
+                let pos = v * 65535.0;
+                let lo = (pos as usize).min(65534);
+                let frac = pos - lo as f32;
+                v = extracted[lo] * (1.0 - frac) + extracted[lo + 1] * frac;
+            } else if use_hardcoded_lut {
                 let lut_table: &[u8; 256] = match ch {
                     0 => &crate::color::FILM_CURVE_LUT_R,
                     1 => &crate::color::FILM_CURVE_LUT_G,
@@ -262,6 +293,14 @@ fn apply_adjust_16(
                 };
                 v = crate::color::lut_interp_16(v, lut_table) / 65535.0;
             }
+
+            // ② per-channel 色阶 + gamma，再叠加 master gamma
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+            v = v.powf(1.0 / gamma_c);
+            v = v.powf(1.0 / gamma_m);  // master gamma: 默认 1.0 → v^1（中性）
+
+            // ③ 输出色阶：将 [0,1] 映射到 [out_lo, out_hi]
+            v = out_lo + v * out_range;
 
             v += shifts[ch];
             v *= exposure_mult;
@@ -357,7 +396,7 @@ fn apply_adjust_16(
 }
 
 /// 8-bit 手动调整实现（保留原有逻辑）
-fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage {
+fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust, film_lut: Option<&[Vec<f32>; 3]>) -> image::RgbImage {
     use rayon::prelude::*;
 
     let (w, h) = (rgb8.width(), rgb8.height());
@@ -366,12 +405,12 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
     let exposure_mult = if adj.apply_exposure { 2.0_f32.powf(adj.exposure) } else { 1.0 };
     let sat = if adj.apply_saturation { adj.saturation / 100.0 } else { 0.0 };
 
-    let (bl_m, wh_m, gamma_m) = if adj.apply_levels {
-        (adj.levels_black[0] / 255.0, adj.levels_white[0] / 255.0, adj.levels_gamma[0].clamp(0.01, 99.0))
+    // Master gamma（RGB 通道只提供 gamma，shadow/highlight 不参与计算）
+    let gamma_m = if adj.apply_levels {
+        adj.levels_gamma[0].clamp(0.01, 99.0)
     } else {
-        (0.0, 1.0, 1.0)
+        1.0
     };
-    let range_m = (wh_m - bl_m).max(0.001);
 
     let temp_mults = if adj.apply_color_temp && (adj.color_temperature.abs() > 0.1 || adj.tint.abs() > 0.1) {
         let t = adj.color_temperature / 100.0;
@@ -388,7 +427,10 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
         [0.0; 3]
     };
 
-    let use_film_lut = adj.apply_film_curve
+    // 提取的 LUT 优先；若无提取 LUT，回退到硬编码 LUT
+    let use_extracted_lut = adj.apply_film_curve && film_lut.is_some();
+    let use_hardcoded_lut = adj.apply_film_curve
+        && !use_extracted_lut
         && (adj.film_type == 1 || adj.film_type == 2)
         && adj.film_curve == 4
         && (adj.film_gamma - 2.0).abs() < 0.01;
@@ -404,10 +446,16 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
 
         for i in 0..=255u32 {
             let mut v = i as f32 / 255.0;
-            v = ((v - bl_m) / range_m).clamp(0.0, 1.0).powf(1.0 / gamma_m);
-            v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
 
-            if use_film_lut {
+            // ① 胶片曲线（提取或硬编码）—— 在色阶之前应用
+            if use_extracted_lut {
+                let extracted = &film_lut.unwrap()[ch];
+                // 8-bit 输入映射到 65536 项 LUT
+                let pos = v * 65535.0;
+                let lo = (pos as usize).min(65534);
+                let frac = pos - lo as f32;
+                v = extracted[lo] * (1.0 - frac) + extracted[lo + 1] * frac;
+            } else if use_hardcoded_lut {
                 let lut_table: &[u8; 256] = match ch {
                     0 => &crate::color::FILM_CURVE_LUT_R,
                     1 => &crate::color::FILM_CURVE_LUT_G,
@@ -419,6 +467,10 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust) -> image::RgbImage
                 let frac = x - lo as f32;
                 v = (lut_table[lo] as f32 * (1.0 - frac) + lut_table[hi] as f32 * frac) / 255.0;
             }
+
+            // ② per-channel 色阶 + gamma，再叠加 master gamma
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
+            v = v.powf(1.0 / gamma_m);  // master gamma: 默认 1.0 → v^1（中性）
 
             v += shifts[ch];
             v *= exposure_mult;
@@ -628,7 +680,7 @@ mod tests {
         let img = image::DynamicImage::ImageRgb8(
             image::RgbImage::from_raw(w, h, pixels.clone()).unwrap(),
         );
-        let result = apply_manual_adjust(&img, &adj);
+        let result = apply_manual_adjust(&img, &adj, None);
         let out = result.to_rgb8();
         assert_eq!(out.as_raw(), &pixels, "identity adjust should not change pixels");
     }
@@ -645,7 +697,7 @@ mod tests {
         let img = image::DynamicImage::ImageRgb8(
             image::RgbImage::from_raw(w, h, pixels).unwrap(),
         );
-        let result = apply_manual_adjust(&img, &adj);
+        let result = apply_manual_adjust(&img, &adj, None);
         let out = result.to_rgb8();
         let raw = out.as_raw();
         // 值 0 和 64 应映射到 0（低于黑点）
@@ -669,7 +721,7 @@ mod tests {
         let img = image::DynamicImage::ImageRgb8(
             image::RgbImage::from_raw(w, h, pixels).unwrap(),
         );
-        let result = apply_manual_adjust(&img, &adj);
+        let result = apply_manual_adjust(&img, &adj, None);
         let out = result.to_rgb8();
         let raw = out.as_raw();
         // 值 0 应映射到 0
@@ -691,7 +743,7 @@ mod tests {
         let img = image::DynamicImage::ImageRgb8(
             image::RgbImage::from_raw(w, h, pixels).unwrap(),
         );
-        let result = apply_manual_adjust(&img, &adj);
+        let result = apply_manual_adjust(&img, &adj, None);
         let out = result.to_rgb8();
         let raw = out.as_raw();
         // 64 * 2 = 128
@@ -709,7 +761,7 @@ mod tests {
         let img = image::DynamicImage::ImageRgb16(
             image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(w, h, pixels.clone()).unwrap(),
         );
-        let result = apply_manual_adjust(&img, &adj);
+        let result = apply_manual_adjust(&img, &adj, None);
         match result {
             image::DynamicImage::ImageRgb16(buf) => {
                 assert_eq!(buf.as_raw(), &pixels, "16-bit identity should preserve pixels");

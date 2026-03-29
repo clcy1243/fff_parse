@@ -274,6 +274,235 @@ pub fn apply_film_curve_lut(
     }
 }
 
+// ─── Film Curve Extraction ───────────────────────────────────────────────────
+// 从 FFF 文件的 8-bit 缩略图（FlexColor 预渲染）和 16-bit 预览（原始数据）
+// 逆向提取逐通道胶片曲线 LUT。
+//
+// 原理：缩略图 = filmCurve(inverted_raw) → levels → gamma → ... → saturation
+// 反推：un_sat(un_gam(un_lev(thumbnail))) = filmCurve(inverted_raw)
+// 建立 inverted_raw → un_processed_thumb 的映射，即为胶片曲线。
+
+/// 从 8-bit 缩略图和同分辨率 16-bit 预览提取逐通道胶片曲线 LUT。
+///
+/// 返回 3 通道 × 65536 项 f32 (0.0-1.0) 的查找表。
+/// 仅对负片（film_type=1 或 2）有效。
+pub fn extract_film_curve(
+    thumb_8: &image::RgbImage,
+    preview_16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    correction: &crate::flexcolor::ImageCorrection,
+) -> Option<[Vec<f32>; 3]> {
+    let (w, h) = (thumb_8.width() as usize, thumb_8.height() as usize);
+    if w != preview_16.width() as usize || h != preview_16.height() as usize {
+        log::warn!("extract_film_curve: dimension mismatch {}x{} vs {}x{}",
+            w, h, preview_16.width(), preview_16.height());
+        return None;
+    }
+
+    let film_type = correction.film_type;
+    if film_type != 1 && film_type != 2 {
+        return None;
+    }
+
+    let n_pixels = w * h;
+    let thumb_raw = thumb_8.as_raw();
+    let prev_raw = preview_16.as_raw();
+
+    // ── 反转参数（与 apply_film_processing 一致）──
+    let hi = [
+        correction.highlight[1] as f32 * 4.0,
+        correction.highlight[2] as f32 * 4.0,
+        correction.highlight[3] as f32 * 4.0,
+    ];
+    let scale = [
+        if hi[0] > 0.0 { 65535.0 / hi[0] } else { 1.0 },
+        if hi[1] > 0.0 { 65535.0 / hi[1] } else { 1.0 },
+        if hi[2] > 0.0 { 65535.0 / hi[2] } else { 1.0 },
+    ];
+
+    // ── 色阶参数（与 load_levels_from_correction + apply_adjust_16 一致）──
+    let mut bl = [0.0f32; 3];
+    let mut wh_c = [0.0f32; 3];
+    let mut gamma_c = [0.0f32; 3];
+    for ch in 0..3 {
+        bl[ch] = correction.shadow[ch + 1] as f32 * 4.0 / 65535.0;
+        wh_c[ch] = correction.highlight[ch + 1] as f32 * 4.0 / 65535.0;
+        gamma_c[ch] = (correction.gray[ch + 1] as f32 / 128.0).max(0.01);
+    }
+    let gamma_m = ((correction.gamma as f32) - 1.0).max(0.01);
+
+    // 输出色阶 (DotColor)
+    let out_lo = if correction.dot_color.len() >= 14 {
+        correction.dot_color[0] as f32 / 255.0
+    } else { 0.0 };
+    let out_hi = if correction.dot_color.len() >= 14 {
+        correction.dot_color[7] as f32 / 255.0
+    } else { 1.0 };
+    let out_range = (out_hi - out_lo).max(0.001);
+
+    // 饱和度
+    let sat = if correction.apply_sliders {
+        correction.saturation as f32 / 100.0
+    } else { 0.0 };
+
+    // 曝光
+    let exp_mult = if correction.apply_sliders && (correction.ev - 1.0).abs() > 0.001 {
+        2.0f32.powf(correction.ev as f32 - 1.0)
+    } else { 1.0 };
+
+    // ── 构建映射 ──
+    // 使用 1024 bins（缩略图像素有限，太多 bins 导致每 bin 样本不足）
+    const BINS: usize = 1024;
+    let mut sums = [[0.0f64; BINS]; 3];
+    let mut counts = [[0u32; BINS]; 3];
+
+    for y in 0..h {
+        for x in 0..w {
+            let pi = (y * w + x) * 3;
+
+            // 1. 反转 16-bit 预览 → inverted values (0-65535)
+            let mut inv = [0.0f32; 3];
+            for ch in 0..3 {
+                let raw_val = prev_raw[pi + ch] as f32;
+                inv[ch] = ((hi[ch] - raw_val).max(0.0) * scale[ch]).clamp(0.0, 65535.0);
+            }
+
+            // B&W 负片灰度化
+            if film_type == 2 {
+                let lum = 0.299 * inv[0] + 0.587 * inv[1] + 0.114 * inv[2];
+                inv = [lum, lum, lum];
+            }
+
+            // 2. 缩略图值 → 浮点
+            let mut rgb = [
+                thumb_raw[pi] as f32 / 255.0,
+                thumb_raw[pi + 1] as f32 / 255.0,
+                thumb_raw[pi + 2] as f32 / 255.0,
+            ];
+
+            // 3. 反向处理缩略图（从显示值恢复到胶片曲线输出）
+
+            // 3a. 反向饱和度（cross-channel）
+            if sat.abs() > 0.001 {
+                let lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+                for ch in 0..3 {
+                    rgb[ch] = lum + (rgb[ch] - lum) / (1.0 + sat);
+                }
+            }
+
+            // 3b. 反向曝光
+            if exp_mult != 1.0 {
+                for ch in 0..3 {
+                    rgb[ch] /= exp_mult;
+                }
+            }
+
+            // 3c. 反向输出色阶
+            for ch in 0..3 {
+                rgb[ch] = ((rgb[ch] - out_lo) / out_range).clamp(0.0, 1.0);
+            }
+
+            // 3d. 反向 master gamma
+            for ch in 0..3 {
+                rgb[ch] = rgb[ch].powf(gamma_m);
+            }
+
+            // 3e. 反向 per-channel gamma
+            for ch in 0..3 {
+                rgb[ch] = rgb[ch].powf(gamma_c[ch]);
+            }
+
+            // 3f. 反向色阶（levels）
+            for ch in 0..3 {
+                let range = (wh_c[ch] - bl[ch]).max(0.001);
+                rgb[ch] = (rgb[ch] * range + bl[ch]).clamp(0.0, 1.0);
+            }
+
+            // 4. 累积到 bins：inv[ch]/65535 → bin index, rgb[ch] → target
+            for ch in 0..3 {
+                let bin = ((inv[ch] / 65535.0) * (BINS - 1) as f32) as usize;
+                let bin = bin.min(BINS - 1);
+                sums[ch][bin] += rgb[ch] as f64;
+                counts[ch][bin] += 1;
+            }
+        }
+    }
+
+    // ── 从 bins 构建 65536 项 LUT ──
+    let mut luts: [Vec<f32>; 3] = [
+        vec![0.0f32; 65536],
+        vec![0.0f32; 65536],
+        vec![0.0f32; 65536],
+    ];
+
+    for ch in 0..3 {
+        // 计算有数据的 bin 的平均值
+        let mut bin_avgs = vec![0.0f32; BINS];
+        let mut valid_indices: Vec<usize> = Vec::new();
+        let mut valid_values: Vec<f32> = Vec::new();
+        for i in 0..BINS {
+            if counts[ch][i] > 0 {
+                let avg = (sums[ch][i] / counts[ch][i] as f64) as f32;
+                bin_avgs[i] = avg;
+                valid_indices.push(i);
+                valid_values.push(avg);
+            }
+        }
+
+        // 用线性插值填充空 bin（含首尾外推用边界值）
+        if valid_indices.len() >= 2 {
+            for i in 0..BINS {
+                if counts[ch][i] == 0 {
+                    // 找到左右最近的 valid bin 并线性插值
+                    let right = valid_indices.partition_point(|&v| v <= i);
+                    if right == 0 {
+                        // 在首个 valid bin 之前：用首值
+                        bin_avgs[i] = valid_values[0];
+                    } else if right >= valid_indices.len() {
+                        // 在末尾 valid bin 之后：用末值
+                        bin_avgs[i] = *valid_values.last().unwrap();
+                    } else {
+                        // 在两个 valid bin 之间：线性插值
+                        let li = valid_indices[right - 1];
+                        let ri = valid_indices[right];
+                        let frac = (i - li) as f32 / (ri - li) as f32;
+                        bin_avgs[i] = valid_values[right - 1] * (1.0 - frac)
+                            + valid_values[right] * frac;
+                    }
+                }
+            }
+        } else if valid_indices.len() == 1 {
+            let v = valid_values[0];
+            for i in 0..BINS {
+                bin_avgs[i] = v;
+            }
+        }
+
+        // 强制单调递增
+        for i in 1..BINS {
+            if bin_avgs[i] < bin_avgs[i - 1] {
+                bin_avgs[i] = bin_avgs[i - 1];
+            }
+        }
+
+        // 插值到 65536 项
+        for i in 0..65536 {
+            let pos = i as f32 / 65535.0 * (BINS - 1) as f32;
+            let lo = (pos as usize).min(BINS - 2);
+            let hi_idx = lo + 1;
+            let frac = pos - lo as f32;
+            luts[ch][i] = bin_avgs[lo] * (1.0 - frac) + bin_avgs[hi_idx] * frac;
+        }
+    }
+
+    log::info!(
+        "extract_film_curve: extracted from {}x{} ({} pixels), bins={}, lut[R][32768]={:.4}, lut[G][32768]={:.4}, lut[B][32768]={:.4}",
+        w, h, n_pixels, BINS,
+        luts[0][32768], luts[1][32768], luts[2][32768],
+    );
+
+    Some(luts)
+}
+
 // ─── Gradation Curves ───────────────────────────────────────────────────────
 // FlexColor 使用 N 阶贝塞尔曲线（De Casteljau 算法）。
 // 给定 n 个控制点，形成一条 (n-1) 阶贝塞尔曲线。

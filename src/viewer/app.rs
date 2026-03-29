@@ -96,6 +96,7 @@ impl FffViewerApp {
             baseline_levels_processed: HistogramLevels::default(),
             baseline_levels_raw: HistogramLevels::default(),
             baseline_curve_points: Self::default_curve_points(),
+            extracted_film_lut: None,
             split_state: SplitState::default(),
             loading_status: LoadingStatus::Idle,
             error_msg: None,
@@ -384,6 +385,8 @@ impl FffViewerApp {
                                 }
                             }
                         }
+                        // 根据嵌入校正的 InputProfile 自动匹配 ICC 配置文件
+                        self.auto_select_input_profile();
                         self.apply_color_profile(ctx);
                     } else {
                         self.histogram_needs_update = true;

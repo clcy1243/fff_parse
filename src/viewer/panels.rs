@@ -55,12 +55,27 @@ impl FffViewerApp {
 impl FffViewerApp {
     /// 从 correction 的 shadow/highlight/gray 加载色阶手柄值。
     /// shadow/highlight 值始终在后处理空间（对负片已是反转后的值）。
+    /// FlexColor 模式：Master shadow = min(R,G,B)，Master highlight = max(R,G,B)。
     fn load_levels_from_correction(adj: &mut color::ManualAdjust, corr: &flexcolor::ImageCorrection) {
         if !corr.apply_histogram { return; }
+        // 先加载 per-channel (R=1, G=2, B=3) shadow/highlight
         for i in 0..4 {
             adj.levels_black[i] = (corr.shadow[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
             adj.levels_white[i] = (corr.highlight[i] as f32 * 4.0 / 65535.0 * 255.0).clamp(0.0, 255.0);
-            adj.levels_gamma[i] = 1.0 / (corr.gray[i] as f32 / 128.0).clamp(0.01, 10.0);
+        }
+        // Master gamma 来自 Gamma 字段：FlexColor Gamma 2.0 → 显示 1.0（中性）
+        adj.levels_gamma[0] = ((corr.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        // Per-channel gamma 来自 Gray 字段（0-255 位置，128=中性→gamma=1.0）
+        for i in 1..4 {
+            adj.levels_gamma[i] = (corr.gray[i] as f32 / 128.0).clamp(0.01, 99.0);
+        }
+        // Master shadow/highlight 从 per-channel 派生（仅用于 UI 显示，不参与图像计算）
+        adj.levels_black[0] = adj.levels_black[1].min(adj.levels_black[2]).min(adj.levels_black[3]);
+        adj.levels_white[0] = adj.levels_white[1].max(adj.levels_white[2]).max(adj.levels_white[3]);
+        // 输出色阶 (DotColor)
+        if corr.dot_color.len() >= 14 {
+            adj.output_shadow = corr.dot_color[0] as f32;
+            adj.output_highlight = corr.dot_color[7] as f32;
         }
     }
 
@@ -905,6 +920,25 @@ impl FffViewerApp {
             // 胶片类型处理后保存为 raw_rgb（仅反转+去色，色阶和LUT由adjust处理）
             raw_after_film = Some(to_rgb16(&result));
 
+            // 提取负片胶片曲线（从 8-bit 缩略图 + 16-bit 预览逆向）
+            if correction.film_type == 1 || correction.film_type == 2 {
+                if let Some((thumb_8, preview_16)) = detail.tiff.decode_thumbnail_pair() {
+                    self.extracted_film_lut = color::extract_film_curve(
+                        &thumb_8, &preview_16, correction,
+                    );
+                    if self.extracted_film_lut.is_some() {
+                        log::info!("Film curve extracted from thumbnail pair");
+                    } else {
+                        log::warn!("Film curve extraction returned None");
+                    }
+                } else {
+                    log::warn!("No thumbnail pair found for film curve extraction");
+                    self.extracted_film_lut = None;
+                }
+            } else {
+                self.extracted_film_lut = None;
+            }
+
             // 从色彩方案加载色阶到手柄（负片自动翻转）
             Self::load_levels_from_correction(&mut self.manual_adjust, correction);
 
@@ -922,8 +956,7 @@ impl FffViewerApp {
                 self.manual_adjust.contrast = correction.contrast as f32;
                 self.manual_adjust.brightness = correction.brightness as f32;
                 self.manual_adjust.lightness = correction.lightness as f32;
-                // 中间调 = Gamma - 1.0（FlexColor 的 Gamma 默认 2.0，即中间调 1.0）
-                self.manual_adjust.midtone = (correction.gamma - 1.0) as f32;
+                // Gamma 已由 levels_gamma[0] 处理，不再重复加载到 midtone
             }
             // 提取色温/色调
             self.manual_adjust.color_temperature = correction.color_temperature as f32;
@@ -1035,45 +1068,36 @@ impl FffViewerApp {
         self.use_embedded_icc = false;
         self.embedded_correction_index = None;
         self.color_status = None;
+        self.extracted_film_lut = None;
 
         // Re-decode preview with downscaling, auto-apply embedded correction if available
         if let Some(detail) = &mut self.detail {
-            if let Some(img) = detail.tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
-                // Auto-apply embedded correction (same as initial load)
-                let (mut processed, corrected, emb_idx) = if let Some(ref eh) = detail.edit_history {
-                    if !eh.settings.is_empty() {
-                        let idx = eh.current_index.min(eh.settings.len() - 1);
-                        let correction = &eh.settings[idx].correction;
-                        log::info!("Reset: re-applying embedded correction");
-                        let result = color::apply_film_processing(&img, correction);
-                        (result, true, Some(idx))
-                    } else {
-                        (img, false, None)
-                    }
-                } else {
-                    (img, false, None)
-                };
-                self.use_embedded_correction = corrected;
-                self.embedded_correction_index = emb_idx;
-
-                // 从嵌入 correction 加载色阶手柄
-                if corrected {
-                    if let Some(ref eh) = detail.edit_history {
-                        let idx = emb_idx.unwrap_or(0).min(eh.settings.len() - 1);
-                        let corr = &eh.settings[idx].correction;
-                        Self::load_levels_from_correction(&mut self.manual_adjust, corr);
-                        self.manual_adjust.film_type = corr.film_type;
-                        self.manual_adjust.film_curve = corr.film_curve;
-                        self.manual_adjust.film_gamma = corr.gamma;
-                    }
+            if let Some(ref eh) = detail.edit_history {
+                if !eh.settings.is_empty() {
+                    let idx = eh.current_index.min(eh.settings.len() - 1);
+                    self.use_embedded_correction = true;
+                    self.embedded_correction_index = Some(idx);
                 }
-
-                detail.raw_rgb = Some(to_rgb16(&processed));
-                detail.base_rgb = Some(to_rgb16(&processed));
             }
         }
-        self.histogram_needs_update = true;
-        self.rebuild_texture_from_base(ctx);
+
+        // 根据嵌入校正的 InputProfile 自动匹配 ICC 配置文件
+        self.auto_select_input_profile();
+
+        if self.selected_input_profile.is_some() || self.use_embedded_correction {
+            // 有 ICC 或嵌入校正时走完整管线
+            self.apply_color_profile(ctx);
+        } else {
+            // 无 ICC 无嵌入校正：回退到原始预览
+            if let Some(detail) = &mut self.detail {
+                if let Some(img) = detail.tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
+                    detail.raw_rgb = Some(to_rgb16(&img));
+                    detail.base_rgb = Some(to_rgb16(&img));
+                }
+            }
+            self.histogram_needs_update = true;
+            self.rebuild_texture_from_base(ctx);
+        }
         log::info!("Color profile reset");
     }
 
@@ -1081,10 +1105,15 @@ impl FffViewerApp {
     /// 当胶片类型改变时，从 icc_rgb（ICC 校正后）重新开始胶片处理。
     pub(super) fn reprocess_with_film_type(&mut self, ctx: &egui::Context) {
         let new_film_type = self.manual_adjust.film_type;
-        log::info!("Reprocessing with film_type={}", new_film_type);
+        log::info!("Reprocessing with film_type={}, use_embedded={}, emb_idx={:?}",
+            new_film_type, self.use_embedded_correction, self.embedded_correction_index);
 
-        let Some(detail) = &self.detail else { return };
+        let Some(detail) = &self.detail else {
+            log::warn!("reprocess_with_film_type: no detail");
+            return;
+        };
         let Some(icc_rgb) = detail.icc_rgb.as_ref() else {
+            log::warn!("reprocess_with_film_type: no icc_rgb, falling back to apply_color_profile");
             // 没有 icc_rgb，尝试直接重新处理
             self.apply_color_profile(ctx);
             return;
@@ -1093,6 +1122,7 @@ impl FffViewerApp {
         let mut result = image::DynamicImage::ImageRgb16(icc_rgb.clone());
 
         // 构建临时 correction，使用新的 film_type
+        // 优先使用嵌入校正或已选预设，若均无则回退到 edit_history
         let correction = if self.use_embedded_correction {
             let emb_idx = self.embedded_correction_index;
             detail.edit_history.as_ref().and_then(|h| {
@@ -1104,21 +1134,46 @@ impl FffViewerApp {
                     c
                 })
             })
+        } else if let Some(preset_idx) = self.selected_preset {
+            self.available_presets.get(preset_idx).and_then(|p| {
+                std::fs::read_to_string(&p.path)
+                    .ok()
+                    .and_then(|xml| flexcolor::parse_settings_xml(&xml))
+                    .map(|mut c| { c.film_type = new_film_type; c })
+            })
         } else {
-            self.selected_preset.and_then(|idx| {
-                self.available_presets.get(idx).and_then(|p| {
-                    std::fs::read_to_string(&p.path)
-                        .ok()
-                        .and_then(|xml| flexcolor::parse_settings_xml(&xml))
-                        .map(|mut c| { c.film_type = new_film_type; c })
+            // 回退：从 edit_history 获取当前校正
+            detail.edit_history.as_ref().and_then(|h| {
+                if h.settings.is_empty() { return None; }
+                let idx = self.embedded_correction_index
+                    .unwrap_or(h.current_index.min(h.settings.len() - 1));
+                h.settings.get(idx).map(|s| {
+                    let mut c = s.correction.clone();
+                    c.film_type = new_film_type;
+                    c
                 })
             })
         };
 
         if let Some(ref correction) = correction {
+            log::info!("reprocess_with_film_type: applying film processing with film_type={}, highlight={:?}",
+                correction.film_type, correction.highlight);
             result = color::apply_film_processing(&result, correction);
 
             let raw_rgb = to_rgb16(&result);
+
+            // 重新提取负片胶片曲线
+            if correction.film_type == 1 || correction.film_type == 2 {
+                if let Some(detail) = &self.detail {
+                    if let Some((thumb_8, preview_16)) = detail.tiff.decode_thumbnail_pair() {
+                        self.extracted_film_lut = color::extract_film_curve(
+                            &thumb_8, &preview_16, correction,
+                        );
+                    }
+                }
+            } else {
+                self.extracted_film_lut = None;
+            }
 
             // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
             if let Some(detail) = &mut self.detail {
@@ -1131,6 +1186,7 @@ impl FffViewerApp {
             self.manual_adjust.film_curve = correction.film_curve;
             self.manual_adjust.film_gamma = correction.gamma;
         } else {
+            log::warn!("reprocess_with_film_type: no correction found");
             // 无 correction 时，raw_rgb = icc_rgb
             let rgb16 = to_rgb16(&result);
             if let Some(detail) = &mut self.detail {
@@ -1167,7 +1223,7 @@ impl FffViewerApp {
             image::DynamicImage::ImageRgb16(base.clone())
         };
 
-        let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust);
+        let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust, self.extracted_film_lut.as_ref());
         let rgb16 = to_rgb16(&adjusted);
 
         // 从最终渲染结果计算处理后直方图
@@ -1177,8 +1233,10 @@ impl FffViewerApp {
             proc_hist[0][r16 as usize >> 8] += 1;
             proc_hist[1][g16 as usize >> 8] += 1;
             proc_hist[2][b16 as usize >> 8] += 1;
-            let lum = (0.2126 * r16 as f32 + 0.7152 * g16 as f32 + 0.0722 * b16 as f32) as usize;
-            proc_hist[3][(lum >> 8).min(255)] += 1;
+        }
+        // RGB 合成：三通道叠加，每个 bin 取 max(R,G,B)
+        for i in 0..256 {
+            proc_hist[3][i] = proc_hist[0][i].max(proc_hist[1][i]).max(proc_hist[2][i]);
         }
         self.histogram_processed = Some(proc_hist);
 
@@ -1225,25 +1283,28 @@ impl FffViewerApp {
             return;
         };
 
-        // 65536-bin 精确直方图
-        let mut hist_16: Vec<Vec<u32>> = vec![vec![0u32; 65536]; 4];
+        // 65536-bin 精确直方图（R/G/B 三通道）
+        let mut hist_16: Vec<Vec<u32>> = vec![vec![0u32; 65536]; 3];
         for pixel in base.pixels() {
             let [r16, g16, b16] = pixel.0;
             {
                 hist_16[0][r16 as usize] += 1;
                 hist_16[1][g16 as usize] += 1;
                 hist_16[2][b16 as usize] += 1;
-                let lum = (0.2126 * r16 as f32 + 0.7152 * g16 as f32 + 0.0722 * b16 as f32) as usize;
-                hist_16[3][lum.min(65535)] += 1;
             }
         }
 
         // 派生 256-bin 显示用直方图
         let mut hist = Box::new([[0u32; 256]; 4]);
-        for ch in 0..4 {
+        for ch in 0..3 {
             for i in 0..65536 {
                 hist[ch][i >> 8] += hist_16[ch][i];
             }
+        }
+        // RGB 合成直方图：三通道叠加，每个 bin 取 max(R,G,B) 计数
+        // 这样 R/G/B 任一通道有高度的区域 RGB 通道都会有高度
+        for i in 0..256 {
+            hist[3][i] = hist[0][i].max(hist[1][i]).max(hist[2][i]);
         }
 
         // 诊断日志
@@ -1290,6 +1351,7 @@ impl FffViewerApp {
 
     /// 渲染单通道色阶区段：直方图 + 渐变轨道 + 可拖拽黑/灰/白三角手柄。
     /// `auto_bw`：从 65536-bin 直方图预计算的精确黑白点 (black, white)。
+    /// `is_master`：true 时 Gamma 显示为 0.01-3.00（左高右低），false 时显示为 0-255 位置值。
     /// 返回 true 表示有值被修改。
     pub(super) fn render_levels_section(
         ui: &mut egui::Ui,
@@ -1302,6 +1364,7 @@ impl FffViewerApp {
         gamma: &mut f32,
         white: &mut f32,
         hist_scale: config::HistogramScale,
+        is_master: bool,
     ) -> bool {
         let mut changed = false;
         let avail_w = ui.available_width();
@@ -1402,6 +1465,7 @@ impl FffViewerApp {
         // Triangle handle positions
         let bx = track_rect.left() + *black / 255.0 * track_rect.width();
         let wx = track_rect.left() + *white / 255.0 * track_rect.width();
+        // 统一公式：t = 0.5^(1/gamma)，gamma=1.0 → t=0.5（中性）
         let t_gamma = 0.5_f32.powf(1.0 / (*gamma).max(0.01));
         let gx = bx + t_gamma * (wx - bx);
         let center_y = track_rect.center().y;
@@ -1474,7 +1538,8 @@ impl FffViewerApp {
             let new_gx = (gx + r_gamma.drag_delta().x).clamp(bx + 1.0, wx - 1.0);
             let t = (new_gx - bx) / range;
             if t > 0.001 && t < 0.999 {
-                *gamma = (0.5_f32.ln() / t.ln()).clamp(0.10, 9.99);
+                let gamma_max = if is_master { 3.00 } else { 99.0 };
+                *gamma = (0.5_f32.ln() / t.ln()).clamp(0.01, gamma_max);
             }
             changed = true;
         }
@@ -1486,9 +1551,24 @@ impl FffViewerApp {
             if cols[0].add(
                 egui::DragValue::new(black).range(0.0..=max_black).max_decimals(2).speed(0.25),
             ).on_hover_text("Black point").changed() { changed = true; }
-            if cols[1].add(
-                egui::DragValue::new(gamma).range(0.10..=9.99).max_decimals(2).speed(0.01),
-            ).on_hover_text("Midtone gamma").changed() { changed = true; }
+
+            if is_master {
+                // RGB Master: 显示 Gamma 值，范围 0.01-3.00（左=3.00亮, 右=0.01暗）
+                if cols[1].add(
+                    egui::DragValue::new(gamma).range(0.01..=3.00).max_decimals(2).speed(0.01),
+                ).on_hover_text("Midtone gamma").changed() { changed = true; }
+            } else {
+                // R/G/B 通道: 显示 Gray 值（gamma × 128），范围 0-255
+                let mut gray_val = (*gamma * 128.0).clamp(0.0, 255.0);
+                let resp = cols[1].add(
+                    egui::DragValue::new(&mut gray_val).range(0.0..=255.0).max_decimals(0).speed(0.5),
+                );
+                if resp.on_hover_text("Midtone gray").changed() {
+                    *gamma = (gray_val / 128.0).clamp(0.01, 99.0);
+                    changed = true;
+                }
+            }
+
             if cols[2].add(
                 egui::DragValue::new(white).range(min_white..=255.0).max_decimals(2).speed(0.25),
             ).on_hover_text("White point").changed() { changed = true; }
@@ -1838,7 +1918,15 @@ impl FffViewerApp {
         let hist_ch_order = [3usize, 0, 1, 2];
         let auto_bw: [Option<(f32, f32)>; 4] = if let Some(ref h16) = self.histogram_raw_16 {
             std::array::from_fn(|i| {
-                Some(Self::auto_percentile_levels(&h16[hist_ch_order[i]], clip_pct.0, clip_pct.1))
+                if hist_ch_order[i] == 3 {
+                    // RGB master: 从 R/G/B 三通道取 min(shadow) / max(highlight)
+                    let (b0, w0) = Self::auto_percentile_levels(&h16[0], clip_pct.0, clip_pct.1);
+                    let (b1, w1) = Self::auto_percentile_levels(&h16[1], clip_pct.0, clip_pct.1);
+                    let (b2, w2) = Self::auto_percentile_levels(&h16[2], clip_pct.0, clip_pct.1);
+                    Some((b0.min(b1).min(b2), w0.max(w1).max(w2)))
+                } else {
+                    Some(Self::auto_percentile_levels(&h16[hist_ch_order[i]], clip_pct.0, clip_pct.1))
+                }
             })
         } else {
             [None; 4]
@@ -1866,6 +1954,10 @@ impl FffViewerApp {
         ];
         let levels_idx = [0usize, 1usize, 2usize, 3usize];
 
+        // 保存当前值用于检测联动变化
+        let prev_black = self.manual_adjust.levels_black;
+        let prev_white = self.manual_adjust.levels_white;
+
         for (section_pos, (title, hist_ch, bar_color)) in sections.iter().enumerate() {
             let lvl_idx = levels_idx[section_pos];
             let hist = hist_raw_data.as_ref().map(|hd| &hd[*hist_ch]);
@@ -1887,11 +1979,92 @@ impl FffViewerApp {
                         &mut self.manual_adjust.levels_gamma[lvl_idx],
                         &mut self.manual_adjust.levels_white[lvl_idx],
                         config::HistogramScale::from_str(&self.app_config.histogram_scale),
+                        section_pos == 0, // is_master: 第一个 section 是 RGB Master
                     ) {
                         rebuild = true;
                     }
                 });
         }
+
+        // ── FlexColor 式联动：Master ↔ R/G/B shadow/highlight ──
+        if rebuild {
+            let b = &mut self.manual_adjust.levels_black;
+            let w = &mut self.manual_adjust.levels_white;
+
+            // Master (索引 0) 发生变化 → 同步偏移 R(1)/G(2)/B(3)
+            let db = b[0] - prev_black[0];
+            let dw = w[0] - prev_white[0];
+            if db.abs() > 0.001 {
+                for ch in 1..=3 {
+                    b[ch] = (b[ch] + db).clamp(0.0, w[ch] - 0.1);
+                }
+            }
+            if dw.abs() > 0.001 {
+                for ch in 1..=3 {
+                    w[ch] = (w[ch] + dw).clamp(b[ch] + 0.1, 255.0);
+                }
+            }
+
+            // R/G/B 发生变化 → Master 更新为 min(shadow) / max(highlight)
+            let any_ch_black_changed = (1..=3).any(|ch| (b[ch] - prev_black[ch]).abs() > 0.001);
+            let any_ch_white_changed = (1..=3).any(|ch| (w[ch] - prev_white[ch]).abs() > 0.001);
+            if any_ch_black_changed && db.abs() < 0.001 {
+                b[0] = b[1].min(b[2]).min(b[3]);
+            }
+            if any_ch_white_changed && dw.abs() < 0.001 {
+                w[0] = w[1].max(w[2]).max(w[3]);
+            }
+        }
+
+        // ── 输出色阶 (DotColor) ──
+        ui.add_space(2.0);
+        egui::CollapsingHeader::new(egui::RichText::new(s.output_levels).small().strong())
+            .id_salt("output_levels")
+            .default_open(true)
+            .show(ui, |ui| {
+                let avail_w = ui.available_width();
+                // 渐变条：从 output_shadow 到 output_highlight
+                let track_h = 18.0_f32;
+                let (track_rect, _) = ui.allocate_exact_size(egui::vec2(avail_w, track_h), egui::Sense::hover());
+                let painter = ui.painter_at(track_rect);
+                let steps = 64u32;
+                let step_w = track_rect.width() / steps as f32;
+                let os = self.manual_adjust.output_shadow;
+                let oh = self.manual_adjust.output_highlight;
+                for i in 0..steps {
+                    let t = i as f32 / (steps - 1) as f32;
+                    let gray = (os + t * (oh - os)).clamp(0.0, 255.0) as u8;
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            egui::pos2(track_rect.left() + i as f32 * step_w, track_rect.top()),
+                            egui::vec2(step_w + 0.5, track_h),
+                        ),
+                        0.0,
+                        egui::Color32::from_gray(gray),
+                    );
+                }
+
+                ui.columns(2, |cols| {
+                    cols[0].horizontal(|ui| {
+                        ui.label(egui::RichText::new(s.output_shadow).small());
+                        if ui.add(
+                            egui::DragValue::new(&mut self.manual_adjust.output_shadow)
+                                .range(0.0..=255.0).max_decimals(0).speed(0.5),
+                        ).changed() {
+                            rebuild = true;
+                        }
+                    });
+                    cols[1].horizontal(|ui| {
+                        ui.label(egui::RichText::new(s.output_highlight).small());
+                        if ui.add(
+                            egui::DragValue::new(&mut self.manual_adjust.output_highlight)
+                                .range(0.0..=255.0).max_decimals(0).speed(0.5),
+                        ).changed() {
+                            rebuild = true;
+                        }
+                    });
+                });
+            });
 
         ui.separator();
         ui.add_space(2.0);

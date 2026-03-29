@@ -139,6 +139,7 @@ impl FffViewerApp {
             icc_data,
             target_color_space: self.target_color_space,
             manual_adjust: self.manual_adjust.clone(),
+            film_lut: self.extracted_film_lut.clone(),
         }
     }
 
@@ -202,8 +203,7 @@ impl FffViewerApp {
 
         // 3. 手动调整（色阶/曝光/对比度/饱和度等）
         if !pipeline.manual_adjust.is_identity() {
-            log::info!("export: applying manual adjustments");
-            img = color::apply_manual_adjust(&img, &pipeline.manual_adjust);
+            img = color::apply_manual_adjust(&img, &pipeline.manual_adjust, pipeline.film_lut.as_ref());
         }
 
         img.save(dst).map_err(|e| {
@@ -685,8 +685,8 @@ impl FffViewerApp {
                 img = color::apply_gradation_curves(&img, &correction.gradations);
             }
         }
-        if !pipeline.manual_adjust.is_identity() {
-            img = color::apply_manual_adjust(&img, &pipeline.manual_adjust);
+        if !pipeline.manual_adjust.is_identity() || pipeline.film_lut.is_some() {
+            img = color::apply_manual_adjust(&img, &pipeline.manual_adjust, pipeline.film_lut.as_ref());
         }
 
         let img_w = img.width();

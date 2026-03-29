@@ -405,6 +405,8 @@ pub(super) struct ExportPipeline {
     pub(super) target_color_space: TargetColorSpace,
     /// 手动调整参数
     pub(super) manual_adjust: color::ManualAdjust,
+    /// 从缩略图提取的胶片曲线 LUT
+    pub(super) film_lut: Option<[Vec<f32>; 3]>,
 }
 
 // ─── 加载状态 ───────────────────────────────────────────────────────────────
@@ -530,6 +532,9 @@ pub struct FffViewerApp {
     pub(super) baseline_levels_raw: HistogramLevels,
     /// 应用色彩方案后的曲线控制点基线
     pub(super) baseline_curve_points: Vec<Vec<(i64, i64, i64)>>,
+
+    /// 从缩略图提取的逐通道胶片曲线 LUT（负片专用）
+    pub(super) extracted_film_lut: Option<[Vec<f32>; 3]>,
 
     // 底片分割与导出
     pub(super) split_state: SplitState,
