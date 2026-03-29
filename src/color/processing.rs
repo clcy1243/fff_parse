@@ -321,6 +321,10 @@ fn invert_3x3(m: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
 ///
 /// 返回 3 通道 × 65536 项 f32 (0.0-1.0) 的查找表。
 /// 仅对负片（film_type=1 或 2）有效。
+///
+/// 注意：当校正包含较重的显示调整（对比度/亮度/阴影深度/CC/渐变曲线/非默认DotColor）
+/// 时，反向处理不可靠（我们的公式与 FlexColor 不完全一致），此时返回 None
+/// 让调用方回退到硬编码曲线。
 pub fn extract_film_curve(
     thumb_8: &image::RgbImage,
     preview_16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
@@ -335,6 +339,37 @@ pub fn extract_film_curve(
 
     let film_type = correction.film_type;
     if film_type != 1 && film_type != 2 {
+        return None;
+    }
+
+    // 检测较重的显示调整 — 这些调整的反向处理不可靠，跳过提取
+    let has_heavy_adjustments = {
+        let has_cbl = correction.apply_sliders && (
+            correction.contrast.abs() > 0
+            || correction.brightness.abs() > 0
+            || correction.lightness.abs() > 0
+        );
+        let has_cc = correction.apply_cc
+            && correction.color_corr.len() == 36
+            && correction.color_corr.iter().any(|&v| v != 0);
+        let has_grad = correction.apply_curves
+            && correction.gradations.len() >= 7
+            && !correction.gradations.iter().all(|pts| {
+                pts.len() == 2 && pts[0].0 == 0 && pts[0].1 == 0 && pts[1].0 == 255 && pts[1].1 == 255
+            });
+        let has_dot = correction.dot_color.len() >= 14
+            && (correction.dot_color[0] != 0 || correction.dot_color[7] != 255);
+        has_cbl || has_cc || has_grad || has_dot
+    };
+    if has_heavy_adjustments {
+        log::info!(
+            "extract_film_curve: skipping — heavy display adjustments detected \
+             (contrast={}, brightness={}, lightness={}, CC={}, grad={}, dot={})",
+            correction.contrast, correction.brightness, correction.lightness,
+            correction.apply_cc && correction.color_corr.iter().any(|&v| v != 0),
+            correction.apply_curves,
+            correction.dot_color.len() >= 14 && (correction.dot_color[0] != 0 || correction.dot_color[7] != 255),
+        );
         return None;
     }
 

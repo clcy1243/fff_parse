@@ -260,8 +260,7 @@ fn apply_scanner_levels_16(
     let use_hardcoded_lut = adj.apply_film_curve
         && !use_extracted_lut
         && (adj.film_type == 1 || adj.film_type == 2)
-        && adj.film_curve == 4
-        && (adj.film_gamma - 2.0).abs() < 0.01;
+        && adj.film_curve == 4;
 
     let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
 
@@ -499,8 +498,7 @@ fn apply_adjust_16(
     let use_hardcoded_lut = adj.apply_film_curve
         && !use_extracted_lut
         && (adj.film_type == 1 || adj.film_type == 2)
-        && adj.film_curve == 4
-        && (adj.film_gamma - 2.0).abs() < 0.01;
+        && adj.film_curve == 4;
 
     for ch in 0..3 {
         let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
@@ -678,8 +676,7 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust, film_lut: Option<&
     let use_hardcoded_lut = adj.apply_film_curve
         && !use_extracted_lut
         && (adj.film_type == 1 || adj.film_type == 2)
-        && adj.film_curve == 4
-        && (adj.film_gamma - 2.0).abs() < 0.01;
+        && adj.film_curve == 4;
 
     for ch in 0..3 {
         let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
