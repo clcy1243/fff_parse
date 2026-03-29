@@ -92,6 +92,7 @@ impl FffViewerApp {
             preset_category_filter: String::new(),
             color_status: None,
             target_color_space: TargetColorSpace::default(),
+            active_icc_data: None,
             baseline_adjust: color::ManualAdjust::default(),
             baseline_levels_processed: HistogramLevels::default(),
             baseline_levels_raw: HistogramLevels::default(),
@@ -370,7 +371,7 @@ impl FffViewerApp {
                         texture,
                         embedded_icc: result.embedded_icc,
                         base_rgb,
-                        icc_rgb: None,
+                        preview_raw: None,
                         raw_rgb,
                     });
 

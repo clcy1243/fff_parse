@@ -210,6 +210,252 @@ pub fn apply_manual_adjust(
     }
 }
 
+/// 应用扫描仪空间调整：胶片曲线 + per-channel 色阶 + gamma。
+/// 在 ICC 转换之前调用，对原始扫描仪数据进行色调映射。
+pub fn apply_scanner_levels(
+    img: &image::DynamicImage,
+    adj: &ManualAdjust,
+    film_lut: Option<&[Vec<f32>; 3]>,
+) -> image::DynamicImage {
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            image::DynamicImage::ImageRgb16(apply_scanner_levels_16(rgb16, adj, film_lut))
+        }
+        _ => img.clone(),
+    }
+}
+
+/// 应用显示空间调整：输出色阶 + 曝光 + 对比度 + 亮度 + 饱和度等。
+/// 在 ICC 转换之后调用，对输出色彩空间中的数据进行调整。
+pub fn apply_display_adjust(
+    img: &image::DynamicImage,
+    adj: &ManualAdjust,
+) -> image::DynamicImage {
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            image::DynamicImage::ImageRgb16(apply_display_adjust_16(rgb16, adj))
+        }
+        _ => img.clone(),
+    }
+}
+
+/// 16-bit 扫描仪空间调整：胶片曲线 + per-channel 色阶 + gamma
+fn apply_scanner_levels_16(
+    rgb16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    adj: &ManualAdjust,
+    film_lut: Option<&[Vec<f32>; 3]>,
+) -> image::ImageBuffer<image::Rgb<u16>, Vec<u16>> {
+    use rayon::prelude::*;
+
+    let (w, h) = (rgb16.width(), rgb16.height());
+    let src = rgb16.as_raw();
+
+    let gamma_m = if adj.apply_levels {
+        adj.levels_gamma[0].clamp(0.01, 99.0)
+    } else {
+        1.0
+    };
+
+    let use_extracted_lut = adj.apply_film_curve && film_lut.is_some();
+    let use_hardcoded_lut = adj.apply_film_curve
+        && !use_extracted_lut
+        && (adj.film_type == 1 || adj.film_type == 2)
+        && adj.film_curve == 4
+        && (adj.film_gamma - 2.0).abs() < 0.01;
+
+    let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
+
+    for ch in 0..3 {
+        let (bl_c, wh_c, gamma_c) = if adj.apply_levels {
+            (adj.levels_black[ch + 1] / 255.0, adj.levels_white[ch + 1] / 255.0,
+             adj.levels_gamma[ch + 1].clamp(0.01, 99.0))
+        } else {
+            (0.0, 1.0, 1.0)
+        };
+        let range_c = (wh_c - bl_c).max(0.001);
+
+        let mut lut = vec![0u16; 65536];
+        for i in 0..65536u32 {
+            let mut v = i as f32 / 65535.0;
+
+            // ① 胶片曲线
+            if use_extracted_lut {
+                let extracted = &film_lut.unwrap()[ch];
+                let pos = v * 65535.0;
+                let lo = (pos as usize).min(65534);
+                let frac = pos - lo as f32;
+                v = extracted[lo] * (1.0 - frac) + extracted[lo + 1] * frac;
+            } else if use_hardcoded_lut {
+                let lut_table: &[u8; 256] = match ch {
+                    0 => &crate::color::FILM_CURVE_LUT_R,
+                    1 => &crate::color::FILM_CURVE_LUT_G,
+                    _ => &crate::color::FILM_CURVE_LUT_B,
+                };
+                v = crate::color::lut_interp_16(v, lut_table) / 65535.0;
+            }
+
+            // ② per-channel 色阶 + gamma + master gamma
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+            v = v.powf(1.0 / gamma_c);
+            v = v.powf(1.0 / gamma_m);
+            v = v.clamp(0.0, 1.0);
+
+            lut[i as usize] = (v * 65535.0) as u16;
+        }
+        luts.push(lut);
+    }
+
+    let row_len = w as usize * 3;
+    let mut out = vec![0u16; row_len * h as usize];
+
+    out.par_chunks_mut(row_len)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let src_start = y * row_len;
+            for x in 0..w as usize {
+                let base = x * 3;
+                let si = src_start + base;
+                row[base] = luts[0][src[si] as usize];
+                row[base + 1] = luts[1][src[si + 1] as usize];
+                row[base + 2] = luts[2][src[si + 2] as usize];
+            }
+        });
+
+    image::ImageBuffer::from_raw(w, h, out).expect("scanner_levels_16 buffer mismatch")
+}
+
+/// 16-bit 显示空间调整：输出色阶 + 曝光 + 对比度 + 亮度 + 饱和度等
+fn apply_display_adjust_16(
+    rgb16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    adj: &ManualAdjust,
+) -> image::ImageBuffer<image::Rgb<u16>, Vec<u16>> {
+    use rayon::prelude::*;
+
+    let (w, h) = (rgb16.width(), rgb16.height());
+    let src = rgb16.as_raw();
+
+    let exposure_mult = if adj.apply_exposure { 2.0_f32.powf(adj.exposure) } else { 1.0 };
+    let sat = if adj.apply_saturation { adj.saturation / 100.0 } else { 0.0 };
+
+    let temp_mults = if adj.apply_color_temp && (adj.color_temperature.abs() > 0.1 || adj.tint.abs() > 0.1) {
+        let t = adj.color_temperature / 100.0;
+        let tn = adj.tint / 100.0;
+        [1.0 + t * 0.15, 1.0 - tn * 0.15, 1.0 - t * 0.15]
+    } else {
+        [1.0, 1.0, 1.0]
+    };
+
+    let shifts = if adj.apply_color_balance {
+        [adj.r_shift / 255.0, adj.g_shift / 255.0, adj.b_shift / 255.0]
+    } else {
+        [0.0; 3]
+    };
+
+    let (out_lo, out_hi) = if adj.apply_levels {
+        (adj.output_shadow / 255.0, adj.output_highlight / 255.0)
+    } else {
+        (0.0, 1.0)
+    };
+    let out_range = (out_hi - out_lo).max(0.001);
+
+    let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
+
+    for ch in 0..3 {
+        let mut lut = vec![0u16; 65536];
+        for i in 0..65536u32 {
+            let mut v = i as f32 / 65535.0;
+
+            // 输出色阶
+            v = out_lo + v * out_range;
+
+            v += shifts[ch];
+            v *= exposure_mult;
+            v *= temp_mults[ch];
+            v = v.clamp(0.0, 1.0);
+
+            if adj.apply_shadows && adj.shadows.abs() > 0.1 {
+                let s = adj.shadows / 100.0;
+                let t = 1.0 - v;
+                v = (v + s * t * t * 0.5).clamp(0.0, 1.0);
+            }
+            if adj.apply_highlights && adj.highlights.abs() > 0.1 {
+                let hi = adj.highlights / 100.0;
+                let t = v;
+                v = (v + hi * t * t * 0.5).clamp(0.0, 1.0);
+            }
+            if adj.apply_contrast && adj.contrast.abs() > 0.1 {
+                let c = adj.contrast / 100.0;
+                let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
+                v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
+            }
+            if adj.apply_brightness && adj.brightness.abs() > 0.1 {
+                let b = adj.brightness / 100.0;
+                v = (v + b * 0.5).clamp(0.0, 1.0);
+            }
+            if adj.apply_shadow_depth && adj.lightness.abs() > 0.1 {
+                let l = adj.lightness / 100.0;
+                let gamma = 1.0 / (1.0 + l).max(0.1);
+                v = v.powf(gamma).clamp(0.0, 1.0);
+            }
+            if adj.apply_midtone && (adj.midtone - 1.0).abs() > 0.01 {
+                let g = adj.midtone.clamp(0.1, 10.0);
+                v = v.powf(1.0 / g).clamp(0.0, 1.0);
+            }
+
+            lut[i as usize] = (v * 65535.0) as u16;
+        }
+        luts.push(lut);
+    }
+
+    let apply_cc = adj.apply_color_corr && adj.color_corr.iter().any(|&v| v != 0);
+    let cc: [[f32; 3]; 3] = if apply_cc {
+        let m = &adj.color_corr;
+        [
+            [(100 + m[0]) as f32 / 100.0, m[1] as f32 / 100.0,       m[2] as f32 / 100.0],
+            [m[6] as f32 / 100.0,         (100 + m[7]) as f32 / 100.0, m[8] as f32 / 100.0],
+            [m[12] as f32 / 100.0,        m[13] as f32 / 100.0,      (100 + m[14]) as f32 / 100.0],
+        ]
+    } else {
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    };
+
+    let row_len = w as usize * 3;
+    let mut out = vec![0u16; row_len * h as usize];
+
+    out.par_chunks_mut(row_len)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let src_start = y * row_len;
+            for x in 0..w as usize {
+                let base = x * 3;
+                let si = src_start + base;
+                let mut rf = luts[0][src[si] as usize] as f32;
+                let mut gf = luts[1][src[si + 1] as usize] as f32;
+                let mut bf = luts[2][src[si + 2] as usize] as f32;
+
+                if apply_cc {
+                    let r0 = rf; let g0 = gf; let b0 = bf;
+                    rf = (cc[0][0] * r0 + cc[0][1] * g0 + cc[0][2] * b0).clamp(0.0, 65535.0);
+                    gf = (cc[1][0] * r0 + cc[1][1] * g0 + cc[1][2] * b0).clamp(0.0, 65535.0);
+                    bf = (cc[2][0] * r0 + cc[2][1] * g0 + cc[2][2] * b0).clamp(0.0, 65535.0);
+                }
+
+                if sat.abs() > 0.001 {
+                    let lum = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;
+                    rf = (lum + (rf - lum) * (1.0 + sat)).clamp(0.0, 65535.0);
+                    gf = (lum + (gf - lum) * (1.0 + sat)).clamp(0.0, 65535.0);
+                    bf = (lum + (bf - lum) * (1.0 + sat)).clamp(0.0, 65535.0);
+                }
+
+                row[base] = rf as u16;
+                row[base + 1] = gf as u16;
+                row[base + 2] = bf as u16;
+            }
+        });
+
+    image::ImageBuffer::from_raw(w, h, out).expect("display_adjust_16 buffer mismatch")
+}
+
 /// 16-bit 手动调整实现：65536 项 per-channel LUT + 逐像素饱和度
 fn apply_adjust_16(
     rgb16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,

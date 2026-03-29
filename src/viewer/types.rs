@@ -361,9 +361,9 @@ pub(super) struct LoadedDetail {
     pub(super) embedded_icc: Option<Vec<u8>>,
     /// 已处理的 16-bit 基准图像（色彩方案应用后），用于直方图计算和手动调整
     pub(super) base_rgb: Option<Rgb16Image>,
-    /// ICC 转换后的 16-bit 图像（胶片处理前），用于切换胶片类型时重新处理
-    pub(super) icc_rgb: Option<Rgb16Image>,
-    /// 胶片类型处理后的 16-bit 图像（ICC + 胶片基础处理），用于 Raw 直方图
+    /// 解码后的原始预览（未经任何处理），用于切换胶片类型时重新处理
+    pub(super) preview_raw: Option<Rgb16Image>,
+    /// 扫描仪空间 16-bit 图像（反转后、色阶前），作为 rebuild 起点
     pub(super) raw_rgb: Option<Rgb16Image>,
 }
 
@@ -525,6 +525,8 @@ pub struct FffViewerApp {
     pub(super) preset_category_filter: String,
     pub(super) color_status: Option<String>,
     pub(super) target_color_space: TargetColorSpace,
+    /// 当前使用的 ICC 配置文件数据（缓存，供 rebuild_texture_from_base 使用）
+    pub(super) active_icc_data: Option<Vec<u8>>,
     /// 应用色彩方案后的调整基线（重置按钮恢复到此状态）
     pub(super) baseline_adjust: color::ManualAdjust,
     /// 应用色彩方案后的色阶基线

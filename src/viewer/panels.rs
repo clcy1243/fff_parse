@@ -791,6 +791,7 @@ impl FffViewerApp {
 
     /// 根据嵌入校正的 InputProfile 字段自动选择输入 ICC 配置文件
     pub(super) fn auto_select_input_profile(&mut self) {
+        // 1. 优先使用色彩方案中的 InputProfile 名称
         let profile_name = self.detail.as_ref()
             .and_then(|d| d.edit_history.as_ref())
             .and_then(|h| {
@@ -805,9 +806,34 @@ impl FffViewerApp {
             }) {
                 log::info!("Auto-selected input profile: {} (index {})", name, pos);
                 self.selected_input_profile = Some(pos);
-            } else {
-                log::warn!("Correction specifies InputProfile='{}' but not found in available profiles", name);
+                return;
             }
+            log::info!("InputProfile='{}' not found, trying scanner model match", name);
+        }
+
+        // 2. 回退：根据扫描仪型号从 ICC 名称中匹配
+        let scanner_model = self.detail.as_ref()
+            .and_then(|d| d.metadata.iter().find(|(k, _)| k == "Model").map(|(_, v)| v.clone()));
+
+        if let Some(ref model) = scanner_model {
+            // 从型号中提取关键字（如 "Flextight X5" → 搜索 "X5"）
+            let model_lower = model.to_lowercase();
+            if let Some(pos) = self.available_profiles.iter().position(|p| {
+                let name_lower = p.name.to_lowercase();
+                // 匹配策略：ICC 名称包含扫描仪型号关键部分
+                if model_lower.contains("x5") && name_lower.contains("x5") { return true; }
+                if model_lower.contains("x1") && name_lower.contains("x1") { return true; }
+                if model_lower.contains("848") && name_lower.contains("848") { return true; }
+                if model_lower.contains("949") && name_lower.contains("949") { return true; }
+                if model_lower.contains("flextight") && name_lower.contains("flextight") { return true; }
+                false
+            }) {
+                log::info!("Auto-selected input profile by scanner model '{}': {} (index {})",
+                    model, self.available_profiles[pos].name, pos);
+                self.selected_input_profile = Some(pos);
+                return;
+            }
+            log::warn!("No ICC profile matching scanner model '{}'", model);
         }
     }
 
@@ -863,7 +889,7 @@ impl FffViewerApp {
             return;
         };
 
-        // Re-decode the preview image from the TiffFile (downscaled for display)
+        // 第1步：解码原始预览图像
         let preview_img = match detail.tiff.decode_preview_downscaled(DISPLAY_MAX_DIM) {
             Some(img) => img,
             None => {
@@ -872,35 +898,11 @@ impl FffViewerApp {
             }
         };
 
+        // 保存原始预览（用于切换胶片类型时重新处理）
+        let preview_raw = to_rgb16(&preview_img);
         let mut result = preview_img;
 
-        // 第1步：应用 ICC 色彩空间转换（扫描仪 RGB → 输出 RGB）。
-        // ICC 在胶片处理之前执行，确保色彩空间校正先于色调映射。
-        if let Some(icc_data) = &input_icc {
-            log::info!(
-                "Applying ICC transform: input={} bytes, image={}x{}",
-                icc_data.len(),
-                result.width(),
-                result.height()
-            );
-            match color::apply_icc_transform(&result, icc_data, self.target_color_space) {
-                Ok(transformed) => {
-                    result = transformed;
-                }
-                Err(e) => {
-                    log::error!("ICC transform failed: {}", e);
-                    self.color_status = Some(format!("❌ {}: {}", s.profile_error, e));
-                    return;
-                }
-            }
-        }
-
-        // ICC 转换后保存为 icc_rgb（切换胶片类型时的重处理起点）
-        let icc_rgb = to_rgb16(&result);
-        let mut raw_after_film: Option<Rgb16Image> = None;
-
-        // 第2步：应用底片处理（仅负片反转 + B&W去色）。
-        // 色阶和胶片曲线由 apply_adjust_16 处理。
+        // 第2步：应用胶片处理（负片反转 + B&W 去色）— 在 scanner 空间中进行
         if let Some(ref correction) = preset_correction {
             let film_type = correction.film_type;
             log::info!(
@@ -916,9 +918,6 @@ impl FffViewerApp {
             );
 
             result = color::apply_film_processing(&result, correction);
-
-            // 胶片类型处理后保存为 raw_rgb（仅反转+去色，色阶和LUT由adjust处理）
-            raw_after_film = Some(to_rgb16(&result));
 
             // 提取负片胶片曲线（从 8-bit 缩略图 + 16-bit 预览逆向）
             if correction.film_type == 1 || correction.film_type == 2 {
@@ -956,7 +955,6 @@ impl FffViewerApp {
                 self.manual_adjust.contrast = correction.contrast as f32;
                 self.manual_adjust.brightness = correction.brightness as f32;
                 self.manual_adjust.lightness = correction.lightness as f32;
-                // Gamma 已由 levels_gamma[0] 处理，不再重复加载到 midtone
             }
             // 提取色温/色调
             self.manual_adjust.color_temperature = correction.color_temperature as f32;
@@ -1005,7 +1003,6 @@ impl FffViewerApp {
             // 加载渐变曲线控制点到编辑器
             if !correction.gradations.is_empty() {
                 self.curve_points = correction.gradations.clone();
-                // 确保至少有7个通道
                 while self.curve_points.len() < 7 {
                     self.curve_points.push(vec![(0, 0, 0), (255, 255, 0)]);
                 }
@@ -1021,20 +1018,20 @@ impl FffViewerApp {
                 white: self.manual_adjust.levels_white,
             };
             self.levels_raw = self.levels_processed.clone();
-
-            // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
         }
 
         // 第3步：保存各阶段 16-bit 基准图像
-        // icc_rgb: ICC 后、胶片处理前（用于切换胶片类型时重新处理）
-        // raw_rgb: ICC + 胶片类型处理后（Raw 直方图基准）
-        // base_rgb: 完整处理后（Processed 直方图基准）
-        let rgb16 = to_rgb16(&result);
+        // preview_raw: 原始解码预览（用于切换胶片类型重新处理）
+        // raw_rgb: 反转后的 scanner 空间数据（rebuild 起点）
+        let scanner_rgb = to_rgb16(&result);
         if let Some(detail) = &mut self.detail {
-            detail.icc_rgb = Some(icc_rgb);
-            detail.raw_rgb = raw_after_film.or_else(|| detail.icc_rgb.clone());
-            detail.base_rgb = Some(rgb16);
+            detail.preview_raw = Some(preview_raw);
+            detail.raw_rgb = Some(scanner_rgb);
+            detail.base_rgb = detail.raw_rgb.clone();
         }
+
+        // 缓存 ICC 数据（供 rebuild_texture_from_base 使用）
+        self.active_icc_data = input_icc;
 
         // 保存当前调整状态为基线（重置按钮恢复到此状态）
         self.baseline_adjust = self.manual_adjust.clone();
@@ -1046,7 +1043,7 @@ impl FffViewerApp {
         self.rebuild_texture_from_base(ctx);
 
         let status_parts: Vec<&str> = [
-            input_icc.as_ref().map(|_| "ICC"),
+            self.active_icc_data.as_ref().map(|_| "ICC"),
             preset_correction.as_ref().map(|c| {
                 if c.film_type == 1 { "Neg→Pos" }
                 else if c.film_type == 2 { "B&W Neg→Pos" }
@@ -1102,7 +1099,7 @@ impl FffViewerApp {
     }
 
     /// 当用户更改胶片类型时，使用新的 film_type 重新处理管线。
-    /// 当胶片类型改变时，从 icc_rgb（ICC 校正后）重新开始胶片处理。
+    /// 从 preview_raw（原始解码预览）重新开始胶片处理。
     pub(super) fn reprocess_with_film_type(&mut self, ctx: &egui::Context) {
         let new_film_type = self.manual_adjust.film_type;
         log::info!("Reprocessing with film_type={}, use_embedded={}, emb_idx={:?}",
@@ -1112,17 +1109,15 @@ impl FffViewerApp {
             log::warn!("reprocess_with_film_type: no detail");
             return;
         };
-        let Some(icc_rgb) = detail.icc_rgb.as_ref() else {
-            log::warn!("reprocess_with_film_type: no icc_rgb, falling back to apply_color_profile");
-            // 没有 icc_rgb，尝试直接重新处理
+        let Some(preview_raw) = detail.preview_raw.as_ref() else {
+            log::warn!("reprocess_with_film_type: no preview_raw, falling back to apply_color_profile");
             self.apply_color_profile(ctx);
             return;
         };
 
-        let mut result = image::DynamicImage::ImageRgb16(icc_rgb.clone());
+        let mut result = image::DynamicImage::ImageRgb16(preview_raw.clone());
 
         // 构建临时 correction，使用新的 film_type
-        // 优先使用嵌入校正或已选预设，若均无则回退到 edit_history
         let correction = if self.use_embedded_correction {
             let emb_idx = self.embedded_correction_index;
             detail.edit_history.as_ref().and_then(|h| {
@@ -1142,7 +1137,6 @@ impl FffViewerApp {
                     .map(|mut c| { c.film_type = new_film_type; c })
             })
         } else {
-            // 回退：从 edit_history 获取当前校正
             detail.edit_history.as_ref().and_then(|h| {
                 if h.settings.is_empty() { return None; }
                 let idx = self.embedded_correction_index
@@ -1160,7 +1154,7 @@ impl FffViewerApp {
                 correction.film_type, correction.highlight);
             result = color::apply_film_processing(&result, correction);
 
-            let raw_rgb = to_rgb16(&result);
+            let scanner_rgb = to_rgb16(&result);
 
             // 重新提取负片胶片曲线
             if correction.film_type == 1 || correction.film_type == 2 {
@@ -1175,10 +1169,10 @@ impl FffViewerApp {
                 self.extracted_film_lut = None;
             }
 
-            // 不再在此处应用渐变曲线 — 曲线由 rebuild_texture_from_base() 动态应用
+            // 存储 scanner 空间数据（反转后、色阶前）
             if let Some(detail) = &mut self.detail {
-                detail.base_rgb = Some(raw_rgb.clone());
-                detail.raw_rgb = Some(raw_rgb);
+                detail.raw_rgb = Some(scanner_rgb.clone());
+                detail.base_rgb = Some(scanner_rgb);
             }
 
             // 从色彩方案加载色阶到手柄（负片自动翻转）
@@ -1187,7 +1181,6 @@ impl FffViewerApp {
             self.manual_adjust.film_gamma = correction.gamma;
         } else {
             log::warn!("reprocess_with_film_type: no correction found");
-            // 无 correction 时，raw_rgb = icc_rgb
             let rgb16 = to_rgb16(&result);
             if let Some(detail) = &mut self.detail {
                 detail.raw_rgb = Some(rgb16.clone());
@@ -1199,7 +1192,8 @@ impl FffViewerApp {
         self.rebuild_texture_from_base(ctx);
     }
 
-    /// 根据 raw_rgb 应用渐变曲线（若开启且非恒等）和手动调整后重建显示纹理。
+    /// 新管线：raw_rgb（scanner 空间）→ 渐变曲线 → 扫描仪色阶 → ICC → 显示调整 → 纹理。
+    /// 色阶（film_curve + levels + gamma）在 ICC 之前应用，确保正确的色彩映射。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         let Some(detail) = &mut self.detail else { return };
 
@@ -1213,6 +1207,7 @@ impl FffViewerApp {
                 && pts[1].0 == 255 && pts[1].1 == 255
         });
 
+        // 第1步：在 scanner 空间中应用渐变曲线
         let img = if self.manual_adjust.apply_curves
             && self.curve_points.len() >= 7
             && !curves_are_identity
@@ -1223,7 +1218,26 @@ impl FffViewerApp {
             image::DynamicImage::ImageRgb16(base.clone())
         };
 
-        let adjusted = color::apply_manual_adjust(&img, &self.manual_adjust, self.extracted_film_lut.as_ref());
+        // 第2步：应用扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
+        let scanner_result = color::apply_scanner_levels(
+            &img, &self.manual_adjust, self.extracted_film_lut.as_ref()
+        );
+
+        // 第3步：ICC 色彩空间转换（扫描仪 → 输出色域）
+        let icc_result = if let Some(ref icc_data) = self.active_icc_data {
+            match color::apply_icc_transform(&scanner_result, icc_data, self.target_color_space) {
+                Ok(transformed) => transformed,
+                Err(e) => {
+                    log::error!("ICC transform in rebuild failed: {}", e);
+                    scanner_result
+                }
+            }
+        } else {
+            scanner_result
+        };
+
+        // 第4步：应用显示空间调整（曝光、对比度、亮度、饱和度等）— 在 ICC 之后
+        let adjusted = color::apply_display_adjust(&icc_result, &self.manual_adjust);
         let rgb16 = to_rgb16(&adjusted);
 
         // 从最终渲染结果计算处理后直方图
