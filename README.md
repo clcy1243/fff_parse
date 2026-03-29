@@ -497,7 +497,14 @@ output = lum + (input − lum) × (1 + saturation/100)
 
 **原理：** 双直方图系统。
 
-- **原始直方图（Raw）：** 基于 `raw_rgb`（胶片处理后、曲线前），65536-bin 精度，用于自动色阶计算
+- **原始直方图（Raw）：** 256-bin 显示直方图 + 65536-bin 精确直方图
+  - **显示用 256-bin：** 对负片使用 per-channel highlight 反转公式 `bin = (hi_ch - raw) * 255 / hi_ch`，
+    直接从原始扫描数据（`preview_raw`，未经任何处理）计算。此公式模拟 FlexColor 的原始直方图显示风格，
+    其中 `hi_ch` 为内嵌编辑历史中各通道的 highlight 值（14-bit × 4 → 16-bit）。
+    正片模式下退化为简单的 `raw >> 8` 线性映射。
+    （公式来源：通过 `examples/histogram_stages.rs` 诊断工具对比 FlexColor 界面逐阶段排查确定，
+    对应 `ifd2_perch_hi` 变体，虽非精确匹配但为最接近的可复现公式。）
+  - **自动色阶用 65536-bin：** 基于 `raw_rgb`（胶片反转后、曲线前），用于百分位黑白点计算
 - **处理后直方图（Processed）：** 基于最终输出像素，256-bin，仅供显示
 - **显示模式：** 线性 / 平方根 / 对数 / 立方根（可在设置中切换）
 - **通道：** R / G / B 独立 + RGB 合成（取各 bin 的 max(R,G,B)）

@@ -1284,8 +1284,11 @@ impl FffViewerApp {
         self.manual_adjust.levels_white = self.levels_processed.white;
     }
 
-    /// 计算原始直方图（用于色阶调整的自动功能和显示）。
-    /// 直方图始终基于 raw_rgb（原始数据，不含渐变曲线），不受曲线调整影响。
+    /// 计算原始直方图。
+    /// - 256-bin 显示直方图：基于 preview_raw（原始扫描数据），使用 per-channel
+    ///   highlight 反转公式 `bin = (hi_ch - raw) * 255 / hi_ch` 模拟 FlexColor 风格。
+    ///   正片模式下退化为简单的 `raw >> 8` 映射。
+    /// - 65536-bin 精确直方图：基于 raw_rgb（反转后数据），用于自动色阶百分位计算。
     /// 处理后直方图在 rebuild_texture_from_base() 中从渲染结果计算。
     pub(super) fn compute_histogram(&mut self) {
         let Some(detail) = &self.detail else {
@@ -1294,36 +1297,67 @@ impl FffViewerApp {
             return;
         };
 
-        // 直方图始终基于 raw_rgb（ICC + 胶片处理，不含渐变曲线），
-        // 反映原始像素分布，不受曲线调整影响。
+        // ── 65536-bin 精确直方图（从反转后数据，用于自动色阶） ──
         let source_img = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
-
         let Some(base) = source_img else {
             self.histogram_raw = None;
             self.histogram_raw_16 = None;
             return;
         };
 
-        // 65536-bin 精确直方图（R/G/B 三通道）
         let mut hist_16: Vec<Vec<u32>> = vec![vec![0u32; 65536]; 3];
         for pixel in base.pixels() {
             let [r16, g16, b16] = pixel.0;
-            {
-                hist_16[0][r16 as usize] += 1;
-                hist_16[1][g16 as usize] += 1;
-                hist_16[2][b16 as usize] += 1;
+            hist_16[0][r16 as usize] += 1;
+            hist_16[1][g16 as usize] += 1;
+            hist_16[2][b16 as usize] += 1;
+        }
+
+        // ── 256-bin 显示直方图 ──
+        // 从原始扫描数据 + per-channel highlight 反转计算，模拟 FlexColor 原始直方图显示。
+        let mut hist = Box::new([[0u32; 256]; 4]);
+
+        // 获取 per-channel highlight (16-bit) 用于反转公式
+        let highlights: Option<[u32; 3]> = detail.edit_history.as_ref().and_then(|h| {
+            if h.settings.is_empty() {
+                None
+            } else {
+                let idx = h.current_index.min(h.settings.len() - 1);
+                let corr = &h.settings[idx].correction;
+                if corr.film_type == 1 || corr.film_type == 2 {
+                    Some([
+                        corr.highlight[1] as u32 * 4, // R highlight → 16-bit
+                        corr.highlight[2] as u32 * 4, // G
+                        corr.highlight[3] as u32 * 4, // B
+                    ])
+                } else {
+                    None // 正片不使用反转
+                }
+            }
+        });
+
+        if let (Some(hi), Some(raw)) = (highlights, detail.preview_raw.as_ref()) {
+            // 负片：per-channel highlight 反转 — bin = (hi_ch - raw) * 255 / hi_ch
+            for pixel in raw.pixels() {
+                for ch in 0..3 {
+                    let v = pixel.0[ch] as u32;
+                    let bin = if v >= hi[ch] {
+                        0
+                    } else {
+                        ((hi[ch] - v) * 255 / hi[ch]) as usize
+                    };
+                    hist[ch][bin.min(255)] += 1;
+                }
+            }
+        } else {
+            // 正片或无原始数据：从 65536-bin 直方图简单派生
+            for ch in 0..3 {
+                for i in 0..65536 {
+                    hist[ch][i >> 8] += hist_16[ch][i];
+                }
             }
         }
 
-        // 派生 256-bin 显示用直方图
-        let mut hist = Box::new([[0u32; 256]; 4]);
-        for ch in 0..3 {
-            for i in 0..65536 {
-                hist[ch][i >> 8] += hist_16[ch][i];
-            }
-        }
-        // RGB 合成直方图：三通道叠加，每个 bin 取 max(R,G,B) 计数
-        // 这样 R/G/B 任一通道有高度的区域 RGB 通道都会有高度
         for i in 0..256 {
             hist[3][i] = hist[0][i].max(hist[1][i]).max(hist[2][i]);
         }
