@@ -903,27 +903,51 @@ impl FffViewerApp {
         let mut result = preview_img;
 
         // 第2步：应用胶片处理（负片反转 + B&W 去色）— 在 scanner 空间中进行
-        if let Some(ref correction) = preset_correction {
-            let film_type = correction.film_type;
+        // 始终使用内嵌校正的 highlight 值进行胶片反转和曲线提取，
+        // 因为这些值是扫描仪针对该底片基底密度校准的。
+        // 外部预设的 highlight/shadow/gray 仅用于色阶显示调整。
+        let embedded_correction = self.detail.as_ref().and_then(|d| {
+            d.edit_history.as_ref().and_then(|h| {
+                if h.settings.is_empty() {
+                    None
+                } else {
+                    let idx = h.current_index.min(h.settings.len() - 1);
+                    Some(h.settings[idx].correction.clone())
+                }
+            })
+        });
+        // 用于胶片处理的校正：优先使用内嵌校正（扫描仪校准），外部预设仅作后备
+        let film_correction = if self.use_embedded_correction {
+            preset_correction.as_ref()
+        } else {
+            embedded_correction.as_ref().or(preset_correction.as_ref())
+        };
+
+        if let Some(film_corr) = film_correction {
+            let film_type = preset_correction.as_ref().map_or(0, |c| c.film_type);
+            // 使用内嵌校正的 highlight 但采用预设的 film_type
+            let mut inversion_corr = film_corr.clone();
+            inversion_corr.film_type = film_type;
             log::info!(
                 "Applying film processing: FilmType={} ({}), Shadow={:?}, Highlight={:?}, Gray={:?}, \
                  FilmCurve={}, Gamma={}",
-                film_type,
-                flexcolor::film_type_name(film_type),
-                correction.shadow,
-                correction.highlight,
-                correction.gray,
-                correction.film_curve,
-                correction.gamma,
+                inversion_corr.film_type,
+                flexcolor::film_type_name(inversion_corr.film_type),
+                inversion_corr.shadow,
+                inversion_corr.highlight,
+                inversion_corr.gray,
+                inversion_corr.film_curve,
+                inversion_corr.gamma,
             );
 
-            result = color::apply_film_processing(&result, correction);
+            result = color::apply_film_processing(&result, &inversion_corr);
 
             // 提取负片胶片曲线（从 8-bit 缩略图 + 16-bit 预览逆向）
-            if correction.film_type == 1 || correction.film_type == 2 {
+            // 始终使用内嵌校正进行提取，因为缩略图是用内嵌校正渲染的
+            if inversion_corr.film_type == 1 || inversion_corr.film_type == 2 {
                 if let Some((thumb_8, preview_16)) = detail.tiff.decode_thumbnail_pair() {
                     self.extracted_film_lut = color::extract_film_curve(
-                        &thumb_8, &preview_16, correction,
+                        &thumb_8, &preview_16, film_corr,
                     );
                     if self.extracted_film_lut.is_some() {
                         log::info!("Film curve extracted from thumbnail pair");
@@ -937,8 +961,14 @@ impl FffViewerApp {
             } else {
                 self.extracted_film_lut = None;
             }
+        } else if let Some(ref correction) = preset_correction {
+            // 没有内嵌校正（不应发生），回退到预设
+            result = color::apply_film_processing(&result, correction);
+            self.extracted_film_lut = None;
+        }
 
-            // 从色彩方案加载色阶到手柄（负片自动翻转）
+        if let Some(ref correction) = preset_correction {
+            // 从色彩方案加载色阶到手柄
             Self::load_levels_from_correction(&mut self.manual_adjust, correction);
 
             // 提取胶片类型、胶片曲线、Gamma
