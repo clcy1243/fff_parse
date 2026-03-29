@@ -514,16 +514,6 @@ fn apply_adjust_16(
         };
         let range_c = (wh_c - bl_c).max(0.001);
 
-        // 输出色阶 (DotColor) 归一化 — per-channel
-        let (out_lo, out_hi) = if adj.apply_levels {
-            let lo = adj.output_shadow[0].max(adj.output_shadow[ch + 1]) / 255.0;
-            let hi = adj.output_highlight[0].min(adj.output_highlight[ch + 1]) / 255.0;
-            (lo, hi)
-        } else {
-            (0.0, 1.0)
-        };
-        let out_range = (out_hi - out_lo).max(0.001);
-
         let mut lut = vec![0u16; 65536];
         for i in 0..65536u32 {
             let mut v = i as f32 / 65535.0;
@@ -549,9 +539,6 @@ fn apply_adjust_16(
             v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
             v = v.powf(1.0 / gamma_c);
             v = v.powf(1.0 / gamma_m);  // master gamma: 默认 1.0 → v^1（中性）
-
-            // ③ 输出色阶：将 [0,1] 映射到 [out_lo, out_hi]
-            v = out_lo + v * out_range;
 
             v += shifts[ch];
             v *= exposure_mult;

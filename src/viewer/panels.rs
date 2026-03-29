@@ -1893,6 +1893,54 @@ impl FffViewerApp {
         }
     }
 
+    /// RGB 三色叠加直方图：R/G/B 三通道半透明叠加在同一区域
+    fn render_histogram_rgb_overlay(
+        ui: &mut egui::Ui,
+        hist: &[[u32; 256]; 4],
+        hist_scale: config::HistogramScale,
+    ) {
+        let avail_w = ui.available_width();
+        let hist_h = 60.0_f32;
+        let (hist_rect, _) = ui.allocate_exact_size(egui::vec2(avail_w, hist_h), egui::Sense::hover());
+        let painter = ui.painter_at(hist_rect);
+        painter.rect_filled(hist_rect, 2.0, egui::Color32::from_gray(18));
+
+        // 全局最大值（三通道共用）
+        let max_v = hist[0].iter().chain(hist[1].iter()).chain(hist[2].iter())
+            .copied().max().unwrap_or(1).max(1) as f32;
+        let w = hist_rect.width();
+        let bar_w = (w / 256.0).max(1.0);
+
+        let colors = [
+            egui::Color32::from_rgba_premultiplied(200, 50, 50, 140),   // R
+            egui::Color32::from_rgba_premultiplied(50, 180, 50, 140),   // G
+            egui::Color32::from_rgba_premultiplied(60, 100, 220, 140),  // B
+        ];
+
+        // 先画值最大的通道（在后面），后画小的（在前面），实现正确叠加
+        for i in 0..256 {
+            let x = hist_rect.left() + i as f32 / 255.0 * w;
+            let mut bars: [(f32, usize); 3] = [
+                (hist_scale.map(hist[0][i] as f32, max_v) * hist_h, 0),
+                (hist_scale.map(hist[1][i] as f32, max_v) * hist_h, 1),
+                (hist_scale.map(hist[2][i] as f32, max_v) * hist_h, 2),
+            ];
+            bars.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            for (bar_h, ch) in bars {
+                if bar_h < 0.5 { continue; }
+                let bh = bar_h.ceil().min(hist_h);
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(x, hist_rect.bottom() - bh),
+                        egui::vec2(bar_w, bh),
+                    ),
+                    0.0,
+                    colors[ch],
+                );
+            }
+        }
+    }
+
     /// 渲染手动色彩调整面板：四通道色阶 + 曝光/对比度/高光/阴影/饱和度/色彩平衡滑块
     pub(super) fn render_color_adjust_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let s = self.s();
@@ -2150,10 +2198,8 @@ impl FffViewerApp {
         egui::CollapsingHeader::new(egui::RichText::new(s.histogram_output).small().strong())
             .default_open(false)
             .show(ui, |ui| {
-                for (_section_pos, (_title, hist_ch, bar_color)) in sections.iter().enumerate() {
-                    let hist = hist_proc_data.as_ref().map(|hd| &hd[*hist_ch]);
-                    Self::render_histogram_bars(ui, hist, *bar_color, hist_scale);
-                    ui.add_space(2.0);
+                if let Some(hd) = hist_proc_data.as_ref() {
+                    Self::render_histogram_rgb_overlay(ui, hd, hist_scale);
                 }
             });
 
