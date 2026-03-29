@@ -727,6 +727,10 @@ impl TiffFile {
             {
                 continue;
             }
+            // Skip IFDs too large for thumbnail use (GPU max texture side is typically 16384)
+            if ifd.width > 4096 || ifd.height > 4096 {
+                continue;
+            }
             let pixels = ifd.width as u64 * ifd.height as u64;
             let is_thumb = ifd.subfile_type == 1;
             let is_8bit = ifd.bps == 8;

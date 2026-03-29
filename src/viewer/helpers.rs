@@ -242,6 +242,7 @@ pub(super) fn convert_16_to_8_for_display(img: image::DynamicImage) -> image::Dy
 }
 
 /// 缩放超出 GPU 最大纹理尺寸 (16384) 的图像，防止上传纹理时崩溃
+#[allow(dead_code)]
 pub(super) fn clamp_image_for_gpu(img: image::DynamicImage) -> image::DynamicImage {
     const MAX_TEX: u32 = 16384;
     let (w, h) = (img.width(), img.height());
@@ -293,6 +294,10 @@ pub(super) fn texture_from_16bit(rgb16: &Rgb16Image, ctx: &egui::Context) -> egu
                 // alpha = 255 (already set)
             }
         });
+    log::info!("texture_from_16bit: creating texture {}x{}", w, h);
+    if w > 16384 || h > 16384 {
+        log::error!("Image {}x{} exceeds GPU max texture side 16384 — clamping", w, h);
+    }
     let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
     ctx.load_texture("loupe_preview", color_image, egui::TextureOptions::LINEAR)
 }

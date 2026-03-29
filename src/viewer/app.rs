@@ -318,6 +318,12 @@ impl FffViewerApp {
         while let Ok(result) = self.thumb_rx.try_recv() {
             self.thumb_pending = self.thumb_pending.saturating_sub(1);
             if result.width > 0 && result.height > 0 {
+                log::info!("Thumbnail loaded: {}x{} from {}", result.width, result.height, result.path.display());
+                // Guard: skip textures that exceed GPU max (16384)
+                if result.width as usize > 16384 || result.height as usize > 16384 {
+                    log::warn!("Thumbnail too large ({}x{}), skipping: {}", result.width, result.height, result.path.display());
+                    continue;
+                }
                 let size = [result.width as usize, result.height as usize];
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &result.rgba);
                 let tex = ctx.load_texture(
@@ -427,6 +433,17 @@ impl FffViewerApp {
 impl eframe::App for FffViewerApp {
     /// 主界面更新：处理拖放、渲染工具栏、目录树、信息面板和中央视图
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Workaround for egui font atlas overflow: epaint's resize_to_min_height
+        // uses `>=` which can overshoot when required_height is a power-of-2.
+        // Cap max_texture_side so the atlas width is halved, keeping total size
+        // within the GPU limit even after an overshoot doubling.
+        {
+            let current = ctx.input(|i| i.max_texture_side);
+            if current > 8192 {
+                ctx.input_mut(|i| i.max_texture_side = 8192);
+            }
+        }
+
         self.poll_background_results(ctx);
 
         // Handle drag-and-drop
