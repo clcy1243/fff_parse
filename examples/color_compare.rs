@@ -180,8 +180,8 @@ fn build_manual_adjust(corr: &ImageCorrection) -> color::ManualAdjust {
         adj.levels_black[0] = adj.levels_black[1].min(adj.levels_black[2]).min(adj.levels_black[3]);
         adj.levels_white[0] = adj.levels_white[1].max(adj.levels_white[2]).max(adj.levels_white[3]);
         if corr.dot_color.len() >= 14 {
-            adj.output_shadow = corr.dot_color[0] as f32;
-            adj.output_highlight = corr.dot_color[7] as f32;
+            adj.output_shadow = [corr.dot_color[0] as f32, corr.dot_color[1] as f32, corr.dot_color[2] as f32, corr.dot_color[3] as f32];
+            adj.output_highlight = [corr.dot_color[7] as f32, corr.dot_color[8] as f32, corr.dot_color[9] as f32, corr.dot_color[10] as f32];
         }
     }
 
@@ -223,7 +223,7 @@ fn print_adjust_summary(adj: &color::ManualAdjust) {
     println!("  levels_black={:?}", adj.levels_black);
     println!("  levels_white={:?}", adj.levels_white);
     println!("  levels_gamma={:?}", adj.levels_gamma);
-    println!("  output_shadow={:.0}, output_highlight={:.0}", adj.output_shadow, adj.output_highlight);
+    println!("  output_shadow={:?}, output_highlight={:?}", adj.output_shadow, adj.output_highlight);
     println!("  exposure={:.3}, brightness={:.1}, contrast={:.1}", adj.exposure, adj.brightness, adj.contrast);
     println!("  saturation={:.1}, lightness={:.1}, midtone={:.2}", adj.saturation, adj.lightness, adj.midtone);
     println!("  color_temp={:.1}, tint={:.1}", adj.color_temperature, adj.tint);

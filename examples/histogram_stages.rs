@@ -559,8 +559,10 @@ fn main() {
             .max(adj.levels_white[2])
             .max(adj.levels_white[3]);
         if correction.dot_color.len() >= 14 {
-            adj.output_shadow = correction.dot_color[0] as f32;
-            adj.output_highlight = correction.dot_color[7] as f32;
+            adj.output_shadow = [correction.dot_color[0] as f32, correction.dot_color[1] as f32,
+                correction.dot_color[2] as f32, correction.dot_color[3] as f32];
+            adj.output_highlight = [correction.dot_color[7] as f32, correction.dot_color[8] as f32,
+                correction.dot_color[9] as f32, correction.dot_color[10] as f32];
         }
     }
 

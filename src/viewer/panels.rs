@@ -72,10 +72,17 @@ impl FffViewerApp {
         // Master shadow/highlight 从 per-channel 派生（仅用于 UI 显示，不参与图像计算）
         adj.levels_black[0] = adj.levels_black[1].min(adj.levels_black[2]).min(adj.levels_black[3]);
         adj.levels_white[0] = adj.levels_white[1].max(adj.levels_white[2]).max(adj.levels_white[3]);
-        // 输出色阶 (DotColor)
+        // 输出色阶 (DotColor) — per-channel
         if corr.dot_color.len() >= 14 {
-            adj.output_shadow = corr.dot_color[0] as f32;
-            adj.output_highlight = corr.dot_color[7] as f32;
+            // DotColor 格式: [0-6]=shadow(Master,R,G,B,C,M,Y), [7-13]=highlight(同)
+            adj.output_shadow[0] = corr.dot_color[0] as f32;  // Master
+            adj.output_shadow[1] = corr.dot_color[1] as f32;  // R
+            adj.output_shadow[2] = corr.dot_color[2] as f32;  // G
+            adj.output_shadow[3] = corr.dot_color[3] as f32;  // B
+            adj.output_highlight[0] = corr.dot_color[7] as f32;   // Master
+            adj.output_highlight[1] = corr.dot_color[8] as f32;   // R
+            adj.output_highlight[2] = corr.dot_color[9] as f32;   // G
+            adj.output_highlight[3] = corr.dot_color[10] as f32;  // B
         }
     }
 
@@ -2092,8 +2099,8 @@ impl FffViewerApp {
                 let painter = ui.painter_at(track_rect);
                 let steps = 64u32;
                 let step_w = track_rect.width() / steps as f32;
-                let os = self.manual_adjust.output_shadow;
-                let oh = self.manual_adjust.output_highlight;
+                let os = self.manual_adjust.output_shadow[0];
+                let oh = self.manual_adjust.output_highlight[0];
                 for i in 0..steps {
                     let t = i as f32 / (steps - 1) as f32;
                     let gray = (os + t * (oh - os)).clamp(0.0, 255.0) as u8;
@@ -2111,18 +2118,23 @@ impl FffViewerApp {
                     cols[0].horizontal(|ui| {
                         ui.label(egui::RichText::new(s.output_shadow).small());
                         if ui.add(
-                            egui::DragValue::new(&mut self.manual_adjust.output_shadow)
+                            egui::DragValue::new(&mut self.manual_adjust.output_shadow[0])
                                 .range(0.0..=255.0).max_decimals(0).speed(0.5),
                         ).changed() {
+                            // Master 变更同步到各通道
+                            let v = self.manual_adjust.output_shadow[0];
+                            for i in 1..4 { self.manual_adjust.output_shadow[i] = self.manual_adjust.output_shadow[i].max(v); }
                             rebuild = true;
                         }
                     });
                     cols[1].horizontal(|ui| {
                         ui.label(egui::RichText::new(s.output_highlight).small());
                         if ui.add(
-                            egui::DragValue::new(&mut self.manual_adjust.output_highlight)
+                            egui::DragValue::new(&mut self.manual_adjust.output_highlight[0])
                                 .range(0.0..=255.0).max_decimals(0).speed(0.5),
                         ).changed() {
+                            let v = self.manual_adjust.output_highlight[0];
+                            for i in 1..4 { self.manual_adjust.output_highlight[i] = self.manual_adjust.output_highlight[i].min(v); }
                             rebuild = true;
                         }
                     });

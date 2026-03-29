@@ -133,8 +133,10 @@ fn to_xml(c: &SidecarConfig) -> String {
         a.levels_gamma[0], a.levels_gamma[1], a.levels_gamma[2], a.levels_gamma[3]);
     let _ = writeln!(s, "    <adj_levels_white>{},{},{},{}</adj_levels_white>",
         a.levels_white[0], a.levels_white[1], a.levels_white[2], a.levels_white[3]);
-    let _ = writeln!(s, "    <adj_output_shadow>{}</adj_output_shadow>", a.output_shadow);
-    let _ = writeln!(s, "    <adj_output_highlight>{}</adj_output_highlight>", a.output_highlight);
+    let _ = writeln!(s, "    <adj_output_shadow>{},{},{},{}</adj_output_shadow>",
+        a.output_shadow[0], a.output_shadow[1], a.output_shadow[2], a.output_shadow[3]);
+    let _ = writeln!(s, "    <adj_output_highlight>{},{},{},{}</adj_output_highlight>",
+        a.output_highlight[0], a.output_highlight[1], a.output_highlight[2], a.output_highlight[3]);
     // color correction matrix (36 values as comma-separated)
     let cc_str: Vec<String> = a.color_corr.iter().map(|v| v.to_string()).collect();
     let _ = writeln!(s, "    <adj_color_corr>{}</adj_color_corr>", cc_str.join(","));
@@ -343,13 +345,21 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
         }
     }
     if let Some(v) = tag_content(xml, "adj_output_shadow") {
-        if let Ok(val) = v.trim().parse::<f32>() {
-            config.manual_adjust.output_shadow = val;
+        let vals: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if vals.len() == 4 {
+            config.manual_adjust.output_shadow = [vals[0], vals[1], vals[2], vals[3]];
+        } else if vals.len() == 1 {
+            // 兼容旧版单值格式
+            config.manual_adjust.output_shadow = [vals[0]; 4];
         }
     }
     if let Some(v) = tag_content(xml, "adj_output_highlight") {
-        if let Ok(val) = v.trim().parse::<f32>() {
-            config.manual_adjust.output_highlight = val;
+        let vals: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if vals.len() == 4 {
+            config.manual_adjust.output_highlight = [vals[0], vals[1], vals[2], vals[3]];
+        } else if vals.len() == 1 {
+            // 兼容旧版单值格式
+            config.manual_adjust.output_highlight = [vals[0]; 4];
         }
     }
     if let Some(v) = tag_content(xml, "adj_color_corr") {

@@ -64,10 +64,10 @@ pub struct ManualAdjust {
     pub levels_gamma: [f32; 4],
     /// 输入白点：0-255
     pub levels_white: [f32; 4],
-    /// 输出色阶暗部端点：0-255（DotColor 暗部，同时影响 RGB 三通道）
-    pub output_shadow: f32,
-    /// 输出色阶亮部端点：0-255（DotColor 亮部，同时影响 RGB 三通道）
-    pub output_highlight: f32,
+    /// 输出色阶暗部端点：0-255（DotColor 暗部，索引 0=Master, 1=R, 2=G, 3=B）
+    pub output_shadow: [f32; 4],
+    /// 输出色阶亮部端点：0-255（DotColor 亮部，索引 0=Master, 1=R, 2=G, 3=B）
+    pub output_highlight: [f32; 4],
 
     // ── USM 锐化参数（尚未实现处理，仅保存/加载） ──
     /// 是否应用 USM 锐化
@@ -131,8 +131,8 @@ impl Default for ManualAdjust {
             levels_black: [0.0; 4],
             levels_gamma: [1.0; 4],
             levels_white: [255.0; 4],
-            output_shadow: 0.0,
-            output_highlight: 255.0,
+            output_shadow: [0.0; 4],
+            output_highlight: [255.0; 4],
             // USM 锐化
             apply_usm: false,
             usm_amount: 0, usm_radius: 1, usm_dark_limit: 0, usm_noise_limit: 0,
@@ -156,8 +156,8 @@ impl ManualAdjust {
             || (self.levels_black.iter().all(|&v| v < 0.5)
                 && self.levels_gamma.iter().all(|&v| (v - 1.0).abs() < 0.01)
                 && self.levels_white.iter().all(|&v| v > 254.5)
-                && self.output_shadow < 0.5
-                && self.output_highlight > 254.5);
+                && self.output_shadow.iter().all(|&v| v < 0.5)
+                && self.output_highlight.iter().all(|&v| v > 254.5));
         let exposure_id = !self.apply_exposure || self.exposure.abs() < 0.001;
         let brightness_id = !self.apply_brightness || self.brightness.abs() < 0.1;
         let shadow_depth_id = !self.apply_shadow_depth || self.lightness.abs() < 0.1;
@@ -350,16 +350,21 @@ fn apply_display_adjust_16(
         [0.0; 3]
     };
 
-    let (out_lo, out_hi) = if adj.apply_levels {
-        (adj.output_shadow / 255.0, adj.output_highlight / 255.0)
-    } else {
-        (0.0, 1.0)
-    };
-    let out_range = (out_hi - out_lo).max(0.001);
-
     let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
 
     for ch in 0..3 {
+        // per-channel 输出色阶 (DotColor)
+        // FlexColor DotColor: Master 为全局约束，per-channel 可进一步限制
+        // 最终 shadow = max(master, channel)，highlight = min(master, channel)
+        let (out_lo, out_hi) = if adj.apply_levels {
+            let lo = adj.output_shadow[0].max(adj.output_shadow[ch + 1]) / 255.0;
+            let hi = adj.output_highlight[0].min(adj.output_highlight[ch + 1]) / 255.0;
+            (lo, hi)
+        } else {
+            (0.0, 1.0)
+        };
+        let out_range = (out_hi - out_lo).max(0.001);
+
         let mut lut = vec![0u16; 65536];
         for i in 0..65536u32 {
             let mut v = i as f32 / 65535.0;
@@ -509,9 +514,11 @@ fn apply_adjust_16(
         };
         let range_c = (wh_c - bl_c).max(0.001);
 
-        // 输出色阶 (DotColor) 归一化
+        // 输出色阶 (DotColor) 归一化 — per-channel
         let (out_lo, out_hi) = if adj.apply_levels {
-            (adj.output_shadow / 255.0, adj.output_highlight / 255.0)
+            let lo = adj.output_shadow[0].max(adj.output_shadow[ch + 1]) / 255.0;
+            let hi = adj.output_highlight[0].min(adj.output_highlight[ch + 1]) / 255.0;
+            (lo, hi)
         } else {
             (0.0, 1.0)
         };
