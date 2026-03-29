@@ -437,7 +437,7 @@ impl FffViewerApp {
                     // Check rotation handle
                     let rot_pos = region.rotation_handle_screen(image_rect);
                     if mouse_pos.distance(rot_pos) <= rot_handle_radius + 4.0 {
-                        cursor = Some(egui::CursorIcon::Crosshair);
+                        cursor = Some(egui::CursorIcon::Alias);
                         break;
                     }
 
@@ -530,7 +530,7 @@ impl FffViewerApp {
                                     let angle = (mouse_pos.x - cx_s).atan2(-(mouse_pos.y - cy_s));
                                     self.split_state.regions[idx].angle = angle;
                                     self.split_state.regions[idx].clamp_to_image();
-                                    ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                                    ctx.set_cursor_icon(egui::CursorIcon::Alias);
                                 }
                             }
                             resize_kind => {
@@ -809,7 +809,8 @@ pub(super) fn draw_split_overlays(
 /// 根据角点索引和区域旋转角度选择合适的缩放光标图标
 fn resize_cursor_for_corner(corner_idx: usize, angle: f32) -> egui::CursorIcon {
     // Base diagonal angles for corners [TL, TR, BR, BL]
-    let base_deg = [-135.0_f32, -45.0, 45.0, 135.0];
+    // TL/BR → NwSe (\), TR/BL → NeSw (/)
+    let base_deg = [-45.0_f32, 45.0, 135.0, 225.0];
     let total = base_deg[corner_idx] + angle.to_degrees();
     // Normalize to [0, 180)
     let norm = ((total % 180.0) + 180.0) % 180.0;
