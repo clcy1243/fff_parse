@@ -675,33 +675,38 @@ impl FffViewerApp {
         // 应用色彩处理管线（全分辨率）：胶片处理 → 色阶 → ICC → 显示调整
         let pipeline = self.build_export_pipeline();
 
-        // 1. 胶片处理（负片反转）
+        // 1. 胶片处理（负片反转）— 使用实际校正参数（与渲染管线一致）
         if let Some(ref correction) = pipeline.correction {
-            let mut film_corr = correction.clone();
-            film_corr.shadow = [0; 4];
-            film_corr.highlight = [16383; 4];
-            film_corr.gray = [128; 4];
-            film_corr.saturation = 0;
-            img = color::apply_film_processing(&img, &film_corr);
+            img = color::apply_film_processing(&img, correction);
+        }
 
-            if correction.apply_curves && !correction.gradations.is_empty() {
-                img = color::apply_gradation_curves(&img, &correction.gradations);
+        // 1b. 渐变曲线（使用与渲染管线相同的 curve_points）
+        {
+            let curves_are_identity = pipeline.curve_points.iter().all(|pts| {
+                pts.len() == 2
+                    && pts[0].0 == 0 && pts[0].1 == 0
+                    && pts[1].0 == 255 && pts[1].1 == 255
+            });
+            if pipeline.manual_adjust.apply_curves
+                && pipeline.curve_points.len() >= 7
+                && !curves_are_identity
+            {
+                img = color::apply_gradation_curves(&img, &pipeline.curve_points);
             }
         }
+
         // 2. 扫描仪空间色阶（film_curve + levels + gamma）
-        if !pipeline.manual_adjust.is_identity() || pipeline.film_lut.is_some() {
-            img = color::apply_scanner_levels(&img, &pipeline.manual_adjust, pipeline.film_lut.as_ref());
-        }
+        img = color::apply_scanner_levels(&img, &pipeline.manual_adjust, pipeline.film_lut.as_ref());
+
         // 3. ICC（色阶之后）
         if let Some(ref icc_data) = pipeline.icc_data {
             if let Ok(transformed) = color::apply_icc_transform(&img, icc_data, pipeline.target_color_space) {
                 img = transformed;
             }
         }
+
         // 4. 显示空间调整
-        if !pipeline.manual_adjust.is_identity() {
-            img = color::apply_display_adjust(&img, &pipeline.manual_adjust);
-        }
+        img = color::apply_display_adjust(&img, &pipeline.manual_adjust);
 
         let img_w = img.width();
         let img_h = img.height();
