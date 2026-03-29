@@ -289,6 +289,7 @@ fn parse_image_correction(dict_node: &XmlNode) -> ImageCorrection {
     let children = element_children(dict_node);
     let mut corr = ImageCorrection::default();
     corr.gamma = 2.0; // default
+    corr.ev = 1.0; // default: no exposure compensation (1.0 = unity multiplier)
 
     let mut i = 0;
     while i + 1 < children.len() {

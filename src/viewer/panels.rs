@@ -979,7 +979,7 @@ impl FffViewerApp {
             // 将滑块参数（饱和度/EV/对比度/亮度/阴影深度/中间调）映射到手柄
             if correction.apply_sliders {
                 self.manual_adjust.saturation = correction.saturation as f32;
-                if (correction.ev - 1.0).abs() > 0.001 {
+                if (correction.ev - 1.0).abs() > 0.001 && correction.ev > 0.0 {
                     self.manual_adjust.exposure = correction.ev.log2() as f32;
                 }
                 self.manual_adjust.contrast = correction.contrast as f32;

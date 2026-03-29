@@ -283,7 +283,10 @@ fn parse_xml(xml: &str) -> Option<SidecarConfig> {
         if let Ok(fg) = v.parse::<f64>() { config.manual_adjust.film_gamma = fg; }
     }
     if let Some(v) = tag_content(xml, "adj_exposure") {
-        if let Ok(f) = v.parse::<f32>() { config.manual_adjust.exposure = f; }
+        if let Ok(f) = v.parse::<f32>() {
+            // Guard against -inf/NaN from old sidecars where log2(0) was saved
+            config.manual_adjust.exposure = if f.is_finite() { f } else { 0.0 };
+        }
     }
     if let Some(v) = tag_content(xml, "adj_brightness") {
         if let Ok(f) = v.parse::<f32>() { config.manual_adjust.brightness = f; }
