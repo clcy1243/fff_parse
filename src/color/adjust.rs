@@ -354,11 +354,11 @@ fn apply_display_adjust_16(
 
     for ch in 0..3 {
         // per-channel 输出色阶 (DotColor)
-        // FlexColor DotColor: Master 为全局约束，per-channel 可进一步限制
-        // 最终 shadow = max(master, channel)，highlight = min(master, channel)
+        // FlexColor DotColor: Master 仅用于 UI 联动，per-channel 值是最终参数
+        // 当用户移动 Master 滑块时，所有通道跟随；但单独调整某通道后，该通道独立
         let (out_lo, out_hi) = if adj.apply_levels {
-            let lo = adj.output_shadow[0].max(adj.output_shadow[ch + 1]) / 255.0;
-            let hi = adj.output_highlight[0].min(adj.output_highlight[ch + 1]) / 255.0;
+            let lo = adj.output_shadow[ch + 1] / 255.0;
+            let hi = adj.output_highlight[ch + 1] / 255.0;
             (lo, hi)
         } else {
             (0.0, 1.0)
