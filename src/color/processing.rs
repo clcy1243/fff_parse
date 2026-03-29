@@ -1,4 +1,4 @@
-//! 胶片类型处理：负片反转、黑白去色。
+//! 胶片类型处理：负片反转、黑白去色、统一色彩管线。
 //!
 //! 色阶调整（shadow/highlight/gray）和胶片曲线（film_curve LUT）已移至
 //! `adjust.rs` 的 `apply_adjust_16`，由 UI 手柄控制。
@@ -6,6 +6,8 @@
 // ─── Film Type Processing ───────────────────────────────────────────────────
 
 use crate::flexcolor::ImageCorrection;
+use super::adjust::ManualAdjust;
+use super::transform::TargetColorSpace;
 
 // ─── 胶片曲线 LUT ─────────────────────────────────────────────────────────
 // 经验性逐通道色调曲线，适用于 FlexColor FilmCurve=4、Gamma=2 的配置。
@@ -1015,4 +1017,53 @@ mod tests {
         let out = result.to_rgb8();
         assert_eq!(out.as_raw(), &pixels);
     }
+}
+
+// ─── 统一色彩处理管线 ─────────────────────────────────────────────────────
+
+/// 统一色彩处理管线：渐变曲线 → 扫描仪色阶 → ICC → 显示调整。
+///
+/// 输入应为已完成胶片处理（负片反转）的 scanner 空间图像。
+/// 渲染、单文件导出和分割导出均通过此函数保证管线一致。
+pub fn apply_color_pipeline(
+    img: image::DynamicImage,
+    adjust: &ManualAdjust,
+    curve_points: &[Vec<(i64, i64, i64)>],
+    film_lut: Option<&[Vec<f32>; 3]>,
+    icc_data: Option<&[u8]>,
+    target_color_space: TargetColorSpace,
+) -> image::DynamicImage {
+    // 1. 渐变曲线
+    let curves_are_identity = curve_points.iter().all(|pts| {
+        pts.len() == 2
+            && pts[0].0 == 0 && pts[0].1 == 0
+            && pts[1].0 == 255 && pts[1].1 == 255
+    });
+    let img = if adjust.apply_curves
+        && curve_points.len() >= 7
+        && !curves_are_identity
+    {
+        apply_gradation_curves(&img, curve_points)
+    } else {
+        img
+    };
+
+    // 2. 扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
+    let img = super::adjust::apply_scanner_levels(&img, adjust, film_lut);
+
+    // 3. ICC 色彩空间转换（扫描仪 → 输出色域）
+    let img = if let Some(icc) = icc_data {
+        match super::transform::apply_icc_transform(&img, icc, target_color_space) {
+            Ok(transformed) => transformed,
+            Err(e) => {
+                log::warn!("ICC transform failed: {}", e);
+                img
+            }
+        }
+    } else {
+        img
+    };
+
+    // 4. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在 ICC 之后
+    super::adjust::apply_display_adjust(&img, adjust)
 }

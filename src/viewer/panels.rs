@@ -1200,44 +1200,15 @@ impl FffViewerApp {
         let source = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
         let Some(base) = source else { return };
 
-        // 判断曲线是否全恒等（仅两个端点 (0,0)→(255,255)）
-        let curves_are_identity = self.curve_points.iter().all(|pts| {
-            pts.len() == 2
-                && pts[0].0 == 0 && pts[0].1 == 0
-                && pts[1].0 == 255 && pts[1].1 == 255
-        });
-
-        // 第1步：在 scanner 空间中应用渐变曲线
-        let img = if self.manual_adjust.apply_curves
-            && self.curve_points.len() >= 7
-            && !curves_are_identity
-        {
-            let raw_img = image::DynamicImage::ImageRgb16(base.clone());
-            color::apply_gradation_curves(&raw_img, &self.curve_points)
-        } else {
-            image::DynamicImage::ImageRgb16(base.clone())
-        };
-
-        // 第2步：应用扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
-        let scanner_result = color::apply_scanner_levels(
-            &img, &self.manual_adjust, self.extracted_film_lut.as_ref()
+        // 统一色彩管线（渐变曲线 → 色阶 → ICC → 显示调整）
+        let adjusted = color::apply_color_pipeline(
+            image::DynamicImage::ImageRgb16(base.clone()),
+            &self.manual_adjust,
+            &self.curve_points,
+            self.extracted_film_lut.as_ref(),
+            self.active_icc_data.as_deref(),
+            self.target_color_space,
         );
-
-        // 第3步：ICC 色彩空间转换（扫描仪 → 输出色域）
-        let icc_result = if let Some(ref icc_data) = self.active_icc_data {
-            match color::apply_icc_transform(&scanner_result, icc_data, self.target_color_space) {
-                Ok(transformed) => transformed,
-                Err(e) => {
-                    log::error!("ICC transform in rebuild failed: {}", e);
-                    scanner_result
-                }
-            }
-        } else {
-            scanner_result
-        };
-
-        // 第4步：应用显示空间调整（曝光、对比度、亮度、饱和度等）— 在 ICC 之后
-        let adjusted = color::apply_display_adjust(&icc_result, &self.manual_adjust);
         let rgb16 = to_rgb16(&adjusted);
 
         // 从最终渲染结果计算处理后直方图

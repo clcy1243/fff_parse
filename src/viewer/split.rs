@@ -8,8 +8,8 @@ use super::types::*;
 use eframe::egui;
 use std::path::Path;
 
-use fff_viewer::color::{self, ManualAdjust, TargetColorSpace};
-use fff_viewer::flexcolor::{self, ImageCorrection};
+use fff_viewer::color;
+use fff_viewer::flexcolor;
 use fff_viewer::tiff::TiffFile;
 
 impl FffViewerApp {
@@ -181,37 +181,15 @@ impl FffViewerApp {
             img = color::apply_film_processing(&img, correction);
         }
 
-        // 1b. 渐变曲线（使用与渲染管线相同的 curve_points）
-        {
-            let curves_are_identity = pipeline.curve_points.iter().all(|pts| {
-                pts.len() == 2
-                    && pts[0].0 == 0 && pts[0].1 == 0
-                    && pts[1].0 == 255 && pts[1].1 == 255
-            });
-            if pipeline.manual_adjust.apply_curves
-                && pipeline.curve_points.len() >= 7
-                && !curves_are_identity
-            {
-                img = color::apply_gradation_curves(&img, &pipeline.curve_points);
-            }
-        }
-
-        // 2. 扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
-        img = color::apply_scanner_levels(&img, &pipeline.manual_adjust, pipeline.film_lut.as_ref());
-
-        // 3. ICC 色彩空间转换（扫描仪 → 输出色域）— 在色阶之后
-        if let Some(ref icc_data) = pipeline.icc_data {
-            log::info!("export: applying ICC transform ({} bytes)", icc_data.len());
-            match color::apply_icc_transform(&img, icc_data, pipeline.target_color_space) {
-                Ok(transformed) => img = transformed,
-                Err(e) => {
-                    log::warn!("export: ICC transform failed ({}), exporting without ICC", e);
-                }
-            }
-        }
-
-        // 4. 显示空间调整（曝光/对比度/饱和度等）— 在 ICC 之后
-        img = color::apply_display_adjust(&img, &pipeline.manual_adjust);
+        // 2-4. 统一色彩管线（渐变曲线 → 色阶 → ICC → 显示调整）
+        img = color::apply_color_pipeline(
+            img,
+            &pipeline.manual_adjust,
+            &pipeline.curve_points,
+            pipeline.film_lut.as_ref(),
+            pipeline.icc_data.as_deref(),
+            pipeline.target_color_space,
+        );
 
         img.save(dst).map_err(|e| {
             log::error!("export: failed to save {}: {}", dst.display(), e);
@@ -680,33 +658,15 @@ impl FffViewerApp {
             img = color::apply_film_processing(&img, correction);
         }
 
-        // 1b. 渐变曲线（使用与渲染管线相同的 curve_points）
-        {
-            let curves_are_identity = pipeline.curve_points.iter().all(|pts| {
-                pts.len() == 2
-                    && pts[0].0 == 0 && pts[0].1 == 0
-                    && pts[1].0 == 255 && pts[1].1 == 255
-            });
-            if pipeline.manual_adjust.apply_curves
-                && pipeline.curve_points.len() >= 7
-                && !curves_are_identity
-            {
-                img = color::apply_gradation_curves(&img, &pipeline.curve_points);
-            }
-        }
-
-        // 2. 扫描仪空间色阶（film_curve + levels + gamma）
-        img = color::apply_scanner_levels(&img, &pipeline.manual_adjust, pipeline.film_lut.as_ref());
-
-        // 3. ICC（色阶之后）
-        if let Some(ref icc_data) = pipeline.icc_data {
-            if let Ok(transformed) = color::apply_icc_transform(&img, icc_data, pipeline.target_color_space) {
-                img = transformed;
-            }
-        }
-
-        // 4. 显示空间调整
-        img = color::apply_display_adjust(&img, &pipeline.manual_adjust);
+        // 2-4. 统一色彩管线（渐变曲线 → 色阶 → ICC → 显示调整）
+        img = color::apply_color_pipeline(
+            img,
+            &pipeline.manual_adjust,
+            &pipeline.curve_points,
+            pipeline.film_lut.as_ref(),
+            pipeline.icc_data.as_deref(),
+            pipeline.target_color_space,
+        );
 
         let img_w = img.width();
         let img_h = img.height();
