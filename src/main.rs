@@ -34,10 +34,21 @@ fn setup_logging() {
     // Install panic hook that writes to the log file before aborting
     let panic_log_path = log_path.clone();
     std::panic::set_hook(Box::new(move |info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            format!("{}", info)
+        };
+        let location = info.location().map_or_else(
+            || "unknown".to_string(),
+            |loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()),
+        );
+        let bt = std::backtrace::Backtrace::force_capture();
         let msg = format!(
-            "[PANIC] {}\nBacktrace:\n{:?}\n",
-            info,
-            std::backtrace::Backtrace::force_capture()
+            "[PANIC] {} at {}\nBacktrace:\n{}\n",
+            payload, location, bt,
         );
         eprintln!("{}", msg);
         if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&panic_log_path) {

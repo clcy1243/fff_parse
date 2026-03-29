@@ -1036,6 +1036,12 @@ impl FffViewerApp {
                 while self.curve_points.len() < 7 {
                     self.curve_points.push(vec![(0, 0, 0), (255, 255, 0)]);
                 }
+                // 确保每个通道至少有 2 个控制点
+                for ch_pts in &mut self.curve_points {
+                    if ch_pts.len() < 2 {
+                        *ch_pts = vec![(0, 0, 0), (255, 255, 0)];
+                    }
+                }
             } else {
                 self.curve_points = Self::default_curve_points();
             }
@@ -1740,12 +1746,15 @@ impl FffViewerApp {
         // 右键或双击删除控制点
         if response.double_clicked() || response.secondary_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                if let Some(idx) = find_closest_point(pos, &curve_points[ch]) {
-                    // 不允许删除头尾端点
-                    if idx > 0 && idx < curve_points[ch].len() - 1 {
-                        curve_points[ch].remove(idx);
-                        *curve_dragging = None;
-                        changed = true;
+                let pts_len = curve_points[ch].len();
+                if pts_len >= 3 {
+                    if let Some(idx) = find_closest_point(pos, &curve_points[ch]) {
+                        // 不允许删除头尾端点
+                        if idx > 0 && idx < pts_len - 1 {
+                            curve_points[ch].remove(idx);
+                            *curve_dragging = None;
+                            changed = true;
+                        }
                     }
                 }
             }
@@ -1774,24 +1783,29 @@ impl FffViewerApp {
         // 拖拽中
         if response.dragged() {
             if let Some(drag_idx) = *curve_dragging {
-                if let Some(pos) = response.interact_pointer_pos() {
-                    let (mut cx, cy) = to_curve(pos);
-                    let pts = &curve_points[ch];
+                let pts_len = curve_points[ch].len();
+                if drag_idx < pts_len {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let (mut cx, cy) = to_curve(pos);
 
-                    // 限制拖拽范围：不能越过相邻控制点
-                    // 起点和终点仅锁定 x 坐标，y 坐标可自由调整
-                    if drag_idx == 0 {
-                        cx = 0; // 起点 x 固定为 0
-                    } else if drag_idx == pts.len() - 1 {
-                        cx = 255; // 终点 x 固定为 255
-                    } else {
-                        let x_min = pts[drag_idx - 1].0 + 1;
-                        let x_max = pts[drag_idx + 1].0 - 1;
-                        cx = cx.clamp(x_min, x_max);
+                        // 限制拖拽范围：不能越过相邻控制点
+                        // 起点和终点仅锁定 x 坐标，y 坐标可自由调整
+                        if drag_idx == 0 {
+                            cx = 0; // 起点 x 固定为 0
+                        } else if drag_idx == pts_len - 1 {
+                            cx = 255; // 终点 x 固定为 255
+                        } else if drag_idx > 0 && drag_idx + 1 < pts_len {
+                            let x_min = curve_points[ch][drag_idx - 1].0 + 1;
+                            let x_max = curve_points[ch][drag_idx + 1].0 - 1;
+                            cx = cx.clamp(x_min, x_max);
+                        }
+
+                        curve_points[ch][drag_idx] = (cx, cy, 0);
+                        changed = true;
                     }
-
-                    curve_points[ch][drag_idx] = (cx, cy, 0);
-                    changed = true;
+                } else {
+                    // Stale drag index — clear it
+                    *curve_dragging = None;
                 }
             }
         }
