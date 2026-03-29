@@ -164,6 +164,10 @@ fn to_rgb8(img: &image::DynamicImage) -> image::RgbImage {
     out
 }
 
+fn image_to_rgb8(img: &image::DynamicImage) -> image::RgbImage {
+    img.to_rgb8()
+}
+
 fn compare_rgb_images(label: &str, ours: &image::RgbImage, reference: &image::RgbImage) {
     assert_eq!(ours.dimensions(), reference.dimensions(),
                "size mismatch: ours {:?} vs ref {:?}", ours.dimensions(), reference.dimensions());
@@ -681,8 +685,626 @@ fn main() {
         compare_rgb_images("L9: Setting#1 + curves only", &our_8, &ref_rgb8);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // M 测试: 公式变体搜索 — 寻找正确的 FlexColor 调整公式
+    // ═══════════════════════════════════════════════════════════════════
+    println!("\n\n=== 公式变体测试: 使用 Setting#7 全参数 ===");
+
+    // 提取 Setting#7 的 film_lut
+    let film_lut_c7 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
+        let t8 = t.to_rgb8();
+        if c7.film_type == 1 || c7.film_type == 2 {
+            color::extract_film_curve(&t8, p, c7)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let after_film_c7 = color::apply_film_processing(&raw_16, c7);
+
+    // M1: 反转 per-channel gamma 方向 (v^gamma 而非 v^(1/gamma))
+    // 实现方式: 将 levels_gamma[i] 设为 1/original，使得 v^(1/(1/g)) = v^g
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M1: 反转 per-ch gamma", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M2: 反转 per-ch gamma + 反转 master gamma
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        let mg = (c7.gamma as f32 - 1.0).max(0.01);
+        a.levels_gamma[0] = (1.0 / mg).clamp(0.01, 99.0);
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M2: 反转 per-ch + master gamma", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M3: 原始 gamma + 禁用 color_corr
+    {
+        let mut a = build_manual_adjust(c7);
+        a.apply_color_corr = false;
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M3: 禁用 color_corr", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M4: 反转 gamma + 禁用 color_corr
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M4: 反转gamma + 禁用cc", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M5: 反转 gamma + 禁用 color_corr + 弱化 brightness (×0.25)
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        a.brightness *= 0.25;
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M5: M4 + brightness×0.25", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M6: 反转 gamma + 禁用 color_corr + 弱化 brightness + 弱化 contrast
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        a.brightness *= 0.25;
+        a.contrast *= 0.5;
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M6: M5 + contrast×0.5", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M7: 反转 gamma + color_corr ÷1000 (而非÷100)
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        // color_corr 保留但需要在 pipeline 中用不同缩放 — 无法通过参数修改
+        // 改为禁用 cc 并手动计算效果大致方向
+        a.apply_color_corr = false;
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M7: 反转gamma + 无cc (=M4重复,用作基准)", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M8: 反转 gamma + 禁用 cc + 禁用 curves
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        a.apply_curves = false;
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &identity_curves,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M8: 反转gamma + 无cc + 无curves", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M9: 反转 gamma + 禁用 cc + 禁用 brightness/contrast/lightness
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        a.brightness = 0.0;
+        a.contrast = 0.0;
+        a.lightness = 0.0;
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M9: 反转gamma + 无cc/bri/con/lit", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // M10: 仅反转 gamma (保留所有其它原样，包括 cc)
+    // 与 H7 (原始) 对比，看 gamma 方向的纯影响
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M10: 仅反转 per-ch gamma (=M1)", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // 打印曲线控制点
+    println!("\n--- 曲线控制点 (Setting#7) ---");
+    let ch_names = ["RGB(master)", "R", "G", "B", "C", "M", "Y"];
+    for (ci, pts) in curve_points.iter().enumerate() {
+        if ci < ch_names.len() {
+            let pts_str: Vec<String> = pts.iter().map(|&(x,y,dy)| format!("({},{},{})", x, y, dy)).collect();
+            println!("  {}: {}", ch_names[ci], pts_str.join(" "));
+        }
+    }
+
+    // P 测试: DotColor 公式修正 — 使用 per-channel 值而非 max/min(master, channel)
+    println!("\n\n=== DotColor 公式修正测试 ===");
+
+    // P1: 仅修正 DotColor 公式 (per-channel 直接使用)
+    {
+        let mut a = build_manual_adjust(c7);
+        if c7.dot_color.len() >= 14 {
+            // 直接使用 per-channel 值，不与 master 做 max/min
+            a.output_shadow[0] = 0.0;  // master shadow 清零
+            a.output_highlight[0] = 255.0;  // master highlight 满
+            // per-channel 保持原样
+            a.output_shadow[1] = c7.dot_color[1] as f32;  // R shadow
+            a.output_shadow[2] = c7.dot_color[2] as f32;  // G shadow
+            a.output_shadow[3] = c7.dot_color[3] as f32;  // B shadow
+            a.output_highlight[1] = c7.dot_color[8] as f32;  // R highlight
+            a.output_highlight[2] = c7.dot_color[9] as f32;  // G highlight
+            a.output_highlight[3] = c7.dot_color[10] as f32;  // B highlight
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("P1: DotColor per-ch 直接 (当前管线)", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // P2: P1 + 反转 gamma
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        if c7.dot_color.len() >= 14 {
+            a.output_shadow[0] = 0.0;
+            a.output_highlight[0] = 255.0;
+            a.output_shadow[1] = c7.dot_color[1] as f32;
+            a.output_shadow[2] = c7.dot_color[2] as f32;
+            a.output_shadow[3] = c7.dot_color[3] as f32;
+            a.output_highlight[1] = c7.dot_color[8] as f32;
+            a.output_highlight[2] = c7.dot_color[9] as f32;
+            a.output_highlight[3] = c7.dot_color[10] as f32;
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("P2: P1 + 反转gamma", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // P3: P2 + 禁用 cc
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        if c7.dot_color.len() >= 14 {
+            a.output_shadow[0] = 0.0;
+            a.output_highlight[0] = 255.0;
+            a.output_shadow[1] = c7.dot_color[1] as f32;
+            a.output_shadow[2] = c7.dot_color[2] as f32;
+            a.output_shadow[3] = c7.dot_color[3] as f32;
+            a.output_highlight[1] = c7.dot_color[8] as f32;
+            a.output_highlight[2] = c7.dot_color[9] as f32;
+            a.output_highlight[3] = c7.dot_color[10] as f32;
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("P3: P2 + 禁用cc", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // P4: P3 + brightness×0.25
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        a.brightness *= 0.25;
+        if c7.dot_color.len() >= 14 {
+            a.output_shadow[0] = 0.0;
+            a.output_highlight[0] = 255.0;
+            a.output_shadow[1] = c7.dot_color[1] as f32;
+            a.output_shadow[2] = c7.dot_color[2] as f32;
+            a.output_shadow[3] = c7.dot_color[3] as f32;
+            a.output_highlight[1] = c7.dot_color[8] as f32;
+            a.output_highlight[2] = c7.dot_color[9] as f32;
+            a.output_highlight[3] = c7.dot_color[10] as f32;
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("P4: P3 + brightness×0.25", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // P5: DotColor 公式修正 + curves→display→DotColor 管线
+    {
+        let mut a = build_manual_adjust(c7);
+        let oshadow = if c7.dot_color.len() >= 14 {
+            [0.0, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32]
+        } else { [0.0; 4] };
+        let ohigh = if c7.dot_color.len() >= 14 {
+            [255.0, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32]
+        } else { [255.0; 4] };
+        a.output_shadow = [0.0; 4];
+        a.output_highlight = [255.0; 4];
+        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
+        let img = if let Some(icc) = icc_data.as_deref() {
+            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
+        } else { img };
+        let img = color::apply_gradation_curves(&img, &curve_points);
+        let img = color::apply_display_adjust(&img, &a);
+        let img = apply_dotcolor_last(&img, &oshadow, &ohigh);
+        compare_rgb_images("P5: curves→display→DotColor(per-ch)", &to_rgb8(&img), &ref_rgb8);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Q 测试: 反向求解 — 从参考 TIF 反推各阶段应有的正确值
+    // ═══════════════════════════════════════════════════════════════════
+    println!("\n\n=== Q: 反向求解测试 ===");
+    {
+        // 打印 S7 参数摘要
+        println!("Setting#7 参数:");
+        println!("  film_type={}, gamma={}", c7.film_type, c7.gamma);
+        println!("  shadow={:?}", &c7.shadow);
+        println!("  highlight={:?}", &c7.highlight);
+        println!("  gray={:?}", &c7.gray);
+        println!("  saturation={}, contrast={}, brightness={}, lightness={}",
+            c7.saturation, c7.contrast, c7.brightness, c7.lightness);
+        println!("  dot_color={:?}", &c7.dot_color);
+        println!("  color_corr[0..12]={:?}", &c7.color_corr[..12.min(c7.color_corr.len())]);
+        println!("  ev={}", c7.ev);
+
+        // 构建 7 通道 curves LUT (256 entries each for 8-bit)
+        let curve_luts: Vec<Vec<u8>> = curve_points.iter().map(|pts| {
+            let lut = color::build_curve_lut(pts);
+            lut.to_vec()
+        }).collect();
+
+        // 构建反转 LUT: 对于 master curve + per-channel curve, 找出 output→input 映射
+        // curves 应用顺序: master first, then per-channel
+        // combined(x) = ch_curve(master_curve(x))
+        // 构建组合 LUT
+        let mut combined_luts: Vec<Vec<u8>> = Vec::new();
+        for ch in 0..3 {
+            let master = &curve_luts[0];
+            let ch_lut = &curve_luts[ch + 1]; // R=1, G=2, B=3
+            let combined: Vec<u8> = (0..256).map(|i| {
+                let after_master = master[i] as usize;
+                ch_lut[after_master.min(255)]
+            }).collect();
+            combined_luts.push(combined);
+        }
+
+        // 构建反转 LUT (output → input)
+        // 由于曲线可能不是单调的，我们使用最近匹配
+        let mut inv_luts: Vec<Vec<u8>> = Vec::new();
+        for ch in 0..3 {
+            let forward = &combined_luts[ch];
+            let mut inv = vec![0u8; 256];
+            for out in 0..256u32 {
+                let mut best_in = 0u8;
+                let mut best_diff = 256i32;
+                for inp in 0..256u32 {
+                    let diff = (forward[inp as usize] as i32 - out as i32).abs();
+                    if diff < best_diff {
+                        best_diff = diff;
+                        best_in = inp as u8;
+                    }
+                }
+                inv[out as usize] = best_in;
+            }
+            inv_luts.push(inv);
+        }
+
+        // 反转参考 TIF: 得到 curves 之前的值
+        let ref_img = image::open(&ref_path).unwrap().to_rgb8();
+        let (w, h) = (ref_img.width(), ref_img.height());
+        let mut pre_curves_ref = vec![0u8; (w * h * 3) as usize];
+        for i in 0..(w * h) as usize {
+            let px = ref_img.as_raw();
+            for ch in 0..3 {
+                pre_curves_ref[i * 3 + ch] = inv_luts[ch][px[i * 3 + ch] as usize];
+            }
+        }
+
+        // 打印 pre-curves 参考值统计
+        let mut ch_means = [0.0f64; 3];
+        let mut ch_min = [255u8; 3];
+        let mut ch_max = [0u8; 3];
+        for i in 0..(w * h) as usize {
+            for ch in 0..3 {
+                let v = pre_curves_ref[i * 3 + ch];
+                ch_means[ch] += v as f64;
+                ch_min[ch] = ch_min[ch].min(v);
+                ch_max[ch] = ch_max[ch].max(v);
+            }
+        }
+        let n = (w * h) as f64;
+        println!("参考TIF 反推 pre-curves 值:");
+        println!("  R: mean={:.1}, range=[{}-{}]", ch_means[0] / n, ch_min[0], ch_max[0]);
+        println!("  G: mean={:.1}, range=[{}-{}]", ch_means[1] / n, ch_min[1], ch_max[1]);
+        println!("  B: mean={:.1}, range=[{}-{}]", ch_means[2] / n, ch_min[2], ch_max[2]);
+
+        // 打印 curves 单调性分析
+        for ch in 0..3 {
+            let f = &combined_luts[ch];
+            let mut non_mono = 0;
+            for i in 1..256 {
+                if f[i] < f[i-1] { non_mono += 1; }
+            }
+            let ch_name = ["R", "G", "B"][ch];
+            println!("  {ch_name} curve: 非单调段数={non_mono}, range=[{}-{}]", f.iter().min().unwrap(), f.iter().max().unwrap());
+        }
+
+        // 我们管线的 pre-curves 值 (scanner→ICC→DotColor→sliders, 无curves)
+        let a7 = build_manual_adjust(c7);
+        let mut a_no_curves = a7.clone();
+        a_no_curves.apply_curves = false;
+        let result_no_curves = color::apply_color_pipeline(
+            after_film_c7.clone(), &a_no_curves, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_pre_curves = to_rgb8(&result_no_curves);
+
+        // 比较
+        let pre_ref_img = image::RgbImage::from_raw(w, h, pre_curves_ref.clone()).unwrap();
+        let pre_ref_dyn = image::DynamicImage::ImageRgb8(pre_ref_img);
+        compare_rgb_images("Q1: 我们的pre-curves vs 参考的pre-curves", &our_pre_curves, &image_to_rgb8(&pre_ref_dyn));
+
+        // 也计算: 无 DotColor、无 cc、无 sliders 的 pre-curves
+        let mut a_base = a7.clone();
+        a_base.apply_curves = false;
+        a_base.apply_contrast = false;
+        a_base.apply_brightness = false;
+        a_base.apply_shadow_depth = false;
+        a_base.apply_color_corr = false;
+        a_base.output_shadow = [0.0; 4];
+        a_base.output_highlight = [255.0; 4];
+        let result_base = color::apply_color_pipeline(
+            after_film_c7.clone(), &a_base, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_base = to_rgb8(&result_base);
+        compare_rgb_images("Q2: 仅scanner+ICC (无显示调整) vs 参考pre-curves", &our_base, &image_to_rgb8(&pre_ref_dyn));
+
+        // Q3: 仅scanner+ICC+DotColor (无sliders)
+        let mut a_dot_only = a7.clone();
+        a_dot_only.apply_curves = false;
+        a_dot_only.apply_contrast = false;
+        a_dot_only.apply_brightness = false;
+        a_dot_only.apply_shadow_depth = false;
+        a_dot_only.apply_color_corr = false;
+        let result_dot = color::apply_color_pipeline(
+            after_film_c7.clone(), &a_dot_only, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("Q3: scanner+ICC+DotColor vs 参考pre-curves", &to_rgb8(&result_dot), &image_to_rgb8(&pre_ref_dyn));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // N 测试: 管线顺序变体 — 曲线在 display_adjust 之前，DotColor 在最后
+    // ═══════════════════════════════════════════════════════════════════
+    println!("\n\n=== 管线顺序变体测试 ===");
+
+    // 辅助函数: 将 DotColor 作为最后一步应用
+    fn apply_dotcolor_last(img: &image::DynamicImage, oshadow: &[f32; 4], ohigh: &[f32; 4]) -> image::DynamicImage {
+        if let image::DynamicImage::ImageRgb16(ref rgb16) = img {
+            let (w, h) = (rgb16.width(), rgb16.height());
+            let src = rgb16.as_raw();
+            let mut out = vec![0u16; src.len()];
+            for ch in 0..3 {
+                let lo = oshadow[0].max(oshadow[ch + 1]) / 255.0;
+                let hi = ohigh[0].min(ohigh[ch + 1]) / 255.0;
+                let range = (hi - lo).max(0.001);
+                for y in 0..h as usize {
+                    for x in 0..w as usize {
+                        let i = (y * w as usize + x) * 3 + ch;
+                        let v = src[i] as f32 / 65535.0;
+                        out[i] = ((lo + v * range).clamp(0.0, 1.0) * 65535.0) as u16;
+                    }
+                }
+            }
+            let buf = image::ImageBuffer::from_raw(w, h, out).unwrap();
+            image::DynamicImage::ImageRgb16(buf)
+        } else {
+            img.clone()
+        }
+    }
+
+    let real_oshadow = build_manual_adjust(c7).output_shadow;
+    let real_ohigh = build_manual_adjust(c7).output_highlight;
+
+    // N1: scanner→ICC→curves→display(无DotColor)→DotColor
+    {
+        let mut a = build_manual_adjust(c7);
+        a.output_shadow = [0.0; 4];
+        a.output_highlight = [255.0; 4];
+        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
+        let img = if let Some(icc) = icc_data.as_deref() {
+            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
+        } else { img };
+        let img = color::apply_gradation_curves(&img, &curve_points);
+        let img = color::apply_display_adjust(&img, &a);
+        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
+        compare_rgb_images("N1: curves→display→DotColor", &to_rgb8(&img), &ref_rgb8);
+    }
+
+    // N2: N1 + 反转 per-ch gamma
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.output_shadow = [0.0; 4];
+        a.output_highlight = [255.0; 4];
+        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
+        let img = if let Some(icc) = icc_data.as_deref() {
+            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
+        } else { img };
+        let img = color::apply_gradation_curves(&img, &curve_points);
+        let img = color::apply_display_adjust(&img, &a);
+        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
+        compare_rgb_images("N2: N1 + 反转gamma", &to_rgb8(&img), &ref_rgb8);
+    }
+
+    // N3: N2 + 禁用 color_corr
+    {
+        let mut a = build_manual_adjust(c7);
+        for i in 1..4 {
+            let g = c7.gray[i] as f32 / 128.0;
+            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
+        }
+        a.apply_color_corr = false;
+        a.output_shadow = [0.0; 4];
+        a.output_highlight = [255.0; 4];
+        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
+        let img = if let Some(icc) = icc_data.as_deref() {
+            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
+        } else { img };
+        let img = color::apply_gradation_curves(&img, &curve_points);
+        let img = color::apply_display_adjust(&img, &a);
+        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
+        compare_rgb_images("N3: N2 + 禁用cc", &to_rgb8(&img), &ref_rgb8);
+    }
+
+    // N4: 原始gamma + curves→display→DotColor + 禁用cc
+    {
+        let mut a = build_manual_adjust(c7);
+        a.apply_color_corr = false;
+        a.output_shadow = [0.0; 4];
+        a.output_highlight = [255.0; 4];
+        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
+        let img = if let Some(icc) = icc_data.as_deref() {
+            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
+        } else { img };
+        let img = color::apply_gradation_curves(&img, &curve_points);
+        let img = color::apply_display_adjust(&img, &a);
+        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
+        compare_rgb_images("N4: 原始gamma + curves→disp→Dot, 无cc", &to_rgb8(&img), &ref_rgb8);
+    }
+
+    // N5: scanner→ICC→DotColor→curves (当前顺序但 DotColor 先于 curves)
+    {
+        let mut a = build_manual_adjust(c7);
+        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
+        let img = if let Some(icc) = icc_data.as_deref() {
+            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
+        } else { img };
+        // display_adjust (includes DotColor as step ①)
+        let img = color::apply_display_adjust(&img, &a);
+        // curves AFTER display_adjust (current order)
+        let img = color::apply_gradation_curves(&img, &curve_points);
+        compare_rgb_images("N5: display(+Dot)→curves (当前顺序)", &to_rgb8(&img), &ref_rgb8);
+    }
+
+    // N6: scanner→ICC→DotColor→curves→brightness/contrast/lightness
+    // DotColor before curves, display sliders after curves
+    {
+        let mut a = build_manual_adjust(c7);
+        let saved_bri = a.brightness;
+        let saved_con = a.contrast;
+        let saved_lit = a.lightness;
+        let saved_sat = a.saturation;
+        // Phase 1: DotColor only
+        a.brightness = 0.0;
+        a.contrast = 0.0;
+        a.lightness = 0.0;
+        a.saturation = 0.0;
+        a.apply_color_corr = false;
+        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
+        let img = if let Some(icc) = icc_data.as_deref() {
+            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
+        } else { img };
+        let img = color::apply_display_adjust(&img, &a); // only DotColor
+        // Phase 2: curves
+        let img = color::apply_gradation_curves(&img, &curve_points);
+        // Phase 3: brightness/contrast/lightness/saturation
+        a.output_shadow = [0.0; 4];
+        a.output_highlight = [255.0; 4];
+        a.brightness = saved_bri;
+        a.contrast = saved_con;
+        a.lightness = saved_lit;
+        a.saturation = saved_sat;
+        let img = color::apply_display_adjust(&img, &a);
+        compare_rgb_images("N6: Dot→curves→sliders, 无cc", &to_rgb8(&img), &ref_rgb8);
+    }
+
     // ─── Test H: 尝试不同的编辑历史索引 ───
     println!("\n\n=== 测试不同编辑历史索引 ===");
+
+    // 先打印所有 settings 的关键参数
+    println!("\n--- 各 Setting 参数对比 ---");
+    for (si, setting) in edit_history.settings.iter().enumerate() {
+        let c = &setting.correction;
+        println!("  S{}: '{}' ft={} gamma={:.2} shadow={:?} highlight={:?} gray={:?} con={} bri={} lit={} sat={} ev={:.2}",
+            si, setting.name, c.film_type, c.gamma,
+            &c.shadow, &c.highlight, &c.gray,
+            c.contrast, c.brightness, c.lightness, c.saturation, c.ev);
+        if !c.dot_color.is_empty() {
+            let dc = &c.dot_color;
+            let has_dc = dc.iter().any(|&v| v != 0 && v != 255);
+            if has_dc {
+                println!("       dot=[s:{},{},{},{} h:{},{},{},{}]",
+                    dc[0], dc[1], dc[2], dc[3], dc[7], dc[8], dc[9], dc[10]);
+            }
+        }
+    }
+    println!();
+
     for (si, setting) in edit_history.settings.iter().enumerate() {
         let c = &setting.correction;
         let a = build_manual_adjust(c);
