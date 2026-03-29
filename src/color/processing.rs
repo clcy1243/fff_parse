@@ -278,9 +278,44 @@ pub fn apply_film_curve_lut(
 // 从 FFF 文件的 8-bit 缩略图（FlexColor 预渲染）和 16-bit 预览（原始数据）
 // 逆向提取逐通道胶片曲线 LUT。
 //
-// 原理：缩略图 = filmCurve(inverted_raw) → levels → gamma → ... → saturation
-// 反推：un_sat(un_gam(un_lev(thumbnail))) = filmCurve(inverted_raw)
-// 建立 inverted_raw → un_processed_thumb 的映射，即为胶片曲线。
+// 原理：缩略图 = 全管线处理(inverted_raw)
+// 反推：逆向全部处理效果后，残余映射即为纯胶片曲线。
+// 反向处理包括：饱和度、CC矩阵、亮度/对比度/阴影深度、曝光、
+// 输出色阶、gamma、色阶、渐变曲线。
+
+/// 构建 256 级 LUT 的逆映射：对于每个目标输出 y，找到使 forward[x] 最接近 y 的 x。
+fn invert_lut_256(forward: &[u8; 256]) -> [u8; 256] {
+    let mut inv = [0u8; 256];
+    for y in 0..256u16 {
+        let mut best_x = 0u8;
+        let mut best_dist = 256i32;
+        for x in 0..256u16 {
+            let dist = (forward[x as usize] as i32 - y as i32).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_x = x as u8;
+            }
+        }
+        inv[y as usize] = best_x;
+    }
+    inv
+}
+
+/// 3×3 矩阵求逆（用于 CC 色彩校正矩阵的反向处理）。
+fn invert_3x3(m: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    if det.abs() < 1e-10 {
+        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    }
+    let d = 1.0 / det;
+    [
+        [(m[1][1]*m[2][2] - m[1][2]*m[2][1])*d, (m[0][2]*m[2][1] - m[0][1]*m[2][2])*d, (m[0][1]*m[1][2] - m[0][2]*m[1][1])*d],
+        [(m[1][2]*m[2][0] - m[1][0]*m[2][2])*d, (m[0][0]*m[2][2] - m[0][2]*m[2][0])*d, (m[0][2]*m[1][0] - m[0][0]*m[1][2])*d],
+        [(m[1][0]*m[2][1] - m[1][1]*m[2][0])*d, (m[0][1]*m[2][0] - m[0][0]*m[2][1])*d, (m[0][0]*m[1][1] - m[0][1]*m[1][0])*d],
+    ]
+}
 
 /// 从 8-bit 缩略图和同分辨率 16-bit 预览提取逐通道胶片曲线 LUT。
 ///
@@ -349,6 +384,53 @@ pub fn extract_film_curve(
         2.0f32.powf(correction.ev as f32 - 1.0)
     } else { 1.0 };
 
+    // ── 显示调整参数（需要反向处理）──
+    let contrast = if correction.apply_sliders { correction.contrast as f32 / 100.0 } else { 0.0 };
+    let brightness = if correction.apply_sliders { correction.brightness as f32 / 100.0 } else { 0.0 };
+    let lightness = if correction.apply_sliders { correction.lightness as f32 / 100.0 } else { 0.0 };
+
+    // CC 矩阵逆
+    let apply_cc = correction.apply_cc && correction.color_corr.len() == 36
+        && correction.color_corr.iter().any(|&v| v != 0);
+    let inv_cc = if apply_cc {
+        let m = &correction.color_corr;
+        let cc = [
+            [(100 + m[0]) as f32 / 100.0, m[1] as f32 / 100.0,       m[2] as f32 / 100.0],
+            [m[6] as f32 / 100.0,         (100 + m[7]) as f32 / 100.0, m[8] as f32 / 100.0],
+            [m[12] as f32 / 100.0,        m[13] as f32 / 100.0,      (100 + m[14]) as f32 / 100.0],
+        ];
+        invert_3x3(cc)
+    } else {
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    };
+
+    // 渐变曲线逆 LUT（在 scanner 空间中反向应用）
+    let has_grad_curves = correction.apply_curves
+        && correction.gradations.len() >= 7
+        && !correction.gradations.iter().all(|pts| {
+            pts.len() == 2 && pts[0].0 == 0 && pts[0].1 == 0 && pts[1].0 == 255 && pts[1].1 == 255
+        });
+    let inv_grad = if has_grad_curves {
+        let lut_rgb = build_curve_lut(&correction.gradations[0]);
+        let lut_r   = build_curve_lut(&correction.gradations[1]);
+        let lut_g   = build_curve_lut(&correction.gradations[2]);
+        let lut_b   = build_curve_lut(&correction.gradations[3]);
+        let lut_c   = build_curve_lut(&correction.gradations[4]);
+        let lut_m   = build_curve_lut(&correction.gradations[5]);
+        let lut_y   = build_curve_lut(&correction.gradations[6]);
+        Some([
+            invert_lut_256(&lut_rgb),
+            invert_lut_256(&lut_r),
+            invert_lut_256(&lut_g),
+            invert_lut_256(&lut_b),
+            invert_lut_256(&lut_c),
+            invert_lut_256(&lut_m),
+            invert_lut_256(&lut_y),
+        ])
+    } else {
+        None
+    };
+
     // ── 构建映射 ──
     // 使用 1024 bins（缩略图像素有限，太多 bins 导致每 bin 样本不足）
     const BINS: usize = 1024;
@@ -380,6 +462,7 @@ pub fn extract_film_curve(
             ];
 
             // 3. 反向处理缩略图（从显示值恢复到胶片曲线输出）
+            //    反向顺序：与 apply_display_adjust_16 + apply_scanner_levels_16 的正向顺序相反
 
             // 3a. 反向饱和度（cross-channel）
             if sat.abs() > 0.001 {
@@ -389,32 +472,82 @@ pub fn extract_film_curve(
                 }
             }
 
-            // 3b. 反向曝光
+            // 3b. 反向 CC 矩阵
+            if apply_cc {
+                let r0 = rgb[0]; let g0 = rgb[1]; let b0 = rgb[2];
+                rgb[0] = (inv_cc[0][0] * r0 + inv_cc[0][1] * g0 + inv_cc[0][2] * b0).clamp(0.0, 1.0);
+                rgb[1] = (inv_cc[1][0] * r0 + inv_cc[1][1] * g0 + inv_cc[1][2] * b0).clamp(0.0, 1.0);
+                rgb[2] = (inv_cc[2][0] * r0 + inv_cc[2][1] * g0 + inv_cc[2][2] * b0).clamp(0.0, 1.0);
+            }
+
+            // 3c. 反向 lightness（shadow depth）: forward = v^(1/(1+l)), reverse = v^(1+l)
+            if lightness.abs() > 0.001 {
+                let gamma = 1.0 / (1.0 + lightness).max(0.1);
+                let inv_gamma = 1.0 / gamma;
+                for ch in 0..3 {
+                    rgb[ch] = rgb[ch].powf(inv_gamma).clamp(0.0, 1.0);
+                }
+            }
+
+            // 3d. 反向 brightness: forward = v + b*0.5, reverse = v - b*0.5
+            if brightness.abs() > 0.001 {
+                for ch in 0..3 {
+                    rgb[ch] = (rgb[ch] - brightness * 0.5).clamp(0.0, 1.0);
+                }
+            }
+
+            // 3e. 反向 contrast: forward = (v-0.5)*scale+0.5, reverse = (v-0.5)/scale+0.5
+            if contrast.abs() > 0.001 {
+                let c_scale = if contrast >= 0.0 { 1.0 + contrast * 2.0 } else { 1.0 + contrast };
+                let inv_scale = 1.0 / c_scale.max(0.001);
+                for ch in 0..3 {
+                    rgb[ch] = ((rgb[ch] - 0.5) * inv_scale + 0.5).clamp(0.0, 1.0);
+                }
+            }
+
+            // 3f. 反向曝光
             if exp_mult != 1.0 {
                 for ch in 0..3 {
                     rgb[ch] /= exp_mult;
                 }
             }
 
-            // 3c. 反向输出色阶
+            // 3g. 反向输出色阶
             for ch in 0..3 {
                 rgb[ch] = ((rgb[ch] - out_lo) / out_range).clamp(0.0, 1.0);
             }
 
-            // 3d. 反向 master gamma
+            // 3h. 反向 master gamma
             for ch in 0..3 {
                 rgb[ch] = rgb[ch].powf(gamma_m);
             }
 
-            // 3e. 反向 per-channel gamma
+            // 3i. 反向 per-channel gamma
             for ch in 0..3 {
                 rgb[ch] = rgb[ch].powf(gamma_c[ch]);
             }
 
-            // 3f. 反向色阶（levels）
+            // 3j. 反向色阶（levels）
             for ch in 0..3 {
                 let range = (wh_c[ch] - bl[ch]).max(0.001);
                 rgb[ch] = (rgb[ch] * range + bl[ch]).clamp(0.0, 1.0);
+            }
+
+            // 3k. 反向渐变曲线（逆序：先逆 RGB 主通道，再逆 CMY，最后逆 per-channel R/G/B）
+            if let Some(ref ig) = inv_grad {
+                let idx = |v: f32| -> usize { (v * 255.0).round().clamp(0.0, 255.0) as usize };
+                // 逆 RGB 主通道
+                for ch in 0..3 {
+                    rgb[ch] = ig[0][idx(rgb[ch])] as f32 / 255.0;
+                }
+                // 逆 CMY（C=ig[4], M=ig[5], Y=ig[6]）
+                rgb[0] = 1.0 - ig[4][idx(1.0 - rgb[0])] as f32 / 255.0;
+                rgb[1] = 1.0 - ig[5][idx(1.0 - rgb[1])] as f32 / 255.0;
+                rgb[2] = 1.0 - ig[6][idx(1.0 - rgb[2])] as f32 / 255.0;
+                // 逆 per-channel R/G/B（ig[1]=R, ig[2]=G, ig[3]=B）
+                rgb[0] = ig[1][idx(rgb[0])] as f32 / 255.0;
+                rgb[1] = ig[2][idx(rgb[1])] as f32 / 255.0;
+                rgb[2] = ig[3][idx(rgb[2])] as f32 / 255.0;
             }
 
             // 4. 累积到 bins：inv[ch]/65535 → bin index, rgb[ch] → target

@@ -53,7 +53,9 @@ impl TargetColorSpace {
 
 impl Default for TargetColorSpace {
     fn default() -> Self {
-        Self::ProPhotoRGB
+        // egui 不做显示色彩管理，像素直接发送到屏幕。
+        // 默认使用 sRGB 以匹配大多数显示器的色彩空间。
+        Self::SRGB
     }
 }
 
