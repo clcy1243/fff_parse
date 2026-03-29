@@ -478,10 +478,9 @@ fn main() {
 
     // ─── Test K: Setting #1 参数 + setting #6 的曲线 (验证曲线是否是主要差异) ───
     {
-        // Use setting #1's simple parameters but add setting #6's curves at the end
         let c1 = &edit_history.settings[1].correction;
         let mut a1 = build_manual_adjust(c1);
-        a1.apply_curves = false;  // Don't apply curves in pipeline
+        a1.apply_curves = false;
         let identity_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
 
         let after1 = color::apply_film_processing(&raw_16, c1);
@@ -493,7 +492,6 @@ fn main() {
             icc_data.as_deref(),
             color::TargetColorSpace::SRGB,
         );
-        // Now apply setting #6's complex curves at the end
         let result = if adj.apply_curves && curve_points.len() >= 7 {
             color::apply_gradation_curves(&result, &curve_points)
         } else {
@@ -501,6 +499,186 @@ fn main() {
         };
         let our_8 = to_rgb8(&result);
         compare_rgb_images("K: Setting#1 params + Setting#6 curves (last)", &our_8, &ref_rgb8);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  消融测试：从 Setting#1 逐步添加 Setting#6 的特征
+    // ══════════════════════════════════════════════════════════════════
+    println!("\n\n=== 消融测试: Setting#1 基础 + 逐步添加 Setting#7 特征 ===");
+    let c1 = &edit_history.settings[1].correction;
+    let c7 = corr;  // Current (latest) setting
+    let after_film_c1 = color::apply_film_processing(&raw_16, c1);
+    let identity_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
+
+    // 使用 c1 的 correction 提取 film_lut（确保与 H1 一致）
+    let film_lut_c1 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
+        let t8 = t.to_rgb8();
+        if c1.film_type == 1 || c1.film_type == 2 {
+            color::extract_film_curve(&t8, p, c1)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // L1: Setting#1 基础 (baseline)
+    {
+        let a = build_manual_adjust(c1);
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &identity_curves,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L1: Setting#1 baseline", &our_8, &ref_rgb8);
+    }
+
+    // L2: + gamma/gray 变化 (1.89844 + new gray)
+    {
+        let mut a = build_manual_adjust(c1);
+        a.film_gamma = c7.gamma;
+        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        for i in 1..4 {
+            a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0);
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &identity_curves,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L2: +gamma/gray变化", &our_8, &ref_rgb8);
+    }
+
+    // L3: + contrast=41
+    {
+        let mut a = build_manual_adjust(c1);
+        a.film_gamma = c7.gamma;
+        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
+        a.contrast = 41.0;
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &identity_curves,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L3: +contrast=41", &our_8, &ref_rgb8);
+    }
+
+    // L4: + brightness=42
+    {
+        let mut a = build_manual_adjust(c1);
+        a.film_gamma = c7.gamma;
+        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
+        a.contrast = 41.0;
+        a.brightness = 42.0;
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &identity_curves,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L4: +brightness=42", &our_8, &ref_rgb8);
+    }
+
+    // L5: + lightness=43
+    {
+        let mut a = build_manual_adjust(c1);
+        a.film_gamma = c7.gamma;
+        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
+        a.contrast = 41.0;
+        a.brightness = 42.0;
+        a.lightness = 43.0;
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &identity_curves,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L5: +lightness=43", &our_8, &ref_rgb8);
+    }
+
+    // L6: + DotColor [60,180]
+    {
+        let mut a = build_manual_adjust(c1);
+        a.film_gamma = c7.gamma;
+        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
+        a.contrast = 41.0;
+        a.brightness = 42.0;
+        a.lightness = 43.0;
+        if c7.dot_color.len() >= 14 {
+            a.output_shadow = [c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32];
+            a.output_highlight = [c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32];
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &identity_curves,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L6: +DotColor[60,180]", &our_8, &ref_rgb8);
+    }
+
+    // L7: + color_corr
+    {
+        let mut a = build_manual_adjust(c1);
+        a.film_gamma = c7.gamma;
+        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
+        a.contrast = 41.0;
+        a.brightness = 42.0;
+        a.lightness = 43.0;
+        if c7.dot_color.len() >= 14 {
+            a.output_shadow = [c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32];
+            a.output_highlight = [c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32];
+        }
+        if c7.apply_cc && c7.color_corr.len() == 36 {
+            for (i, &v) in c7.color_corr.iter().enumerate() { a.color_corr[i] = v; }
+            a.apply_color_corr = true;
+        }
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &identity_curves,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L7: +color_corr", &our_8, &ref_rgb8);
+    }
+
+    // L8: + gradation curves (全特征)
+    {
+        let mut a = build_manual_adjust(c1);
+        a.film_gamma = c7.gamma;
+        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
+        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
+        a.contrast = 41.0;
+        a.brightness = 42.0;
+        a.lightness = 43.0;
+        if c7.dot_color.len() >= 14 {
+            a.output_shadow = [c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32];
+            a.output_highlight = [c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32];
+        }
+        if c7.apply_cc && c7.color_corr.len() == 36 {
+            for (i, &v) in c7.color_corr.iter().enumerate() { a.color_corr[i] = v; }
+            a.apply_color_corr = true;
+        }
+        a.apply_curves = true;
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &curve_points,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L8: +curves (全特征)", &our_8, &ref_rgb8);
+    }
+
+    // L9: 仅 Setting#1 + curves (不加其它 slider)
+    {
+        let mut a = build_manual_adjust(c1);
+        a.apply_curves = true;
+        let result = color::apply_color_pipeline(
+            after_film_c1.clone(), &a, &curve_points,
+            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("L9: Setting#1 + curves only", &our_8, &ref_rgb8);
     }
 
     // ─── Test H: 尝试不同的编辑历史索引 ───
