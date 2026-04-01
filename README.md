@@ -709,6 +709,21 @@ cargo run --release --bin parse_test -- "/path/to/scan.fff"
 
 ## Changelog
 
+### v0.8.0
+
+- **B&W 负片 ICC 后二次灰度化**
+  - ICC 色彩转换会引入通道偏差（R≠G≠B），在 ICC 后对 `film_type==2` 的 B&W 负片执行 BT.601 加权灰度化
+  - 修复 B&W 图像偏色问题，通道差异从 21.5 降至 0.000
+- **DotColor 索引映射修复**
+  - DotColor 14 元素数组中前三个元素为 R/G/B 通道下限，第 7-9 个为上限
+  - 修复索引越界导致的输出色阶错误
+- **重复点击同一文件状态重置修复**
+  - 修正 `select_file()` 中色彩状态重置代码位于同文件早期返回检查之前的问题
+  - 第二次点击同一文件不再丢失色彩方案设置
+- **色彩管线诊断工具**
+  - 新增 `examples/color_diag.rs`：针对 Setting #1 的色彩管线消融测试
+  - 支持 gamma 方向测试、Film LUT 效果测试、管线分步对照
+
 ### v0.7.0
 
 - **色彩管线统一**
