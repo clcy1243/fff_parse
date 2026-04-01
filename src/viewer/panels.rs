@@ -74,15 +74,16 @@ impl FffViewerApp {
         adj.levels_white[0] = adj.levels_white[1].max(adj.levels_white[2]).max(adj.levels_white[3]);
         // 输出色阶 (DotColor) — per-channel
         if corr.dot_color.len() >= 14 {
-            // DotColor 格式: [0-6]=shadow(Master,R,G,B,C,M,Y), [7-13]=highlight(同)
-            adj.output_shadow[0] = corr.dot_color[0] as f32;  // Master
-            adj.output_shadow[1] = corr.dot_color[1] as f32;  // R
-            adj.output_shadow[2] = corr.dot_color[2] as f32;  // G
-            adj.output_shadow[3] = corr.dot_color[3] as f32;  // B
-            adj.output_highlight[0] = corr.dot_color[7] as f32;   // Master
-            adj.output_highlight[1] = corr.dot_color[8] as f32;   // R
-            adj.output_highlight[2] = corr.dot_color[9] as f32;   // G
-            adj.output_highlight[3] = corr.dot_color[10] as f32;  // B
+            // DotColor 格式: [0-6]=shadow(R,G,B,...), [7-13]=highlight(R,G,B,...)
+            // 每组只有前三个通道有效，对应 R、G、B
+            adj.output_shadow[1] = corr.dot_color[0] as f32;  // R
+            adj.output_shadow[2] = corr.dot_color[1] as f32;  // G
+            adj.output_shadow[3] = corr.dot_color[2] as f32;  // B
+            adj.output_shadow[0] = adj.output_shadow[1].min(adj.output_shadow[2]).min(adj.output_shadow[3]);
+            adj.output_highlight[1] = corr.dot_color[7] as f32;   // R
+            adj.output_highlight[2] = corr.dot_color[8] as f32;   // G
+            adj.output_highlight[3] = corr.dot_color[9] as f32;   // B
+            adj.output_highlight[0] = adj.output_highlight[1].max(adj.output_highlight[2]).max(adj.output_highlight[3]);
         }
     }
 

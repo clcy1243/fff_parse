@@ -344,7 +344,8 @@ pub fn extract_film_curve(
         return None;
     }
 
-    // 检测较重的显示调整 — 这些调整的反向处理不可靠，跳过提取
+    // 检测较重的显示调整 — 仅记录警告，仍然尝试提取
+    // （之前会直接返回 None，导致使用不匹配的 Setting 参数时提取失败）
     let has_heavy_adjustments = {
         let has_cbl = correction.apply_sliders && (
             correction.contrast.abs() > 0
@@ -360,19 +361,25 @@ pub fn extract_film_curve(
                 pts.len() == 2 && pts[0].0 == 0 && pts[0].1 == 0 && pts[1].0 == 255 && pts[1].1 == 255
             });
         let has_dot = correction.dot_color.len() >= 14
-            && (correction.dot_color[0] != 0 || correction.dot_color[7] != 255);
+            && correction.dot_color.iter().enumerate().any(|(i, &v)| {
+                // 每组前三个通道有效 [0..2]=R,G,B shadow, [7..9]=R,G,B highlight
+                (i <= 2 && v != 0) || (i >= 7 && i <= 9 && v != 255)
+            });
         has_cbl || has_cc || has_grad || has_dot
     };
     if has_heavy_adjustments {
-        log::info!(
-            "extract_film_curve: skipping — heavy display adjustments detected \
-             (contrast={}, brightness={}, lightness={}, CC={}, grad={}, dot={})",
+        log::warn!(
+            "extract_film_curve: heavy display adjustments detected \
+             (contrast={}, brightness={}, lightness={}, CC={}, grad={}, dot={}) — \
+             reversal may be approximate",
             correction.contrast, correction.brightness, correction.lightness,
             correction.apply_cc && correction.color_corr.iter().any(|&v| v != 0),
             correction.apply_curves,
-            correction.dot_color.len() >= 14 && (correction.dot_color[0] != 0 || correction.dot_color[7] != 255),
+            correction.dot_color.len() >= 14 && correction.dot_color.iter().enumerate().any(|(i, &v)| {
+                (i <= 2 && v != 0) || (i >= 7 && i <= 9 && v != 255)
+            }),
         );
-        return None;
+        // 继续提取，不再返回 None
     }
 
     let n_pixels = w * h;
@@ -402,14 +409,26 @@ pub fn extract_film_curve(
     }
     let gamma_m = ((correction.gamma as f32) - 1.0).max(0.01);
 
-    // 输出色阶 (DotColor)
+    // 输出色阶 (DotColor) — 每组前三个通道有效：[0]=R, [1]=G, [2]=B; [7]=R, [8]=G, [9]=B
     let out_lo = if correction.dot_color.len() >= 14 {
-        correction.dot_color[0] as f32 / 255.0
-    } else { 0.0 };
+        [
+            correction.dot_color[0] as f32 / 255.0,
+            correction.dot_color[1] as f32 / 255.0,
+            correction.dot_color[2] as f32 / 255.0,
+        ]
+    } else { [0.0; 3] };
     let out_hi = if correction.dot_color.len() >= 14 {
-        correction.dot_color[7] as f32 / 255.0
-    } else { 1.0 };
-    let out_range = (out_hi - out_lo).max(0.001);
+        [
+            correction.dot_color[7] as f32 / 255.0,
+            correction.dot_color[8] as f32 / 255.0,
+            correction.dot_color[9] as f32 / 255.0,
+        ]
+    } else { [1.0; 3] };
+    let out_range = [
+        (out_hi[0] - out_lo[0]).max(0.001),
+        (out_hi[1] - out_lo[1]).max(0.001),
+        (out_hi[2] - out_lo[2]).max(0.001),
+    ];
 
     // 饱和度
     let sat = if correction.apply_sliders {
@@ -499,9 +518,27 @@ pub fn extract_film_curve(
             ];
 
             // 3. 反向处理缩略图（从显示值恢复到胶片曲线输出）
-            //    反向顺序：与 apply_display_adjust_16 + apply_scanner_levels_16 的正向顺序相反
+            //    反向顺序：正向管线为 scanner→ICC→display→curves
+            //    因此反向为：curves^(-1) → display^(-1) → ICC(skip) → scanner^(-1)
 
-            // 3a. 反向饱和度（cross-channel）
+            // 3a. 反向渐变曲线（正向管线的最后一步，需首先反向）
+            if let Some(ref ig) = inv_grad {
+                let idx = |v: f32| -> usize { (v * 255.0).round().clamp(0.0, 255.0) as usize };
+                // 逆 per-channel R/G/B（ig[1]=R, ig[2]=G, ig[3]=B）
+                rgb[0] = ig[1][idx(rgb[0])] as f32 / 255.0;
+                rgb[1] = ig[2][idx(rgb[1])] as f32 / 255.0;
+                rgb[2] = ig[3][idx(rgb[2])] as f32 / 255.0;
+                // 逆 CMY（C=ig[4], M=ig[5], Y=ig[6]）
+                rgb[0] = 1.0 - ig[4][idx(1.0 - rgb[0])] as f32 / 255.0;
+                rgb[1] = 1.0 - ig[5][idx(1.0 - rgb[1])] as f32 / 255.0;
+                rgb[2] = 1.0 - ig[6][idx(1.0 - rgb[2])] as f32 / 255.0;
+                // 逆 RGB 主通道
+                for ch in 0..3 {
+                    rgb[ch] = ig[0][idx(rgb[ch])] as f32 / 255.0;
+                }
+            }
+
+            // 3b. 反向饱和度（cross-channel，正向管线中最后的 cross-channel 步骤）
             if sat.abs() > 0.001 {
                 let lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
                 for ch in 0..3 {
@@ -509,7 +546,7 @@ pub fn extract_film_curve(
                 }
             }
 
-            // 3b. 反向 CC 矩阵
+            // 3c. 反向 CC 矩阵
             if apply_cc {
                 let r0 = rgb[0]; let g0 = rgb[1]; let b0 = rgb[2];
                 rgb[0] = (inv_cc[0][0] * r0 + inv_cc[0][1] * g0 + inv_cc[0][2] * b0).clamp(0.0, 1.0);
@@ -517,7 +554,7 @@ pub fn extract_film_curve(
                 rgb[2] = (inv_cc[2][0] * r0 + inv_cc[2][1] * g0 + inv_cc[2][2] * b0).clamp(0.0, 1.0);
             }
 
-            // 3c. 反向 lightness（shadow depth）: forward = v^(1/(1+l)), reverse = v^(1+l)
+            // 3d. 反向 lightness（shadow depth）: forward = v^(1/(1+l)), reverse = v^(1+l)
             if lightness.abs() > 0.001 {
                 let gamma = 1.0 / (1.0 + lightness).max(0.1);
                 let inv_gamma = 1.0 / gamma;
@@ -526,14 +563,14 @@ pub fn extract_film_curve(
                 }
             }
 
-            // 3d. 反向 brightness: forward = v + b*0.5, reverse = v - b*0.5
+            // 3e. 反向 brightness: forward = v + b*0.5, reverse = v - b*0.5
             if brightness.abs() > 0.001 {
                 for ch in 0..3 {
                     rgb[ch] = (rgb[ch] - brightness * 0.5).clamp(0.0, 1.0);
                 }
             }
 
-            // 3e. 反向 contrast: forward = (v-0.5)*scale+0.5, reverse = (v-0.5)/scale+0.5
+            // 3f. 反向 contrast: forward = (v-0.5)*scale+0.5, reverse = (v-0.5)/scale+0.5
             if contrast.abs() > 0.001 {
                 let c_scale = if contrast >= 0.0 { 1.0 + contrast * 2.0 } else { 1.0 + contrast };
                 let inv_scale = 1.0 / c_scale.max(0.001);
@@ -542,49 +579,32 @@ pub fn extract_film_curve(
                 }
             }
 
-            // 3f. 反向曝光
+            // 3g. 反向曝光
             if exp_mult != 1.0 {
                 for ch in 0..3 {
                     rgb[ch] /= exp_mult;
                 }
             }
 
-            // 3g. 反向输出色阶
+            // 3h. 反向输出色阶 (per-channel DotColor)
             for ch in 0..3 {
-                rgb[ch] = ((rgb[ch] - out_lo) / out_range).clamp(0.0, 1.0);
+                rgb[ch] = ((rgb[ch] - out_lo[ch]) / out_range[ch]).clamp(0.0, 1.0);
             }
 
-            // 3h. 反向 master gamma
+            // 3i. 反向 master gamma
             for ch in 0..3 {
                 rgb[ch] = rgb[ch].powf(gamma_m);
             }
 
-            // 3i. 反向 per-channel gamma
+            // 3j. 反向 per-channel gamma
             for ch in 0..3 {
                 rgb[ch] = rgb[ch].powf(gamma_c[ch]);
             }
 
-            // 3j. 反向色阶（levels）
+            // 3k. 反向色阶（levels）
             for ch in 0..3 {
                 let range = (wh_c[ch] - bl[ch]).max(0.001);
                 rgb[ch] = (rgb[ch] * range + bl[ch]).clamp(0.0, 1.0);
-            }
-
-            // 3k. 反向渐变曲线（逆序：先逆 RGB 主通道，再逆 CMY，最后逆 per-channel R/G/B）
-            if let Some(ref ig) = inv_grad {
-                let idx = |v: f32| -> usize { (v * 255.0).round().clamp(0.0, 255.0) as usize };
-                // 逆 RGB 主通道
-                for ch in 0..3 {
-                    rgb[ch] = ig[0][idx(rgb[ch])] as f32 / 255.0;
-                }
-                // 逆 CMY（C=ig[4], M=ig[5], Y=ig[6]）
-                rgb[0] = 1.0 - ig[4][idx(1.0 - rgb[0])] as f32 / 255.0;
-                rgb[1] = 1.0 - ig[5][idx(1.0 - rgb[1])] as f32 / 255.0;
-                rgb[2] = 1.0 - ig[6][idx(1.0 - rgb[2])] as f32 / 255.0;
-                // 逆 per-channel R/G/B（ig[1]=R, ig[2]=G, ig[3]=B）
-                rgb[0] = ig[1][idx(rgb[0])] as f32 / 255.0;
-                rgb[1] = ig[2][idx(rgb[1])] as f32 / 255.0;
-                rgb[2] = ig[3][idx(rgb[2])] as f32 / 255.0;
             }
 
             // 4. 累积到 bins：inv[ch]/65535 → bin index, rgb[ch] → target
@@ -1049,6 +1069,13 @@ pub fn apply_color_pipeline(
         img
     };
 
+    // 2b. B&W 负片：ICC 后重新去色（ICC 会将 R=G=B 灰度数据变为非灰度）
+    let img = if adjust.film_type == 2 {
+        desaturate_bw(&img)
+    } else {
+        img
+    };
+
     // 3. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在 ICC 之后
     let img = super::adjust::apply_display_adjust(&img, adjust);
 
@@ -1065,5 +1092,47 @@ pub fn apply_color_pipeline(
         apply_gradation_curves(&img, curve_points)
     } else {
         img
+    }
+}
+
+/// B&W 去色：将 RGB 转为灰度（ITU-R BT.601 权重），保持 Rgb16/Rgb8 格式
+fn desaturate_bw(img: &image::DynamicImage) -> image::DynamicImage {
+    use rayon::prelude::*;
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            let (w, h) = (rgb16.width(), rgb16.height());
+            let src = rgb16.as_raw();
+            let row_len = w as usize * 3;
+            let mut out = vec![0u16; row_len * h as usize];
+            out.par_chunks_mut(row_len).enumerate().for_each(|(y, row)| {
+                let s = y * row_len;
+                for x in 0..w as usize {
+                    let b = x * 3;
+                    let r = src[s + b] as f32;
+                    let g = src[s + b + 1] as f32;
+                    let bv = src[s + b + 2] as f32;
+                    let lum = (0.299 * r + 0.587 * g + 0.114 * bv).round() as u16;
+                    row[b] = lum;
+                    row[b + 1] = lum;
+                    row[b + 2] = lum;
+                }
+            });
+            image::DynamicImage::ImageRgb16(
+                image::ImageBuffer::from_raw(w, h, out).unwrap())
+        },
+        other => {
+            let rgb8 = other.to_rgb8();
+            let (w, h) = (rgb8.width(), rgb8.height());
+            let mut out = image::RgbImage::new(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    let p = rgb8.get_pixel(x, y);
+                    let lum = (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
+                        .round().clamp(0.0, 255.0) as u8;
+                    out.put_pixel(x, y, image::Rgb([lum, lum, lum]));
+                }
+            }
+            image::DynamicImage::ImageRgb8(out)
+        }
     }
 }

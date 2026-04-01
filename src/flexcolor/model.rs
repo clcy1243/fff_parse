@@ -151,7 +151,8 @@ pub struct ImageCorrection {
     pub input_profile_name: Option<String>,
     /// 输出 RGB 配置文件名称（如 "sRGB Color Space Profile.icm"）
     pub rgb_profile_name: Option<String>,
-    /// 输出色阶端点 DotColor [14 值]：前 7 个为暗部端点，后 7 个为亮部端点
+    /// 输出色阶端点 DotColor [14 值]：[0-6]=shadow, [7-13]=highlight
+    /// 每组前三个通道有效：[0]=R, [1]=G, [2]=B，其余无效
     pub dot_color: Vec<i64>,
     /// 所有原始键值对（用于展示未知字段）
     pub raw_params: Vec<(String, String)>,

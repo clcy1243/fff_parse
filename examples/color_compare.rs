@@ -180,8 +180,8 @@ fn build_manual_adjust(corr: &ImageCorrection) -> color::ManualAdjust {
         adj.levels_black[0] = adj.levels_black[1].min(adj.levels_black[2]).min(adj.levels_black[3]);
         adj.levels_white[0] = adj.levels_white[1].max(adj.levels_white[2]).max(adj.levels_white[3]);
         if corr.dot_color.len() >= 14 {
-            adj.output_shadow = [corr.dot_color[0] as f32, corr.dot_color[1] as f32, corr.dot_color[2] as f32, corr.dot_color[3] as f32];
-            adj.output_highlight = [corr.dot_color[7] as f32, corr.dot_color[8] as f32, corr.dot_color[9] as f32, corr.dot_color[10] as f32];
+            adj.output_shadow = [0.0, corr.dot_color[0] as f32, corr.dot_color[1] as f32, corr.dot_color[2] as f32];
+            adj.output_highlight = [255.0, corr.dot_color[7] as f32, corr.dot_color[8] as f32, corr.dot_color[9] as f32];
         }
     }
 

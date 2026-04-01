@@ -115,8 +115,8 @@ fn build_manual_adjust(corr: &ImageCorrection) -> color::ManualAdjust {
         adj.levels_black[0] = adj.levels_black[1].min(adj.levels_black[2]).min(adj.levels_black[3]);
         adj.levels_white[0] = adj.levels_white[1].max(adj.levels_white[2]).max(adj.levels_white[3]);
         if corr.dot_color.len() >= 14 {
-            adj.output_shadow = [corr.dot_color[0] as f32, corr.dot_color[1] as f32, corr.dot_color[2] as f32, corr.dot_color[3] as f32];
-            adj.output_highlight = [corr.dot_color[7] as f32, corr.dot_color[8] as f32, corr.dot_color[9] as f32, corr.dot_color[10] as f32];
+            adj.output_shadow = [0.0, corr.dot_color[0] as f32, corr.dot_color[1] as f32, corr.dot_color[2] as f32];
+            adj.output_highlight = [255.0, corr.dot_color[7] as f32, corr.dot_color[8] as f32, corr.dot_color[9] as f32];
         }
     }
 
@@ -611,8 +611,8 @@ fn main() {
         a.brightness = 42.0;
         a.lightness = 43.0;
         if c7.dot_color.len() >= 14 {
-            a.output_shadow = [c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32];
-            a.output_highlight = [c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32];
+            a.output_shadow = [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32];
+            a.output_highlight = [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32];
         }
         let result = color::apply_color_pipeline(
             after_film_c1.clone(), &a, &identity_curves,
@@ -632,8 +632,8 @@ fn main() {
         a.brightness = 42.0;
         a.lightness = 43.0;
         if c7.dot_color.len() >= 14 {
-            a.output_shadow = [c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32];
-            a.output_highlight = [c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32];
+            a.output_shadow = [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32];
+            a.output_highlight = [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32];
         }
         if c7.apply_cc && c7.color_corr.len() == 36 {
             for (i, &v) in c7.color_corr.iter().enumerate() { a.color_corr[i] = v; }
@@ -657,8 +657,8 @@ fn main() {
         a.brightness = 42.0;
         a.lightness = 43.0;
         if c7.dot_color.len() >= 14 {
-            a.output_shadow = [c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32];
-            a.output_highlight = [c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32];
+            a.output_shadow = [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32];
+            a.output_highlight = [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32];
         }
         if c7.apply_cc && c7.color_corr.len() == 36 {
             for (i, &v) in c7.color_corr.iter().enumerate() { a.color_corr[i] = v; }
@@ -880,12 +880,12 @@ fn main() {
             a.output_shadow[0] = 0.0;  // master shadow 清零
             a.output_highlight[0] = 255.0;  // master highlight 满
             // per-channel 保持原样
-            a.output_shadow[1] = c7.dot_color[1] as f32;  // R shadow
-            a.output_shadow[2] = c7.dot_color[2] as f32;  // G shadow
-            a.output_shadow[3] = c7.dot_color[3] as f32;  // B shadow
-            a.output_highlight[1] = c7.dot_color[8] as f32;  // R highlight
-            a.output_highlight[2] = c7.dot_color[9] as f32;  // G highlight
-            a.output_highlight[3] = c7.dot_color[10] as f32;  // B highlight
+            a.output_shadow[1] = c7.dot_color[0] as f32;  // R shadow
+            a.output_shadow[2] = c7.dot_color[1] as f32;  // G shadow
+            a.output_shadow[3] = c7.dot_color[2] as f32;  // B shadow
+            a.output_highlight[1] = c7.dot_color[7] as f32;  // R highlight
+            a.output_highlight[2] = c7.dot_color[8] as f32;  // G highlight
+            a.output_highlight[3] = c7.dot_color[9] as f32;  // B highlight
         }
         let result = color::apply_color_pipeline(
             after_film_c7.clone(), &a, &curve_points,
@@ -904,12 +904,12 @@ fn main() {
         if c7.dot_color.len() >= 14 {
             a.output_shadow[0] = 0.0;
             a.output_highlight[0] = 255.0;
-            a.output_shadow[1] = c7.dot_color[1] as f32;
-            a.output_shadow[2] = c7.dot_color[2] as f32;
-            a.output_shadow[3] = c7.dot_color[3] as f32;
-            a.output_highlight[1] = c7.dot_color[8] as f32;
-            a.output_highlight[2] = c7.dot_color[9] as f32;
-            a.output_highlight[3] = c7.dot_color[10] as f32;
+            a.output_shadow[1] = c7.dot_color[0] as f32;
+            a.output_shadow[2] = c7.dot_color[1] as f32;
+            a.output_shadow[3] = c7.dot_color[2] as f32;
+            a.output_highlight[1] = c7.dot_color[7] as f32;
+            a.output_highlight[2] = c7.dot_color[8] as f32;
+            a.output_highlight[3] = c7.dot_color[9] as f32;
         }
         let result = color::apply_color_pipeline(
             after_film_c7.clone(), &a, &curve_points,
@@ -929,12 +929,12 @@ fn main() {
         if c7.dot_color.len() >= 14 {
             a.output_shadow[0] = 0.0;
             a.output_highlight[0] = 255.0;
-            a.output_shadow[1] = c7.dot_color[1] as f32;
-            a.output_shadow[2] = c7.dot_color[2] as f32;
-            a.output_shadow[3] = c7.dot_color[3] as f32;
-            a.output_highlight[1] = c7.dot_color[8] as f32;
-            a.output_highlight[2] = c7.dot_color[9] as f32;
-            a.output_highlight[3] = c7.dot_color[10] as f32;
+            a.output_shadow[1] = c7.dot_color[0] as f32;
+            a.output_shadow[2] = c7.dot_color[1] as f32;
+            a.output_shadow[3] = c7.dot_color[2] as f32;
+            a.output_highlight[1] = c7.dot_color[7] as f32;
+            a.output_highlight[2] = c7.dot_color[8] as f32;
+            a.output_highlight[3] = c7.dot_color[9] as f32;
         }
         let result = color::apply_color_pipeline(
             after_film_c7.clone(), &a, &curve_points,
@@ -955,12 +955,12 @@ fn main() {
         if c7.dot_color.len() >= 14 {
             a.output_shadow[0] = 0.0;
             a.output_highlight[0] = 255.0;
-            a.output_shadow[1] = c7.dot_color[1] as f32;
-            a.output_shadow[2] = c7.dot_color[2] as f32;
-            a.output_shadow[3] = c7.dot_color[3] as f32;
-            a.output_highlight[1] = c7.dot_color[8] as f32;
-            a.output_highlight[2] = c7.dot_color[9] as f32;
-            a.output_highlight[3] = c7.dot_color[10] as f32;
+            a.output_shadow[1] = c7.dot_color[0] as f32;
+            a.output_shadow[2] = c7.dot_color[1] as f32;
+            a.output_shadow[3] = c7.dot_color[2] as f32;
+            a.output_highlight[1] = c7.dot_color[7] as f32;
+            a.output_highlight[2] = c7.dot_color[8] as f32;
+            a.output_highlight[3] = c7.dot_color[9] as f32;
         }
         let result = color::apply_color_pipeline(
             after_film_c7.clone(), &a, &curve_points,
@@ -973,10 +973,10 @@ fn main() {
     {
         let mut a = build_manual_adjust(c7);
         let oshadow = if c7.dot_color.len() >= 14 {
-            [0.0, c7.dot_color[1] as f32, c7.dot_color[2] as f32, c7.dot_color[3] as f32]
+            [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32]
         } else { [0.0; 4] };
         let ohigh = if c7.dot_color.len() >= 14 {
-            [255.0, c7.dot_color[8] as f32, c7.dot_color[9] as f32, c7.dot_color[10] as f32]
+            [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32]
         } else { [255.0; 4] };
         a.output_shadow = [0.0; 4];
         a.output_highlight = [255.0; 4];

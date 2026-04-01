@@ -54,9 +54,9 @@ fn main() {
     let mut bl=[0f32;3]; let mut wh_c=[0f32;3]; let mut gamma_c=[0f32;3];
     for ch in 0..3 { bl[ch]=c.shadow[ch+1]as f32*4.0/65535.0; wh_c[ch]=c.highlight[ch+1]as f32*4.0/65535.0; gamma_c[ch]=(c.gray[ch+1]as f32/128.0).max(0.01); }
     let gamma_m = ((c.gamma as f32)-1.0).max(0.01);
-    let out_lo = if c.dot_color.len()>=14{c.dot_color[0]as f32/255.0}else{0.0};
-    let out_hi = if c.dot_color.len()>=14{c.dot_color[7]as f32/255.0}else{1.0};
-    let out_range = (out_hi-out_lo).max(0.001);
+    let out_lo = if c.dot_color.len()>=14{[c.dot_color[0]as f32/255.0, c.dot_color[1]as f32/255.0, c.dot_color[2]as f32/255.0]}else{[0.0;3]};
+    let out_hi = if c.dot_color.len()>=14{[c.dot_color[7]as f32/255.0, c.dot_color[8]as f32/255.0, c.dot_color[9]as f32/255.0]}else{[1.0;3]};
+    let out_range = [(out_hi[0]-out_lo[0]).max(0.001), (out_hi[1]-out_lo[1]).max(0.001), (out_hi[2]-out_lo[2]).max(0.001)];
     let sat = if c.apply_sliders{c.saturation as f32/100.0}else{0.0};
     let contrast = if c.apply_sliders{c.contrast as f32/100.0}else{0.0};
     let brightness = if c.apply_sliders{c.brightness as f32/100.0}else{0.0};
@@ -74,7 +74,7 @@ fn main() {
     println!("sat={}, contrast={}, brightness={}, lightness={}", sat, contrast, brightness, lightness);
     println!("gamma_m={}, gamma_c={:?}", gamma_m, gamma_c);
     println!("bl={:?}, wh_c={:?}", bl, wh_c);
-    println!("out_lo={}, out_hi={}, out_range={}", out_lo, out_hi, out_range);
+    println!("out_lo={:?}, out_hi={:?}, out_range={:?}", out_lo, out_hi, out_range);
     println!("apply_cc={}", apply_cc);
     if apply_cc {
         println!("CC matrix: {:?}", cc);
@@ -145,7 +145,7 @@ fn main() {
         println!("  After inv(exposure): ({:.4},{:.4},{:.4}) [no change, EV=1]", rgb[0], rgb[1], rgb[2]);
         
         // 3g: inv(output_levels)
-        for ch in 0..3 { rgb[ch] = ((rgb[ch]-out_lo)/out_range).clamp(0.0,1.0); }
+        for ch in 0..3 { rgb[ch] = ((rgb[ch]-out_lo[ch])/out_range[ch]).clamp(0.0,1.0); }
         println!("  After inv(output): ({:.4},{:.4},{:.4})", rgb[0], rgb[1], rgb[2]);
         
         // 3h: inv(master_gamma)
