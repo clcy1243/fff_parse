@@ -265,14 +265,27 @@ fn main() {
                  corr.contrast, corr.brightness, corr.saturation, corr.lightness);
     }
 
-    // 提取 ICC 配置文件
+    // 提取 ICC 配置文件（嵌入或从磁盘加载）
     let all_tags = tiff.all_tags();
     let icc_data = color::extract_embedded_icc(tiff.raw_data(), &all_tags);
-    if let Some(ref icc) = icc_data {
-        println!("✓ 嵌入 ICC 配置文件: {} bytes", icc.len());
+    let icc_data = if icc_data.is_none() {
+        let profile_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("profiles")
+            .join("Flextight X5 & 949.icc");
+        if profile_path.exists() {
+            let data = std::fs::read(&profile_path).ok();
+            if let Some(ref d) = data {
+                println!("✓ ICC (from disk): {} bytes — {}", d.len(), profile_path.display());
+            }
+            data
+        } else {
+            println!("⚠ ICC profile not found at {}", profile_path.display());
+            None
+        }
     } else {
-        println!("⚠ 未找到嵌入 ICC 配置文件");
-    }
+        println!("✓ ICC (embedded): {} bytes", icc_data.as_ref().unwrap().len());
+        icc_data
+    };
 
     // 构建 ManualAdjust
     let adj = build_manual_adjust(corr);
