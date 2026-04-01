@@ -709,6 +709,18 @@ cargo run --release --bin parse_test -- "/path/to/scan.fff"
 
 ## Changelog
 
+### v0.9.0
+
+- **彩色负片管线重大修复**
+  - **管线顺序修正**: 色阶→胶片曲线→gamma（原为胶片曲线→色阶→gamma），与 FlexColor 一致
+  - **硬编码 LUT 重新提取**: 在 levels 标准化空间中从参考 TIF 逆向提取 R/G/B 三通道 256 项 LUT
+  - **ICC 双重应用修复**: 硬编码 LUT 已包含 ICC 效果，彩色负片使用时跳过额外 ICC 变换
+  - 参考 TIF 匹配精度: MAE 从 62.55 降至 **2.06**（近乎像素级完美）
+  - 仅影响彩色负片 (C-41)；正片和 BW 负片管线不变
+- **彩色负片优先使用硬编码 LUT**
+  - 对 film_type=1, film_curve=4 的彩色负片跳过缩略图提取，直接使用硬编码 LUT
+  - 硬编码 LUT 精度远优于缩略图提取（MAE 2.06 vs 68.82）
+
 ### v0.8.0
 
 - **B&W 负片 ICC 后二次灰度化**

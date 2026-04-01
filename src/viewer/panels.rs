@@ -951,21 +951,25 @@ impl FffViewerApp {
             result = color::apply_film_processing(&result, &inversion_corr);
 
             // 提取负片胶片曲线（从 8-bit 缩略图 + 16-bit 预览逆向）
-            // 始终使用内嵌校正进行提取，因为缩略图是用内嵌校正渲染的
-            if inversion_corr.film_type == 1 || inversion_corr.film_type == 2 {
+            // 彩色负片 (film_type=1, film_curve=4): 使用硬编码 LUT（已含 ICC 效果），跳过提取
+            // BW 负片 (film_type=2): 仍尝试提取
+            if inversion_corr.film_type == 2 {
                 if let Some((thumb_8, preview_16)) = detail.tiff.decode_thumbnail_pair() {
                     self.extracted_film_lut = color::extract_film_curve(
                         &thumb_8, &preview_16, film_corr,
                     );
                     if self.extracted_film_lut.is_some() {
-                        log::info!("Film curve extracted from thumbnail pair");
+                        log::info!("Film curve extracted from thumbnail pair (BW)");
                     } else {
-                        log::warn!("Film curve extraction returned None");
+                        log::warn!("Film curve extraction returned None (BW)");
                     }
                 } else {
                     log::warn!("No thumbnail pair found for film curve extraction");
                     self.extracted_film_lut = None;
                 }
+            } else if inversion_corr.film_type == 1 && inversion_corr.film_curve == 4 {
+                log::info!("Color negative: using hardcoded film LUT (skip extraction, skip ICC)");
+                self.extracted_film_lut = None;
             } else {
                 self.extracted_film_lut = None;
             }
@@ -1201,7 +1205,7 @@ impl FffViewerApp {
             let scanner_rgb = to_rgb16(&result);
 
             // 重新提取负片胶片曲线
-            if correction.film_type == 1 || correction.film_type == 2 {
+            if correction.film_type == 2 {
                 if let Some(detail) = &self.detail {
                     if let Some((thumb_8, preview_16)) = detail.tiff.decode_thumbnail_pair() {
                         self.extracted_film_lut = color::extract_film_curve(
@@ -1209,6 +1213,9 @@ impl FffViewerApp {
                         );
                     }
                 }
+            } else if correction.film_type == 1 && correction.film_curve == 4 {
+                log::info!("Color negative: using hardcoded film LUT (skip extraction)");
+                self.extracted_film_lut = None;
             } else {
                 self.extracted_film_lut = None;
             }

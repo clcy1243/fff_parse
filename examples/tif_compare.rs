@@ -1296,6 +1296,233 @@ fn main() {
         compare_rgb_images("N6: Dot→curves→sliders, 无cc", &to_rgb8(&img), &ref_rgb8);
     }
 
+    // ─── Pipeline Step Trace for Setting #1 ───
+    println!("\n\n=== 管线逐步追踪 (Setting #1) ===");
+    {
+        let c1 = &edit_history.settings[1].correction;
+        let a1 = build_manual_adjust(c1);
+
+        // Pick 5 sample pixels at different brightness levels
+        let (w, h) = (raw_16.width(), raw_16.height());
+        let sample_points = [
+            (w/4, h/4), (w/2, h/4), (3*w/4, h/4), (w/2, h/2), (w/4, 3*h/4),
+        ];
+
+        // Step 1: Film processing (inversion)
+        let after_film = color::apply_film_processing(&raw_16, c1);
+        let af_rgb16 = after_film.to_rgb16();
+
+        // Step 2a: Scanner levels with hardcoded LUT
+        let scanner_hardcoded = color::apply_scanner_levels(&after_film, &a1, None);
+        let sc_h_rgb16 = scanner_hardcoded.to_rgb16();
+
+        // Step 2b: Scanner levels with extracted LUT
+        let fl1 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
+            let t8 = t.to_rgb8();
+            color::extract_film_curve(&t8, p, c1)
+        } else { None };
+        let scanner_extracted = color::apply_scanner_levels(&after_film, &a1, fl1.as_ref());
+        let sc_e_rgb16 = scanner_extracted.to_rgb16();
+
+        // Step 3: ICC
+        let icc_hardcoded = if let Some(ref icc) = icc_data {
+            color::apply_icc_transform(&scanner_hardcoded, icc, color::TargetColorSpace::SRGB).ok()
+        } else { None };
+        let no_icc_h = scanner_hardcoded.clone();
+
+        // Step 4: Display adjust (saturation only for S1)
+        let display_h_icc = if let Some(ref img) = icc_hardcoded {
+            color::apply_display_adjust(img, &a1)
+        } else {
+            color::apply_display_adjust(&no_icc_h, &a1)
+        };
+
+        let display_h_no_icc = color::apply_display_adjust(&no_icc_h, &a1);
+
+        let disp_icc_rgb16 = display_h_icc.to_rgb16();
+        let disp_no_icc_rgb16 = display_h_no_icc.to_rgb16();
+
+        let raw_rgb16 = raw_16.to_rgb16();
+        let ref_rgb16 = ref_img.to_rgb16();
+
+        println!("  levels_black={:?}", a1.levels_black);
+        println!("  levels_white={:?}", a1.levels_white);
+        println!("  levels_gamma={:?}", a1.levels_gamma);
+        println!("  sat={}", a1.saturation);
+        println!();
+        println!("  {:>8} │ {:>20} │ {:>20} │ {:>20} │ {:>20} │ {:>20} │ {:>20} │ {:>13}",
+            "pos", "raw_16", "inverted", "scanner(hLUT)", "scanner(eLUT)", "after_ICC", "display(+ICC)", "reference");
+        for &(px, py) in &sample_points {
+            let raw_p = raw_rgb16.get_pixel(px, py);
+            let inv_p = af_rgb16.get_pixel(px, py);
+            let sch_p = sc_h_rgb16.get_pixel(px, py);
+            let sce_p = sc_e_rgb16.get_pixel(px, py);
+            let icc_p = if let Some(ref img) = icc_hardcoded {
+                let i16 = img.to_rgb16();
+                *i16.get_pixel(px, py)
+            } else {
+                *sch_p
+            };
+            let disp_p = disp_icc_rgb16.get_pixel(px, py);
+            let ref_p = ref_rgb16.get_pixel(px, py);
+
+            println!("  ({:>4},{:>4}) │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>4},{:>4},{:>4}",
+                px, py,
+                raw_p[0], raw_p[1], raw_p[2],
+                inv_p[0], inv_p[1], inv_p[2],
+                sch_p[0], sch_p[1], sch_p[2],
+                sce_p[0], sce_p[1], sce_p[2],
+                icc_p[0], icc_p[1], icc_p[2],
+                disp_p[0], disp_p[1], disp_p[2],
+                ref_p[0]>>8, ref_p[1]>>8, ref_p[2]>>8);
+        }
+
+        // === 反向推导正确的胶片曲线（新管线顺序: levels→FC→γ） ===
+        println!("\n--- 反向推导: 从参考TIF反推正确的胶片曲线 (levels→FC→γ空间) ---");
+        // 新顺序: inverted → levels_normalize → film_curve → gamma → display → reference
+        // 反向: reference → reverse_display → reverse_gamma → film_curve_output
+        // FC input = levels_normalize(inverted) = (inverted/65535 - bl) / range
+        let sat_factor = a1.saturation / 100.0;  // 0.15
+        let gamma_m = a1.levels_gamma[0];
+        let bl_c = [a1.levels_black[1] / 255.0, a1.levels_black[2] / 255.0, a1.levels_black[3] / 255.0];
+        let wh_c = [a1.levels_white[1] / 255.0, a1.levels_white[2] / 255.0, a1.levels_white[3] / 255.0];
+        let gc = [a1.levels_gamma[1], a1.levels_gamma[2], a1.levels_gamma[3]];
+
+        // 收集所有像素: levels_normalized_inverted → correct_film_output
+        const REVERSE_BINS: usize = 256;
+        let mut rev_sums = [[0.0f64; REVERSE_BINS]; 3];
+        let mut rev_counts = [[0u32; REVERSE_BINS]; 3];
+
+        let af_raw = af_rgb16.as_raw();
+        let ref_raw = ref_rgb16.as_raw();
+
+        for y in 0..h {
+            for x in 0..w {
+                let pi = (y * w + x) as usize * 3;
+                let mut rgb_ref = [
+                    ref_raw[pi] as f32 / 65535.0,
+                    ref_raw[pi + 1] as f32 / 65535.0,
+                    ref_raw[pi + 2] as f32 / 65535.0,
+                ];
+
+                // 反向 saturation
+                if sat_factor.abs() > 0.001 {
+                    let lum = 0.2126 * rgb_ref[0] + 0.7152 * rgb_ref[1] + 0.0722 * rgb_ref[2];
+                    for ch in 0..3 {
+                        rgb_ref[ch] = lum + (rgb_ref[ch] - lum) / (1.0 + sat_factor);
+                    }
+                }
+
+                // 反向 master gamma
+                for ch in 0..3 {
+                    rgb_ref[ch] = rgb_ref[ch].clamp(0.0, 1.0).powf(gamma_m);
+                }
+
+                // 反向 per-channel gamma
+                for ch in 0..3 {
+                    rgb_ref[ch] = rgb_ref[ch].clamp(0.0, 1.0).powf(gc[ch]);
+                }
+
+                // 不反向 levels — FC 操作在 levels 标准化之后的空间
+                // rgb_ref[ch] 现在就是 FC 输出
+
+                // FC 输入 = levels 标准化后的 inverted
+                for ch in 0..3 {
+                    let inv = af_raw[pi + ch] as f32 / 65535.0;
+                    let range = (wh_c[ch] - bl_c[ch]).max(0.001);
+                    let normalized = ((inv - bl_c[ch]) / range).clamp(0.0, 1.0);
+                    let bin = (normalized * (REVERSE_BINS - 1) as f32) as usize;
+                    let bin = bin.min(REVERSE_BINS - 1);
+                    rev_sums[ch][bin] += rgb_ref[ch] as f64;
+                    rev_counts[ch][bin] += 1;
+                }
+            }
+        }
+
+        // 打印对比: hardcoded LUT vs 正确曲线
+        let ch_names = ["R", "G", "B"];
+        let lut_tables: [&[u8; 256]; 3] = [
+            &color::FILM_CURVE_LUT_R,
+            &color::FILM_CURVE_LUT_G,
+            &color::FILM_CURVE_LUT_B,
+        ];
+
+        for ch in 0..3 {
+            println!("\n  {} 通道: bin → hardcoded_LUT / 正确曲线 / 差值", ch_names[ch]);
+            for i in (0..REVERSE_BINS).step_by(8) {
+                let lut_val = lut_tables[ch][i] as f32 / 255.0;
+                let correct = if rev_counts[ch][i] > 0 {
+                    (rev_sums[ch][i] / rev_counts[ch][i] as f64) as f32
+                } else {
+                    -1.0
+                };
+                if correct >= 0.0 || lut_val > 0.0 {
+                    println!("    [{:>3}] ({:.3}): hLUT={:.3} correct={:.3} diff={:+.3}  (n={})",
+                        i, i as f32 / 255.0, lut_val,
+                        if correct >= 0.0 { correct } else { f32::NAN },
+                        if correct >= 0.0 { correct - lut_val } else { f32::NAN },
+                        rev_counts[ch][i]);
+                }
+            }
+        }
+
+        // 输出完整的 256 项正确曲线（Rust 数组格式）
+        println!("\n--- 新管线空间中的正确胶片曲线 (256项) ---");
+        for ch in 0..3 {
+            // 先用线性插值填充空 bin
+            let mut correct_256 = [0.0f32; 256];
+            let mut valid_idx = Vec::new();
+            let mut valid_val = Vec::new();
+            for i in 0..256 {
+                if rev_counts[ch][i] > 0 {
+                    let avg = (rev_sums[ch][i] / rev_counts[ch][i] as f64) as f32;
+                    correct_256[i] = avg;
+                    valid_idx.push(i);
+                    valid_val.push(avg);
+                }
+            }
+            // 线性插值填充空 bin
+            if valid_idx.len() >= 2 {
+                for i in 0..256 {
+                    if rev_counts[ch][i] == 0 {
+                        let right = valid_idx.partition_point(|&v| v <= i);
+                        if right == 0 {
+                            correct_256[i] = valid_val[0];
+                        } else if right >= valid_idx.len() {
+                            correct_256[i] = *valid_val.last().unwrap();
+                        } else {
+                            let li = valid_idx[right - 1];
+                            let ri = valid_idx[right];
+                            let frac = (i - li) as f32 / (ri - li) as f32;
+                            correct_256[i] = valid_val[right - 1] * (1.0 - frac)
+                                + valid_val[right] * frac;
+                        }
+                    }
+                }
+            }
+            // 单调性强制
+            for i in 1..256 {
+                if correct_256[i] < correct_256[i - 1] {
+                    correct_256[i] = correct_256[i - 1];
+                }
+            }
+            // 输出 Rust 数组
+            print!("pub static FILM_CURVE_LUT_{}: [u8; 256] = [\n    ", ch_names[ch]);
+            for i in 0..256 {
+                let val = (correct_256[i] * 255.0).round().clamp(0.0, 255.0) as u8;
+                if i == 255 {
+                    println!("{}", val);
+                } else if (i + 1) % 16 == 0 {
+                    println!("{},", val);
+                    print!("    ");
+                } else {
+                    print!("{}, ", val);
+                }
+            }
+            println!("];");
+        }
+    }
+
     // ─── Test H: 尝试不同的编辑历史索引 ───
     println!("\n\n=== 测试不同编辑历史索引 ===");
 
@@ -1318,6 +1545,221 @@ fn main() {
     }
     println!();
 
+    // 缩略图由当前设置渲染 — 比较不同胶片曲线提取策略
+    let current_corr = &edit_history.settings[idx].correction;
+    let film_lut_current = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
+        let t8 = t.to_rgb8();
+        if current_corr.film_type == 1 || current_corr.film_type == 2 {
+            color::extract_film_curve(&t8, p, current_corr)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    // 用 S1 提取（之前的行为）
+    let s1_corr = &edit_history.settings[1].correction;
+    let film_lut_s1 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
+        let t8 = t.to_rgb8();
+        if s1_corr.film_type == 1 || s1_corr.film_type == 2 {
+            color::extract_film_curve(&t8, p, s1_corr)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    println!("  胶片曲线: current=#{} extract={}, S1 extract={}",
+        idx, if film_lut_current.is_some() { "OK" } else { "None" },
+        if film_lut_s1.is_some() { "OK" } else { "None" });
+
+    // Test H: 不同策略渲染 Setting #1（与参考对照）
+    let s1_setting = &edit_history.settings[1];
+    let s1_adj = build_manual_adjust(&s1_setting.correction);
+    let s1_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
+    let after_s1 = color::apply_film_processing(&raw_16, &s1_setting.correction);
+
+    // H1a: Setting #1, 真正的 identity（禁用胶片曲线）
+    {
+        let mut a_no_fc = s1_adj.clone();
+        a_no_fc.apply_film_curve = false;
+        let result = color::apply_color_pipeline(
+            after_s1.clone(), &a_no_fc, &s1_curves, None,
+            icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("H1a: S1 identity（禁用胶片曲线）", &our_8, &ref_rgb8);
+    }
+
+    // H1b: Setting #1, hardcoded LUT (默认 fallback)
+    {
+        let result = color::apply_color_pipeline(
+            after_s1.clone(), &s1_adj, &s1_curves, None,
+            icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("H1b: S1 + 硬编码LUT", &our_8, &ref_rgb8);
+    }
+
+    // H1c: Setting #1, extracted with S1's correction
+    {
+        let result = color::apply_color_pipeline(
+            after_s1.clone(), &s1_adj, &s1_curves, film_lut_s1.as_ref(),
+            icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("H1c: S1 + S1提取曲线", &our_8, &ref_rgb8);
+    }
+
+    // H1d: Setting #1, extracted with current (S7) correction
+    {
+        let result = color::apply_color_pipeline(
+            after_s1.clone(), &s1_adj, &s1_curves, film_lut_current.as_ref(),
+            icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("H1d: S1 + 当前设置提取曲线", &our_8, &ref_rgb8);
+    }
+
+    // H1e: Setting #1, no ICC
+    {
+        let result = color::apply_color_pipeline(
+            after_s1.clone(), &s1_adj, &s1_curves, film_lut_s1.as_ref(),
+            None, color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("H1e: S1 + S1曲线 + 无ICC", &our_8, &ref_rgb8);
+    }
+
+    // H1f: 管线顺序测试 — 先色阶后胶片曲线 (levels → film_curve → gamma)
+    {
+        use rayon::prelude::*;
+        let s1c = &s1_setting.correction;
+        let gamma_m = ((s1c.gamma as f32) - 1.0).clamp(0.01, 3.0);
+        let af_rgb16 = after_s1.to_rgb16();
+        let (w, h) = (af_rgb16.width(), af_rgb16.height());
+
+        // Build per-channel LUT: levels→film_curve→gamma
+        let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
+        for ch in 0..3usize {
+            let bl_c = s1c.shadow[ch + 1] as f32 * 4.0 / 65535.0;
+            let wh_c = s1c.highlight[ch + 1] as f32 * 4.0 / 65535.0;
+            let range_c = (wh_c - bl_c).max(0.001);
+            let gamma_c = (s1c.gray[ch + 1] as f32 / 128.0).max(0.01);
+
+            let lut_table: &[u8; 256] = match ch {
+                0 => &color::FILM_CURVE_LUT_R,
+                1 => &color::FILM_CURVE_LUT_G,
+                _ => &color::FILM_CURVE_LUT_B,
+            };
+
+            let mut lut = vec![0u16; 65536];
+            for i in 0..65536u32 {
+                let mut v = i as f32 / 65535.0;
+                // ① 先色阶（标准化到 [0,1]）
+                v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+                // ② 然后胶片曲线（在标准化空间中）
+                v = color::lut_interp_16(v, lut_table) / 65535.0;
+                // ③ gamma
+                v = v.powf(1.0 / gamma_c);
+                v = v.powf(1.0 / gamma_m);
+                v = v.clamp(0.0, 1.0);
+                lut[i as usize] = (v * 65535.0) as u16;
+            }
+            luts.push(lut);
+        }
+
+        let row_len = w as usize * 3;
+        let mut out_buf = vec![0u16; row_len * h as usize];
+        let src = af_rgb16.as_raw();
+        out_buf.par_chunks_mut(row_len).enumerate().for_each(|(y, row)| {
+            for x in 0..w as usize {
+                let si_pix = (y * w as usize + x) * 3;
+                for ch in 0..3 {
+                    let val = src[si_pix + ch] as usize;
+                    row[x * 3 + ch] = luts[ch][val];
+                }
+            }
+        });
+        let scanner_img: image::ImageBuffer<image::Rgb<u16>, _> =
+            image::ImageBuffer::from_raw(w, h, out_buf).unwrap();
+        let scanner_dyn = image::DynamicImage::ImageRgb16(scanner_img);
+
+        // Apply saturation + ICC (no display adjustments for S1)
+        let mut a_no_fc = s1_adj.clone();
+        a_no_fc.apply_film_curve = false;
+        a_no_fc.apply_levels = false; // levels already applied manually
+        let result = color::apply_color_pipeline(
+            scanner_dyn, &a_no_fc, &s1_curves, None,
+            icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("H1f: S1 先色阶后胶片曲线 (levels→FC→γ)", &our_8, &ref_rgb8);
+    }
+
+    // H1g: 先色阶后胶片曲线，但不用 ICC
+    {
+        use rayon::prelude::*;
+        let s1c = &s1_setting.correction;
+        let gamma_m = ((s1c.gamma as f32) - 1.0).clamp(0.01, 3.0);
+        let af_rgb16 = after_s1.to_rgb16();
+        let (w, h) = (af_rgb16.width(), af_rgb16.height());
+
+        let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
+        for ch in 0..3usize {
+            let bl_c = s1c.shadow[ch + 1] as f32 * 4.0 / 65535.0;
+            let wh_c = s1c.highlight[ch + 1] as f32 * 4.0 / 65535.0;
+            let range_c = (wh_c - bl_c).max(0.001);
+            let gamma_c = (s1c.gray[ch + 1] as f32 / 128.0).max(0.01);
+
+            let lut_table: &[u8; 256] = match ch {
+                0 => &color::FILM_CURVE_LUT_R,
+                1 => &color::FILM_CURVE_LUT_G,
+                _ => &color::FILM_CURVE_LUT_B,
+            };
+
+            let mut lut = vec![0u16; 65536];
+            for i in 0..65536u32 {
+                let mut v = i as f32 / 65535.0;
+                v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+                v = color::lut_interp_16(v, lut_table) / 65535.0;
+                v = v.powf(1.0 / gamma_c);
+                v = v.powf(1.0 / gamma_m);
+                v = v.clamp(0.0, 1.0);
+                lut[i as usize] = (v * 65535.0) as u16;
+            }
+            luts.push(lut);
+        }
+
+        let row_len = w as usize * 3;
+        let mut out_buf = vec![0u16; row_len * h as usize];
+        let src = af_rgb16.as_raw();
+        out_buf.par_chunks_mut(row_len).enumerate().for_each(|(y, row)| {
+            for x in 0..w as usize {
+                let si_pix = (y * w as usize + x) * 3;
+                for ch in 0..3 {
+                    let val = src[si_pix + ch] as usize;
+                    row[x * 3 + ch] = luts[ch][val];
+                }
+            }
+        });
+        let scanner_img: image::ImageBuffer<image::Rgb<u16>, _> =
+            image::ImageBuffer::from_raw(w, h, out_buf).unwrap();
+        let scanner_dyn = image::DynamicImage::ImageRgb16(scanner_img);
+
+        let mut a_no_fc = s1_adj.clone();
+        a_no_fc.apply_film_curve = false;
+        a_no_fc.apply_levels = false;
+        let result = color::apply_color_pipeline(
+            scanner_dyn, &a_no_fc, &s1_curves, None,
+            None, color::TargetColorSpace::SRGB,  // 无 ICC
+        );
+        let our_8 = to_rgb8(&result);
+        compare_rgb_images("H1g: S1 先色阶后FC (无ICC)", &our_8, &ref_rgb8);
+    }
+
+    // Full H tests with S1-extracted curve (original behavior)
     for (si, setting) in edit_history.settings.iter().enumerate() {
         let c = &setting.correction;
         let a = build_manual_adjust(c);
@@ -1327,6 +1769,7 @@ fn main() {
             (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect()
         };
 
+        // 用每个 setting 自己的 correction 提取（原始行为）
         let fl = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
             let t8 = t.to_rgb8();
             if c.film_type == 1 || c.film_type == 2 {

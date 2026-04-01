@@ -180,6 +180,15 @@ impl ManualAdjust {
             && contrast_id && highlights_id && shadows_id && saturation_id
             && color_balance_id && color_temp_id && color_corr_id
     }
+
+    /// 是否将使用内置硬编码胶片曲线 LUT（LUT 已包含 ICC 效果，外部无需再次应用 ICC）。
+    /// 仅对彩色负片 (film_type=1) 生效；BW 负片仍需 ICC + 去色流程。
+    pub fn uses_hardcoded_film_lut(&self, has_extracted_lut: bool) -> bool {
+        self.apply_film_curve
+            && !has_extracted_lut
+            && self.film_type == 1
+            && self.film_curve == 4
+    }
 }
 
 /// 对图像应用手动调整（曝光、对比度、阴影/高光、饱和度、色彩平衡、色阶）。
@@ -277,7 +286,10 @@ fn apply_scanner_levels_16(
         for i in 0..65536u32 {
             let mut v = i as f32 / 65535.0;
 
-            // ① 胶片曲线
+            // ① 先做 per-channel 色阶标准化（去除橙色蒙版等）
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+
+            // ② 胶片曲线（在标准化空间中应用）
             if use_extracted_lut {
                 let extracted = &film_lut.unwrap()[ch];
                 let pos = v * 65535.0;
@@ -293,8 +305,7 @@ fn apply_scanner_levels_16(
                 v = crate::color::lut_interp_16(v, lut_table) / 65535.0;
             }
 
-            // ② per-channel 色阶 + gamma + master gamma
-            v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+            // ③ gamma
             v = v.powf(1.0 / gamma_c);
             v = v.powf(1.0 / gamma_m);
             v = v.clamp(0.0, 1.0);
@@ -518,10 +529,12 @@ fn apply_adjust_16(
         for i in 0..65536u32 {
             let mut v = i as f32 / 65535.0;
 
-            // ① 胶片曲线（提取或硬编码）—— 在色阶之前应用
+            // ① 先做 per-channel 色阶标准化
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+
+            // ② 胶片曲线（在标准化空间中应用）
             if use_extracted_lut {
                 let extracted = &film_lut.unwrap()[ch];
-                // 线性插值 65536 项 LUT
                 let pos = v * 65535.0;
                 let lo = (pos as usize).min(65534);
                 let frac = pos - lo as f32;
@@ -535,10 +548,9 @@ fn apply_adjust_16(
                 v = crate::color::lut_interp_16(v, lut_table) / 65535.0;
             }
 
-            // ② per-channel 色阶 + gamma，再叠加 master gamma
-            v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+            // ③ gamma
             v = v.powf(1.0 / gamma_c);
-            v = v.powf(1.0 / gamma_m);  // master gamma: 默认 1.0 → v^1（中性）
+            v = v.powf(1.0 / gamma_m);
 
             v += shifts[ch];
             v *= exposure_mult;
@@ -684,10 +696,12 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust, film_lut: Option<&
         for i in 0..=255u32 {
             let mut v = i as f32 / 255.0;
 
-            // ① 胶片曲线（提取或硬编码）—— 在色阶之前应用
+            // ① 先做 per-channel 色阶标准化
+            v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
+
+            // ② 胶片曲线（在标准化空间中应用）
             if use_extracted_lut {
                 let extracted = &film_lut.unwrap()[ch];
-                // 8-bit 输入映射到 65536 项 LUT
                 let pos = v * 65535.0;
                 let lo = (pos as usize).min(65534);
                 let frac = pos - lo as f32;
@@ -705,9 +719,9 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust, film_lut: Option<&
                 v = (lut_table[lo] as f32 * (1.0 - frac) + lut_table[hi] as f32 * frac) / 255.0;
             }
 
-            // ② per-channel 色阶 + gamma，再叠加 master gamma
-            v = ((v - bl_c) / range_c).clamp(0.0, 1.0).powf(1.0 / gamma_c);
-            v = v.powf(1.0 / gamma_m);  // master gamma: 默认 1.0 → v^1（中性）
+            // ③ gamma
+            v = v.powf(1.0 / gamma_c);
+            v = v.powf(1.0 / gamma_m);
 
             v += shifts[ch];
             v *= exposure_mult;
