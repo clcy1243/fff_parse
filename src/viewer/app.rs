@@ -212,19 +212,22 @@ impl FffViewerApp {
         self.selected_index = Some(index);
         self.expanded_setting = None;
         self.error_msg = None;
-        self.use_embedded_correction = false;
-        self.embedded_correction_index = None;
-        self.use_embedded_icc = false;
-        self.color_status = None;
 
         let path = self.fff_files[index].clone();
         log::info!("select_file: [{}] {}", index, path.display());
 
+        // 同一个文件：不重新加载，保留当前状态
         if let Some(detail) = &self.detail {
             if detail.path == path {
                 return;
             }
         }
+
+        // 切换到新文件时才重置色彩状态
+        self.use_embedded_correction = false;
+        self.embedded_correction_index = None;
+        self.use_embedded_icc = false;
+        self.color_status = None;
 
         // Show loading state immediately
         let file_name = path.file_name()
