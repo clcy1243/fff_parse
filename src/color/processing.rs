@@ -1054,21 +1054,14 @@ pub fn apply_color_pipeline(
     // 1. 扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
     let img = super::adjust::apply_scanner_levels(&img, adjust, film_lut);
 
-    // 硬编码 LUT 已包含 ICC 效果（从参考 TIF 逆向提取），使用时跳过 ICC 避免双重应用
-    let skip_icc = adjust.uses_hardcoded_film_lut(film_lut.is_some());
-
     // 2. ICC 色彩空间转换（扫描仪 → 输出色域）
-    let img = if !skip_icc {
-        if let Some(icc) = icc_data {
-            match super::transform::apply_icc_transform(&img, icc, target_color_space) {
-                Ok(transformed) => transformed,
-                Err(e) => {
-                    log::warn!("ICC transform failed: {}", e);
-                    img
-                }
+    let img = if let Some(icc) = icc_data {
+        match super::transform::apply_icc_transform(&img, icc, target_color_space) {
+            Ok(transformed) => transformed,
+            Err(e) => {
+                log::warn!("ICC transform failed: {}", e);
+                img
             }
-        } else {
-            img
         }
     } else {
         img

@@ -180,15 +180,6 @@ impl ManualAdjust {
             && contrast_id && highlights_id && shadows_id && saturation_id
             && color_balance_id && color_temp_id && color_corr_id
     }
-
-    /// 是否将使用内置硬编码胶片曲线 LUT（LUT 已包含 ICC 效果，外部无需再次应用 ICC）。
-    /// 仅对彩色负片 (film_type=1) 生效；BW 负片仍需 ICC + 去色流程。
-    pub fn uses_hardcoded_film_lut(&self, has_extracted_lut: bool) -> bool {
-        self.apply_film_curve
-            && !has_extracted_lut
-            && self.film_type == 1
-            && self.film_curve == 4
-    }
 }
 
 /// 对图像应用手动调整（曝光、对比度、阴影/高光、饱和度、色彩平衡、色阶）。
