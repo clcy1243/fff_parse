@@ -951,8 +951,9 @@ impl FffViewerApp {
             result = color::apply_film_processing(&result, &inversion_corr);
 
             // 提取负片胶片曲线（从 8-bit 缩略图 + 16-bit 预览逆向）
-            // 彩色负片 (film_type=1, film_curve=4): 使用硬编码 LUT（已含 ICC 效果），跳过提取
-            // BW 负片 (film_type=2): 仍尝试提取
+            // 缩略图由 FlexColor 用当前激活设置处理，提取时使用同一设置的参数。
+            // 彩色负片 (film_type=1, film_curve=4): 使用硬编码 LUT（精度远优于提取）
+            // BW 负片 (film_type=2): 从缩略图提取
             if inversion_corr.film_type == 2 {
                 if let Some((thumb_8, preview_16)) = detail.tiff.decode_thumbnail_pair() {
                     self.extracted_film_lut = color::extract_film_curve(
@@ -967,8 +968,8 @@ impl FffViewerApp {
                     log::warn!("No thumbnail pair found for film curve extraction");
                     self.extracted_film_lut = None;
                 }
-            } else if inversion_corr.film_type == 1 && inversion_corr.film_curve == 4 {
-                log::info!("Color negative: using hardcoded film LUT (skip extraction, skip ICC)");
+            } else if inversion_corr.film_type == 1 {
+                log::info!("Color negative: using hardcoded film LUT (skip extraction)");
                 self.extracted_film_lut = None;
             } else {
                 self.extracted_film_lut = None;
@@ -1213,7 +1214,7 @@ impl FffViewerApp {
                         );
                     }
                 }
-            } else if correction.film_type == 1 && correction.film_curve == 4 {
+            } else if correction.film_type == 1 {
                 log::info!("Color negative: using hardcoded film LUT (skip extraction)");
                 self.extracted_film_lut = None;
             } else {

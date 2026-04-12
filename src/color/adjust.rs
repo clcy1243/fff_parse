@@ -416,10 +416,12 @@ fn apply_display_adjust_16(
     let apply_cc = adj.apply_color_corr && adj.color_corr.iter().any(|&v| v != 0);
     let cc: [[f32; 3]; 3] = if apply_cc {
         let m = &adj.color_corr;
+        // 6×6 matrix per-row storage order: [R, B, C, G, M, Y]
+        // RGB columns are at offsets 0(R), 3(G), 1(B)
         [
-            [(100 + m[0]) as f32 / 100.0, m[1] as f32 / 100.0,       m[2] as f32 / 100.0],
-            [m[6] as f32 / 100.0,         (100 + m[7]) as f32 / 100.0, m[8] as f32 / 100.0],
-            [m[12] as f32 / 100.0,        m[13] as f32 / 100.0,      (100 + m[14]) as f32 / 100.0],
+            [(100 + m[0]) as f32 / 100.0, m[3] as f32 / 100.0,       m[1] as f32 / 100.0],
+            [m[6] as f32 / 100.0,         (100 + m[9]) as f32 / 100.0, m[7] as f32 / 100.0],
+            [m[12] as f32 / 100.0,        m[15] as f32 / 100.0,      (100 + m[13]) as f32 / 100.0],
         ]
     } else {
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
@@ -592,11 +594,12 @@ fn apply_adjust_16(
     let apply_cc = adj.apply_color_corr && adj.color_corr.iter().any(|&v| v != 0);
     let cc: [[f32; 3]; 3] = if apply_cc {
         let m = &adj.color_corr;
-        // 矩阵前 3 行 × 前 3 列即 RGB→RGB 部分
+        // 6×6 matrix per-row storage order: [R, B, C, G, M, Y]
+        // RGB columns are at offsets 0(R), 3(G), 1(B)
         [
-            [(100 + m[0]) as f32 / 100.0, m[1] as f32 / 100.0,       m[2] as f32 / 100.0],
-            [m[6] as f32 / 100.0,         (100 + m[7]) as f32 / 100.0, m[8] as f32 / 100.0],
-            [m[12] as f32 / 100.0,        m[13] as f32 / 100.0,      (100 + m[14]) as f32 / 100.0],
+            [(100 + m[0]) as f32 / 100.0, m[3] as f32 / 100.0,       m[1] as f32 / 100.0],
+            [m[6] as f32 / 100.0,         (100 + m[9]) as f32 / 100.0, m[7] as f32 / 100.0],
+            [m[12] as f32 / 100.0,        m[15] as f32 / 100.0,      (100 + m[13]) as f32 / 100.0],
         ]
     } else {
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
@@ -756,10 +759,12 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust, film_lut: Option<&
     let apply_cc = adj.apply_color_corr && adj.color_corr.iter().any(|&v| v != 0);
     let cc: [[f32; 3]; 3] = if apply_cc {
         let m = &adj.color_corr;
+        // 6×6 matrix per-row storage order: [R, B, C, G, M, Y]
+        // RGB columns are at offsets 0(R), 3(G), 1(B)
         [
-            [(100 + m[0]) as f32 / 100.0, m[1] as f32 / 100.0,       m[2] as f32 / 100.0],
-            [m[6] as f32 / 100.0,         (100 + m[7]) as f32 / 100.0, m[8] as f32 / 100.0],
-            [m[12] as f32 / 100.0,        m[13] as f32 / 100.0,      (100 + m[14]) as f32 / 100.0],
+            [(100 + m[0]) as f32 / 100.0, m[3] as f32 / 100.0,       m[1] as f32 / 100.0],
+            [m[6] as f32 / 100.0,         (100 + m[9]) as f32 / 100.0, m[7] as f32 / 100.0],
+            [m[12] as f32 / 100.0,        m[15] as f32 / 100.0,      (100 + m[13]) as f32 / 100.0],
         ]
     } else {
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]

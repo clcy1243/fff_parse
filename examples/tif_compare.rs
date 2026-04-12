@@ -302,6 +302,16 @@ fn main() {
     } else {
         (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect()
     };
+    // 打印曲线数据
+    {
+        let names = ["RGB", "R", "G", "B", "C4", "C5", "C6"];
+        println!("\n=== Gradation Curves (apply={}) ===", adj.apply_curves);
+        for (i, curve) in curve_points.iter().enumerate() {
+            let name = if i < names.len() { names[i] } else { "?" };
+            let is_id = curve.len() == 2 && curve[0].0 == 0 && curve[0].1 == 0 && curve[1].0 == 255 && curve[1].1 == 255;
+            println!("  [{}] {} ({} pts, identity={}): {:?}", i, name, curve.len(), is_id, curve);
+        }
+    }
 
     // 提取胶片曲线 LUT
     let thumb_img = tiff.decode_thumbnail();
@@ -716,6 +726,73 @@ fn main() {
     };
     let after_film_c7 = color::apply_film_processing(&raw_16, c7);
 
+    // M0: 原始 Setting#7，不做任何修改 (通过 apply_color_pipeline 的 baseline)
+    {
+        let a = build_manual_adjust(c7);
+        let result = color::apply_color_pipeline(
+            after_film_c7.clone(), &a, &curve_points,
+            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+        );
+        compare_rgb_images("M0: 原始Setting#7 (pipeline baseline)", &to_rgb8(&result), &ref_rgb8);
+    }
+
+    // === BCL 系数扫描: 测试不同 brightness/contrast/lightness 系数 ===
+    println!("\n--- BCL 系数扫描 (brightness_mult, contrast_mult, lightness_mult) ---");
+    {
+        // 当前系数: brightness × 0.5, contrast × 2.0, lightness gamma = 1/(1+l)
+        // 替代方案: 调整这些乘数
+        let bri_mults = [0.25, 0.35, 0.5, 0.75, 1.0];
+        let con_mults = [1.0, 1.5, 2.0, 2.5];
+        let lit_mults = [0.5, 0.75, 1.0, 1.5];
+
+        let mut best_mae = f64::MAX;
+        let mut best_params = (0.0f32, 0.0f32, 0.0f32);
+
+        for &bm in &bri_mults {
+            for &cm in &con_mults {
+                for &lm in &lit_mults {
+                    let mut a = build_manual_adjust(c7);
+                    // 修改 BCL 参数（通过缩放原始值来模拟不同系数）
+                    a.brightness = c7.brightness as f32 * bm / 0.5;  // normalize: actual_mult = bm
+                    a.contrast = c7.contrast as f32 * cm / 2.0;
+                    a.lightness = c7.lightness as f32 * lm / 1.0;
+                    let result = color::apply_color_pipeline(
+                        after_film_c7.clone(), &a, &curve_points,
+                        film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+                    );
+                    let our_8 = to_rgb8(&result);
+                    let our_raw = our_8.as_raw();
+                    let ref_raw = ref_rgb8.as_raw();
+                    let total: u64 = our_raw.iter().zip(ref_raw.iter())
+                        .map(|(&a, &b)| (a as i32 - b as i32).unsigned_abs() as u64)
+                        .sum();
+                    let mae = total as f64 / our_raw.len() as f64;
+                    if mae < best_mae {
+                        best_mae = mae;
+                        best_params = (bm, cm, lm);
+                    }
+                }
+            }
+        }
+        println!("  最佳 BCL 系数: bri_mult={:.2}, con_mult={:.2}, lit_mult={:.2} → MAE={:.2}",
+            best_params.0, best_params.1, best_params.2, best_mae);
+
+        // 用最佳系数重新运行并展示详情
+        {
+            let (bm, cm, lm) = best_params;
+            let mut a = build_manual_adjust(c7);
+            a.brightness = c7.brightness as f32 * bm / 0.5;
+            a.contrast = c7.contrast as f32 * cm / 2.0;
+            a.lightness = c7.lightness as f32 * lm / 1.0;
+            let result = color::apply_color_pipeline(
+                after_film_c7.clone(), &a, &curve_points,
+                film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
+            );
+            compare_rgb_images(&format!("BCL最佳: b={:.2} c={:.2} l={:.2}", bm, cm, lm),
+                &to_rgb8(&result), &ref_rgb8);
+        }
+    }
+
     // M1: 反转 per-channel gamma 方向 (v^gamma 而非 v^(1/gamma))
     // 实现方式: 将 levels_gamma[i] 设为 1/original，使得 v^(1/(1/g)) = v^g
     {
@@ -1017,7 +1094,15 @@ fn main() {
         println!("  saturation={}, contrast={}, brightness={}, lightness={}",
             c7.saturation, c7.contrast, c7.brightness, c7.lightness);
         println!("  dot_color={:?}", &c7.dot_color);
-        println!("  color_corr[0..12]={:?}", &c7.color_corr[..12.min(c7.color_corr.len())]);
+        println!("  color_corr[ALL]={:?}", &c7.color_corr);
+        if c7.color_corr.len() == 36 {
+            let m = &c7.color_corr;
+            println!("  6x6 矩阵:");
+            for r in 0..6 {
+                let row: Vec<i64> = (0..6).map(|c| m[r*6+c]).collect();
+                println!("    row{}: {:?}", r, row);
+            }
+        }
         println!("  ev={}", c7.ev);
 
         // 构建 7 通道 curves LUT (256 entries each for 8-bit)
@@ -1520,6 +1605,291 @@ fn main() {
                 }
             }
             println!("];");
+        }
+    }
+
+    // ─── 诊断 S: 分阶段分析 Setting#7 ───
+    println!("\n\n=== 分阶段诊断: Setting#7 各管线阶段对比 ===");
+    {
+        let a7 = build_manual_adjust(c7);
+
+        // Stage 1: scanner_levels only (levels + film_curve + gamma)
+        let stage_scanner = color::apply_scanner_levels(&after_film_c7, &a7, film_lut_c7.as_ref());
+
+        // Stage 2: + ICC
+        let stage_icc = if let Some(ref icc) = icc_data {
+            match color::apply_icc_transform(&stage_scanner, icc, color::TargetColorSpace::SRGB) {
+                Ok(t) => t, Err(_) => stage_scanner.clone()
+            }
+        } else { stage_scanner.clone() };
+
+        // BW desaturate would happen here for film_type==2, but test file is C-41
+
+        // Stage 3: + display_adjust
+        let stage_display = color::apply_display_adjust(&stage_icc, &a7);
+
+        // Stage 4: + curves (full pipeline)
+        let stage_final = if a7.apply_curves && curve_points.len() >= 7 {
+            color::apply_gradation_curves(&stage_display, &curve_points)
+        } else { stage_display.clone() };
+
+        // Compare each stage
+        compare_rgb_images("S1: Scanner levels only", &to_rgb8(&stage_scanner), &ref_rgb8);
+        compare_rgb_images("S2: + ICC", &to_rgb8(&stage_icc), &ref_rgb8);
+        compare_rgb_images("S3: + Display adjust", &to_rgb8(&stage_display), &ref_rgb8);
+        compare_rgb_images("S4: + Curves (full)", &to_rgb8(&stage_final), &ref_rgb8);
+
+        // S5: ICC + display adjust WITHOUT brightness/contrast/lightness
+        {
+            let mut a_no_bcl = a7.clone();
+            a_no_bcl.apply_contrast = false;
+            a_no_bcl.apply_brightness = false;
+            a_no_bcl.apply_shadow_depth = false;
+            let result = color::apply_display_adjust(&stage_icc, &a_no_bcl);
+            let result = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&result, &curve_points)
+            } else { result };
+            compare_rgb_images("S5: 无brightness/contrast/lightness + curves", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S6: ICC + display adjust WITHOUT color_corr
+        {
+            let mut a_no_cc = a7.clone();
+            a_no_cc.apply_color_corr = false;
+            let result = color::apply_display_adjust(&stage_icc, &a_no_cc);
+            let result = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&result, &curve_points)
+            } else { result };
+            compare_rgb_images("S6: 无color_corr + curves", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S7: ICC + display adjust WITHOUT saturation
+        {
+            let mut a_no_sat = a7.clone();
+            a_no_sat.apply_saturation = false;
+            a_no_sat.saturation = 0.0;
+            let result = color::apply_display_adjust(&stage_icc, &a_no_sat);
+            let result = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&result, &curve_points)
+            } else { result };
+            compare_rgb_images("S7: 无saturation + curves", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S8: ONLY output levels (DotColor) + curves — no other display adjustments
+        {
+            let mut a_levels_only = color::ManualAdjust::default();
+            a_levels_only.film_type = a7.film_type;
+            a_levels_only.output_shadow = a7.output_shadow;
+            a_levels_only.output_highlight = a7.output_highlight;
+            a_levels_only.apply_levels = true;
+            let result = color::apply_display_adjust(&stage_icc, &a_levels_only);
+            let result = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&result, &curve_points)
+            } else { result };
+            compare_rgb_images("S8: 仅output levels + curves", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S9: output_levels → curves → BCL (无 cc/sat)
+        {
+            let mut a_ol = color::ManualAdjust::default();
+            a_ol.film_type = a7.film_type;
+            a_ol.output_shadow = a7.output_shadow;
+            a_ol.output_highlight = a7.output_highlight;
+            a_ol.apply_levels = true;
+            let after_ol = color::apply_display_adjust(&stage_icc, &a_ol);
+            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&after_ol, &curve_points)
+            } else { after_ol };
+            // Then BCL only
+            let mut a_bcl = color::ManualAdjust::default();
+            a_bcl.film_type = a7.film_type;
+            a_bcl.contrast = a7.contrast;
+            a_bcl.brightness = a7.brightness;
+            a_bcl.lightness = a7.lightness;
+            a_bcl.apply_contrast = a7.apply_contrast;
+            a_bcl.apply_brightness = a7.apply_brightness;
+            a_bcl.apply_shadow_depth = a7.apply_shadow_depth;
+            let result = color::apply_display_adjust(&after_curves, &a_bcl);
+            compare_rgb_images("S9: OL→curves→BCL (无cc/sat)", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S10: output_levels → curves → BCL → cc → sat (全特征，曲线在中间)
+        {
+            let mut a_ol = color::ManualAdjust::default();
+            a_ol.film_type = a7.film_type;
+            a_ol.output_shadow = a7.output_shadow;
+            a_ol.output_highlight = a7.output_highlight;
+            a_ol.apply_levels = true;
+            let after_ol = color::apply_display_adjust(&stage_icc, &a_ol);
+            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&after_ol, &curve_points)
+            } else { after_ol };
+            // Then BCL + cc + sat
+            let mut a_rest = a7.clone();
+            a_rest.output_shadow = [0.0; 4];
+            a_rest.output_highlight = [255.0; 4];
+            // Keep BCL, cc, saturation
+            let result = color::apply_display_adjust(&after_curves, &a_rest);
+            compare_rgb_images("S10: OL→curves→BCL+cc+sat", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S11: curves first (before any display adjust)
+        {
+            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&stage_icc, &curve_points)
+            } else { stage_icc.clone() };
+            let result = color::apply_display_adjust(&after_curves, &a7);
+            compare_rgb_images("S11: curves→全display adjust", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S12: curves → display (no color_corr)
+        {
+            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&stage_icc, &curve_points)
+            } else { stage_icc.clone() };
+            let mut a_nocc = a7.clone();
+            a_nocc.color_corr = [0i64; 36];
+            let result = color::apply_display_adjust(&after_curves, &a_nocc);
+            compare_rgb_images("S12: curves→display(无cc)", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S13: curves → display (no cc, no sat)
+        {
+            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&stage_icc, &curve_points)
+            } else { stage_icc.clone() };
+            let mut a_min = a7.clone();
+            a_min.color_corr = [0i64; 36];
+            a_min.saturation = 0.0;
+            let result = color::apply_display_adjust(&after_curves, &a_min);
+            compare_rgb_images("S13: curves→display(无cc/sat)", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // S14: curves → OL only (DotColor remapping only)
+        {
+            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
+                color::apply_gradation_curves(&stage_icc, &curve_points)
+            } else { stage_icc.clone() };
+            let mut a_ol = color::ManualAdjust::default();
+            a_ol.film_type = a7.film_type;
+            a_ol.output_shadow = a7.output_shadow;
+            a_ol.output_highlight = a7.output_highlight;
+            a_ol.apply_levels = true;
+            let result = color::apply_display_adjust(&after_curves, &a_ol);
+            compare_rgb_images("S14: curves→OL only", &to_rgb8(&result), &ref_rgb8);
+        }
+
+        // ─── 逐像素分析: pre-display vs post-display vs reference ───
+        println!("\n--- 逐像素对比: post-ICC → display → curves → reference ---");
+        let icc_rgb16 = stage_icc.to_rgb16();
+        let disp_rgb16 = stage_display.to_rgb16();
+        let final_rgb16 = stage_final.to_rgb16();
+        let ref_rgb16 = ref_img.to_rgb16();
+        let sample_pts: Vec<(u32,u32)> = vec![
+            (500,500),(1000,1000),(1500,1500),(2000,2000),(2500,2500),
+            (800,300),(1200,800),(1800,1200),(300,2000),(2800,3500),
+            (1000,500),(2000,1000),(500,1500),(1500,3000),(2500,4000),
+        ];
+        println!("  {:>12} │ {:>18} │ {:>18} │ {:>18} │ {:>18}",
+            "pos", "post-ICC(16b)", "display(16b)", "final(16b)", "reference(16b)");
+        for &(px,py) in &sample_pts {
+            if px < icc_rgb16.width() && py < icc_rgb16.height() {
+                let ip = icc_rgb16.get_pixel(px,py);
+                let dp = disp_rgb16.get_pixel(px,py);
+                let fp = final_rgb16.get_pixel(px,py);
+                let rp = ref_rgb16.get_pixel(px,py);
+                println!("  ({:>4},{:>4}) │ {:>5},{:>5},{:>5} │ {:>5},{:>5},{:>5} │ {:>5},{:>5},{:>5} │ {:>5},{:>5},{:>5}",
+                    px,py,
+                    ip[0],ip[1],ip[2],
+                    dp[0],dp[1],dp[2],
+                    fp[0],fp[1],fp[2],
+                    rp[0],rp[1],rp[2]);
+            }
+        }
+
+        // ─── 反推 display transfer function ───
+        // 对于每个通道，收集 (post-ICC-value, reference-value) 对
+        // 在 display_adjust 中忽略 color_corr 和 saturation 的交叉通道效应
+        // 仅计算 per-channel LUT 部分
+        println!("\n--- 反推: 每通道 display transfer function ---");
+        println!("(post-ICC 8bit → reference 8bit, 忽略交叉通道效应)");
+        let (w, h) = (icc_rgb16.width().min(ref_rgb16.width()),
+                       icc_rgb16.height().min(ref_rgb16.height()));
+        // Collect per-channel mapping
+        let mut ch_map: [Vec<Vec<u16>>; 3] = [
+            vec![Vec::new(); 256],
+            vec![Vec::new(); 256],
+            vec![Vec::new(); 256],
+        ];
+        for y in 0..h {
+            for x in 0..w {
+                let ip = icc_rgb16.get_pixel(x, y);
+                let rp = ref_rgb16.get_pixel(x, y);
+                for ch in 0..3 {
+                    let in_8 = (ip[ch] >> 8) as usize;
+                    let out_8 = (rp[ch] >> 8) as u16;
+                    ch_map[ch][in_8].push(out_8);
+                }
+            }
+        }
+        let ch_names = ["R", "G", "B"];
+        println!("通道 │ post-ICC-8b → FlexColor-8b (median) │ 我们的LUT产出");
+        for ch in 0..3 {
+            print!("  {} │ ", ch_names[ch]);
+            let mut printed = 0;
+            for bin in (0..256).step_by(16) {
+                if !ch_map[ch][bin].is_empty() {
+                    let mut v = ch_map[ch][bin].clone();
+                    v.sort();
+                    let median = v[v.len()/2];
+                    // Compute what our LUT produces for this input
+                    let our_out = {
+                        let mut v = bin as f32 / 255.0;
+                        // output levels
+                        let out_lo = a7.output_shadow[ch+1] / 255.0;
+                        let out_hi = a7.output_highlight[ch+1] / 255.0;
+                        let out_range = (out_hi - out_lo).max(0.001);
+                        v = out_lo + v * out_range;
+                        // contrast
+                        if a7.contrast.abs() > 0.1 {
+                            let c = a7.contrast / 100.0;
+                            let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
+                            v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
+                        }
+                        // brightness
+                        if a7.brightness.abs() > 0.1 {
+                            let b = a7.brightness / 100.0;
+                            v = (v + b * 0.5).clamp(0.0, 1.0);
+                        }
+                        // lightness
+                        if a7.lightness.abs() > 0.1 {
+                            let l = a7.lightness / 100.0;
+                            let gamma = 1.0 / (1.0 + l).max(0.1);
+                            v = v.powf(gamma).clamp(0.0, 1.0);
+                        }
+                        (v * 255.0).round() as u16
+                    };
+                    if printed > 0 { print!(", "); }
+                    print!("{}→{}(ours:{})", bin, median, our_out);
+                    printed += 1;
+                }
+            }
+            println!();
+        }
+
+        // 打印 color_corr 矩阵
+        if a7.apply_color_corr {
+            let m = &a7.color_corr;
+            println!("\n  color_corr 矩阵 (RGB 3x3):");
+            println!("    R' = {:.2}*R + {:.2}*G + {:.2}*B (sum={:.2})",
+                (100+m[0]) as f32/100.0, m[1] as f32/100.0, m[2] as f32/100.0,
+                (100+m[0]+m[1]+m[2]) as f32/100.0);
+            println!("    G' = {:.2}*R + {:.2}*G + {:.2}*B (sum={:.2})",
+                m[6] as f32/100.0, (100+m[7]) as f32/100.0, m[8] as f32/100.0,
+                (m[6]+100+m[7]+m[8]) as f32/100.0);
+            println!("    B' = {:.2}*R + {:.2}*G + {:.2}*B (sum={:.2})",
+                m[12] as f32/100.0, m[13] as f32/100.0, (100+m[14]) as f32/100.0,
+                (m[12]+m[13]+100+m[14]) as f32/100.0);
         }
     }
 

@@ -229,6 +229,15 @@ impl FffViewerApp {
         self.use_embedded_icc = false;
         self.color_status = None;
 
+        // 重置渲染状态，避免前一个文件的参数污染新文件
+        self.manual_adjust = color::ManualAdjust::default();
+        self.extracted_film_lut = None;
+        self.active_icc_data = None;
+        self.curve_points = Self::default_curve_points();
+        self.baseline_curve_points = Self::default_curve_points();
+        self.selected_input_profile = None;
+        self.selected_preset = None;
+
         // Show loading state immediately
         let file_name = path.file_name()
             .map(|n| n.to_string_lossy().to_string())

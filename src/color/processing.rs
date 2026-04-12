@@ -1074,23 +1074,23 @@ pub fn apply_color_pipeline(
         img
     };
 
-    // 3. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在 ICC 之后
-    let img = super::adjust::apply_display_adjust(&img, adjust);
-
-    // 4. 渐变曲线 — 在显示空间最后应用（FlexColor 行为）
+    // 3. 渐变曲线 — 在显示调整之前应用（FlexColor 行为：curves → display_adjust）
     let curves_are_identity = curve_points.iter().all(|pts| {
         pts.len() == 2
             && pts[0].0 == 0 && pts[0].1 == 0
             && pts[1].0 == 255 && pts[1].1 == 255
     });
-    if adjust.apply_curves
+    let img = if adjust.apply_curves
         && curve_points.len() >= 7
         && !curves_are_identity
     {
         apply_gradation_curves(&img, curve_points)
     } else {
         img
-    }
+    };
+
+    // 4. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在曲线之后应用
+    super::adjust::apply_display_adjust(&img, adjust)
 }
 
 /// B&W 去色：将 RGB 转为灰度（ITU-R BT.601 权重），保持 Rgb16/Rgb8 格式

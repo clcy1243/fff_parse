@@ -709,6 +709,25 @@ cargo run --release --bin parse_test -- "/path/to/scan.fff"
 
 ## Changelog
 
+### v0.9.1
+
+- **文件切换状态泄漏修复**
+  - 切换文件时完整重置渲染状态（manual_adjust、extracted_film_lut、active_icc_data、curve_points、preset 等）
+  - 修复前一个文件的色彩参数污染新文件导致渲染异常的问题
+- **管线顺序修正: 渐变曲线→显示调整**
+  - 渐变曲线（Gradation Curves）现在在显示空间调整之前应用，与 FlexColor 管线一致
+  - 原顺序: 显示调整→渐变曲线；新顺序: 渐变曲线→显示调整
+- **颜色校正矩阵列索引修复**
+  - FlexColor 6×6 矩阵按行存储顺序为 [R, B, C, G, M, Y]
+  - RGB 列偏移: R=0, G=3, B=1（原错误地使用了 R=0, G=1, B=2）
+  - 影响所有使用 color_corr 矩阵的色彩方案
+- **负片胶片曲线提取修正**
+  - 缩略图由 FlexColor 用当前激活设置处理，提取时使用同一设置的参数
+  - C-41 彩色负片使用硬编码 LUT（精度远优于缩略图提取，MAE 2.06）
+  - BW 负片从缩略图提取，使用当前激活设置的 gamma/shadow/highlight 参数
+- **tif_compare 诊断工具增强**
+  - 新增多种提取参数对比测试（S1 vs S7 基准提取对照）
+
 ### v0.9.0
 
 - **彩色负片管线重大修复**
