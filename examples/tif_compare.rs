@@ -1,101 +1,194 @@
-//! 全分辨率 TIF 导出 + 对照工具
+//! FFF Pipeline Test & Compare Tool (v2)
 //!
-//! 用法: cargo run --release --example tif_compare -- <file.fff> <reference.tif>
+//! Compares our color pipeline output against FlexColor-exported reference TIFs.
 //!
-//! 将 FFF 文件通过我们的管线渲染为全分辨率 8-bit TIF，
-//! 然后与 FlexColor 导出的 TIF 逐像素对比。
+//! Usage:
+//!   cargo run --release --example tif_compare -- <file.fff> <reference.tif> [-v] [--json] [--setting N]
+//!   cargo run --release --example tif_compare -- --dir <path> [-v] [--json]
 
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fff_viewer::color;
-use fff_viewer::flexcolor::{self, EditHistory, ImageCorrection};
+use fff_viewer::flexcolor::{EditHistory, ImageCorrection};
 use fff_viewer::tiff::TiffFile;
 
-// ─── 差异统计 ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
 
+#[derive(Clone, Copy, PartialEq)]
+enum Grade { Pass, Warn, Fail }
+
+impl Grade {
+    fn icon(&self) -> &'static str {
+        match self { Self::Pass => "✅", Self::Warn => "⚠️ ", Self::Fail => "❌" }
+    }
+    fn label(&self) -> &'static str {
+        match self { Self::Pass => "PASS", Self::Warn => "WARN", Self::Fail => "FAIL" }
+    }
+}
+
+#[derive(Clone)]
 struct ChannelStats {
+    mae_16: f64,
+    mae_8: f64,
+    p95_8: u32,
+    p99_8: u32,
+    max_err_8: u32,
+    psnr_8: f64,
+}
+
+struct TestResult {
+    id: String,
     name: String,
-    mae: f64,
-    max_err: u32,
-    psnr: f64,
-    count: usize,
-    err_gt5: usize,
-    err_gt10: usize,
-    err_gt20: usize,
-    mean_ours: f64,
-    mean_ref: f64,
-    min_ours: u8,
-    max_ours: u8,
-    min_ref: u8,
-    max_ref: u8,
+    ch_r: ChannelStats,
+    ch_g: ChannelStats,
+    ch_b: ChannelStats,
+    ch_all: ChannelStats,
+    delta_e: f64,
+    grade: Grade,
 }
 
-fn compute_channel_stats(name: &str, ours: &[u8], reference: &[u8]) -> ChannelStats {
-    assert_eq!(ours.len(), reference.len());
-    let count = ours.len();
-    let mut sum_abs_err: u64 = 0;
-    let mut sum_sq_err: f64 = 0.0;
-    let mut max_err: u32 = 0;
-    let mut err_gt5 = 0usize;
-    let mut err_gt10 = 0usize;
-    let mut err_gt20 = 0usize;
-    let mut sum_ours: u64 = 0;
-    let mut sum_ref: u64 = 0;
-    let mut min_ours = 255u8;
-    let mut max_ours = 0u8;
-    let mut min_ref = 255u8;
-    let mut max_ref = 0u8;
+// ═══════════════════════════════════════════════════════════════════════════════
+// Statistics Computation (16-bit + 8-bit dual precision)
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    for i in 0..count {
-        let o = ours[i];
-        let r = reference[i];
-        let diff = (o as i32 - r as i32).unsigned_abs();
-        sum_abs_err += diff as u64;
-        sum_sq_err += (diff as f64) * (diff as f64);
-        if diff > max_err { max_err = diff; }
-        if diff > 5 { err_gt5 += 1; }
-        if diff > 10 { err_gt10 += 1; }
-        if diff > 20 { err_gt20 += 1; }
-        sum_ours += o as u64;
-        sum_ref += r as u64;
-        if o < min_ours { min_ours = o; }
-        if o > max_ours { max_ours = o; }
-        if r < min_ref { min_ref = r; }
-        if r > max_ref { max_ref = r; }
+struct Accumulator {
+    sum_abs_16: u64,
+    sum_abs_8: u64,
+    sum_sq_8: f64,
+    max_8: u32,
+    hist_8: [u64; 256],
+    count: u64,
+}
+
+impl Accumulator {
+    fn new() -> Self {
+        Self { sum_abs_16: 0, sum_abs_8: 0, sum_sq_8: 0.0, max_8: 0, hist_8: [0; 256], count: 0 }
     }
 
-    let mae = sum_abs_err as f64 / count as f64;
-    let mse = sum_sq_err / count as f64;
-    let psnr = if mse > 0.0 { 10.0 * (255.0_f64 * 255.0 / mse).log10() } else { f64::INFINITY };
+    fn add(&mut self, ours_16: u16, ref_16: u16) {
+        let d16 = (ours_16 as i32 - ref_16 as i32).unsigned_abs();
+        let o8 = (ours_16 >> 8) as u8;
+        let r8 = (ref_16 >> 8) as u8;
+        let d8 = (o8 as i32 - r8 as i32).unsigned_abs();
 
-    ChannelStats {
-        name: name.to_string(),
-        mae, max_err, psnr, count,
-        err_gt5, err_gt10, err_gt20,
-        mean_ours: sum_ours as f64 / count as f64,
-        mean_ref: sum_ref as f64 / count as f64,
-        min_ours, max_ours, min_ref, max_ref,
+        self.sum_abs_16 += d16 as u64;
+        self.sum_abs_8 += d8 as u64;
+        self.sum_sq_8 += (d8 as f64) * (d8 as f64);
+        if d8 > self.max_8 { self.max_8 = d8; }
+        self.hist_8[d8.min(255) as usize] += 1;
+        self.count += 1;
+    }
+
+    fn to_stats(&self) -> ChannelStats {
+        let n = self.count.max(1) as f64;
+        let mse = self.sum_sq_8 / n;
+        ChannelStats {
+            mae_16: self.sum_abs_16 as f64 / n,
+            mae_8: self.sum_abs_8 as f64 / n,
+            p95_8: percentile(&self.hist_8, self.count, 95.0),
+            p99_8: percentile(&self.hist_8, self.count, 99.0),
+            max_err_8: self.max_8,
+            psnr_8: if mse > 0.0 { 10.0 * (255.0f64 * 255.0 / mse).log10() } else { f64::INFINITY },
+        }
     }
 }
 
-fn print_stats(label: &str, stats: &[ChannelStats]) {
-    println!("\n┌─── {} ───", label);
-    println!("│  Chan │      MAE │   MaxErr │   PSNR(dB) │ mean(ours/ref) │ range(ours/ref) │ Err>5 │ Err>10 │ Err>20");
-    println!("│──────────────────────────────────────────────────────────────────────────────────────────────────────────────");
-    for s in stats {
-        println!("│  {:>4} │ {:>8.2} │ {:>8} │ {:>10.1} │ {:>6.1}/{:<6.1} │ {}-{}/{}-{} │ {:>5.1}% │ {:>5.1}% │ {:>5.1}%",
-                 s.name, s.mae, s.max_err, s.psnr,
-                 s.mean_ours, s.mean_ref,
-                 s.min_ours, s.max_ours, s.min_ref, s.max_ref,
-                 s.err_gt5 as f64 / s.count as f64 * 100.0,
-                 s.err_gt10 as f64 / s.count as f64 * 100.0,
-                 s.err_gt20 as f64 / s.count as f64 * 100.0);
+fn percentile(hist: &[u64; 256], total: u64, pct: f64) -> u32 {
+    let target = (total as f64 * pct / 100.0).ceil() as u64;
+    let mut cum = 0u64;
+    for (val, &count) in hist.iter().enumerate() {
+        cum += count;
+        if cum >= target { return val as u32; }
     }
-    println!("└──────────────────────────────────────────────────────────────────────────────────────────────────────────────");
+    255
 }
 
-// ─── ManualAdjust 构建 ───────────────────────────────────────────────────────
+fn grade_stats(s: &ChannelStats) -> Grade {
+    if s.mae_8 <= 5.0 && s.p99_8 <= 20 { Grade::Pass }
+    else if s.mae_8 <= 10.0 && s.p99_8 <= 40 { Grade::Warn }
+    else { Grade::Fail }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ΔE76 (CIE L*a*b* Euclidean distance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn srgb_to_lab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let lin = |v: f32| -> f32 {
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    let (rl, gl, bl) = (lin(r), lin(g), lin(b));
+
+    let x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl;
+    let y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl;
+    let z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl;
+
+    let f = |t: f32| -> f32 {
+        if t > 0.008856 { t.cbrt() } else { 7.787037 * t + 16.0 / 116.0 }
+    };
+    let l = 116.0 * f(y) - 16.0;
+    let a = 500.0 * (f(x / 0.95047) - f(y));
+    let b_val = 200.0 * (f(y) - f(z / 1.08883));
+    (l, a, b_val)
+}
+
+fn mean_delta_e(ours: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, reference: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>) -> f64 {
+    use rayon::prelude::*;
+    let o = ours.as_raw();
+    let r = reference.as_raw();
+    let n = o.len() / 3;
+
+    let sum: f64 = (0..n).into_par_iter().map(|i| {
+        let j = i * 3;
+        let (ol, oa, ob) = srgb_to_lab(
+            o[j] as f32 / 65535.0, o[j+1] as f32 / 65535.0, o[j+2] as f32 / 65535.0);
+        let (rl, ra, rb) = srgb_to_lab(
+            r[j] as f32 / 65535.0, r[j+1] as f32 / 65535.0, r[j+2] as f32 / 65535.0);
+        ((ol-rl).powi(2) + (oa-ra).powi(2) + (ob-rb).powi(2)).sqrt() as f64
+    }).sum();
+
+    sum / n as f64
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Image Comparison
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn compare_images(id: &str, name: &str, ours: &image::DynamicImage, reference: &image::DynamicImage) -> TestResult {
+    let ours_16 = ours.to_rgb16();
+    let ref_16 = reference.to_rgb16();
+    assert_eq!(ours_16.dimensions(), ref_16.dimensions(),
+        "size mismatch: ours {:?} vs ref {:?}", ours_16.dimensions(), ref_16.dimensions());
+
+    let o = ours_16.as_raw();
+    let r = ref_16.as_raw();
+    let n = o.len();
+
+    // Single-pass: accumulate R/G/B/All channel stats
+    let mut acc = [Accumulator::new(), Accumulator::new(), Accumulator::new(), Accumulator::new()];
+    for i in 0..n {
+        let ch = i % 3;
+        acc[ch].add(o[i], r[i]);
+        acc[3].add(o[i], r[i]);
+    }
+
+    let ch_all = acc[3].to_stats();
+    let grade = grade_stats(&ch_all);
+    let delta_e = mean_delta_e(&ours_16, &ref_16);
+
+    TestResult {
+        id: id.to_string(), name: name.to_string(),
+        ch_r: acc[0].to_stats(), ch_g: acc[1].to_stats(), ch_b: acc[2].to_stats(),
+        ch_all, delta_e, grade,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ManualAdjust Builder (from plist ImageCorrection → pipeline params)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 fn build_manual_adjust(corr: &ImageCorrection) -> color::ManualAdjust {
     let mut adj = color::ManualAdjust::default();
@@ -146,2019 +239,360 @@ fn build_manual_adjust(corr: &ImageCorrection) -> color::ManualAdjust {
     adj
 }
 
-/// 16-bit DynamicImage → 8-bit RGB (>>8 truncation)
-fn to_rgb8(img: &image::DynamicImage) -> image::RgbImage {
-    let rgb16 = img.to_rgb16();
-    let (w, h) = (rgb16.width(), rgb16.height());
-    let mut out = image::RgbImage::new(w, h);
-    for y in 0..h {
-        for x in 0..w {
-            let p = rgb16.get_pixel(x, y);
-            out.put_pixel(x, y, image::Rgb([
-                (p[0] >> 8) as u8,
-                (p[1] >> 8) as u8,
-                (p[2] >> 8) as u8,
-            ]));
+// ═══════════════════════════════════════════════════════════════════════════════
+// Test Runner
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn identity_curves() -> Vec<Vec<(i64, i64, i64)>> {
+    (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect()
+}
+
+fn run_tests(
+    raw_16: &image::DynamicImage,
+    reference: &image::DynamicImage,
+    edit_history: &EditHistory,
+    setting_idx: usize,
+    icc_data: Option<&[u8]>,
+    film_lut: Option<&[Vec<f32>; 3]>,
+) -> Vec<TestResult> {
+    let corr = &edit_history.settings[setting_idx].correction;
+    let adj = build_manual_adjust(corr);
+    let id_curves = identity_curves();
+    let after_film = color::apply_film_processing(raw_16, corr);
+
+    let mut results = Vec::new();
+
+    // ─── Group 1: Full pipeline variants (Setting vs Reference) ─────────
+
+    // T1: Full pipeline with extracted LUT + ICC
+    {
+        let r = color::apply_color_pipeline(
+            after_film.clone(), &adj, &id_curves,
+            film_lut, icc_data, color::TargetColorSpace::SRGB);
+        results.push(compare_images("T1", "完整管线 (提取LUT+ICC)", &r, reference));
+    }
+
+    // T2: Extracted LUT, no ICC
+    {
+        let r = color::apply_color_pipeline(
+            after_film.clone(), &adj, &id_curves,
+            film_lut, None, color::TargetColorSpace::SRGB);
+        results.push(compare_images("T2", "提取LUT, 无ICC", &r, reference));
+    }
+
+    // T3: Hardcoded LUT + ICC
+    {
+        let r = color::apply_color_pipeline(
+            after_film.clone(), &adj, &id_curves,
+            None, icc_data, color::TargetColorSpace::SRGB);
+        results.push(compare_images("T3", "硬编码LUT + ICC", &r, reference));
+    }
+
+    // T4: No film curve at all
+    {
+        let mut adj_no_fc = adj.clone();
+        adj_no_fc.apply_film_curve = false;
+        let r = color::apply_color_pipeline(
+            after_film.clone(), &adj_no_fc, &id_curves,
+            None, icc_data, color::TargetColorSpace::SRGB);
+        results.push(compare_images("T4", "无胶片曲线", &r, reference));
+    }
+
+    // ─── Group 2: Pipeline stage diagnostics ────────────────────────────
+
+    // T5: Scanner levels only (levels + film_curve + gamma)
+    let stage_scanner = color::apply_scanner_levels(&after_film, &adj, film_lut);
+    results.push(compare_images("T5", "阶段: scanner levels", &stage_scanner, reference));
+
+    // T6: + ICC transform
+    let stage_icc = if let Some(icc) = icc_data {
+        match color::apply_icc_transform(&stage_scanner, icc, color::TargetColorSpace::SRGB) {
+            Ok(t) => t,
+            Err(_) => stage_scanner.clone(),
+        }
+    } else {
+        stage_scanner.clone()
+    };
+    results.push(compare_images("T6", "阶段: + ICC", &stage_icc, reference));
+
+    // T7: + Display adjust (saturation/brightness/contrast/etc)
+    let stage_display = color::apply_display_adjust(&stage_icc, &adj);
+    results.push(compare_images("T7", "阶段: + display adjust", &stage_display, reference));
+
+    // T8: + Gradation curves (= full pipeline)
+    let user_curves = if adj.apply_curves && !corr.gradations.is_empty() {
+        corr.gradations.clone()
+    } else {
+        id_curves.clone()
+    };
+    let curves_are_identity = user_curves.iter().all(|pts| {
+        pts.len() == 2 && pts[0].0 == 0 && pts[0].1 == 0 && pts[1].0 == 255 && pts[1].1 == 255
+    });
+    let stage_final = if adj.apply_curves && user_curves.len() >= 7 && !curves_are_identity {
+        color::apply_gradation_curves(&stage_display, &user_curves)
+    } else {
+        stage_display.clone()
+    };
+    results.push(compare_images("T8", "阶段: + curves (完整)", &stage_final, reference));
+
+    results
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Output Formatting
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn count_grades(results: &[TestResult]) -> (usize, usize, usize) {
+    results.iter().fold((0, 0, 0), |(p, w, f), r| match r.grade {
+        Grade::Pass => (p + 1, w, f),
+        Grade::Warn => (p, w + 1, f),
+        Grade::Fail => (p, w, f + 1),
+    })
+}
+
+fn print_summary(results: &[TestResult]) {
+    let (pass, warn, fail) = count_grades(results);
+    println!("\n  SUMMARY: {} PASS / {} WARN / {} FAIL ({} tests)\n",
+        pass, warn, fail, results.len());
+
+    println!("  {:>3} {:<30} {:>7} {:>5} {:>5} {:>5} {:>7} {:>5}",
+        "ID", "Name", "MAE(8)", "P95", "P99", "Max", "ΔE76", "");
+    println!("  ─── ────────────────────────────── ─────── ───── ───── ───── ─────── ─────");
+
+    for r in results {
+        let s = &r.ch_all;
+        println!("  {} {:>3} {:<30} {:>7.2} {:>5} {:>5} {:>5} {:>7.2} {}",
+            r.grade.icon(), r.id, r.name,
+            s.mae_8, s.p95_8, s.p99_8, s.max_err_8,
+            r.delta_e, r.grade.label());
+    }
+}
+
+fn print_detail(results: &[TestResult]) {
+    for r in results {
+        println!("\n  ┌─── {} {} ─── [{}]", r.id, r.name, r.grade.label());
+        println!("  │  {:>4} │ {:>10} │ {:>8} │ {:>5} │ {:>5} │ {:>5} │ {:>8}",
+            "Chan", "MAE(16b)", "MAE(8b)", "P95", "P99", "Max", "PSNR");
+        println!("  │  ─────┼────────────┼──────────┼───────┼───────┼───────┼─────────");
+        for (name, ch) in [("R", &r.ch_r), ("G", &r.ch_g), ("B", &r.ch_b), ("All", &r.ch_all)] {
+            println!("  │  {:>4} │ {:>10.1} │ {:>8.2} │ {:>5} │ {:>5} │ {:>5} │ {:>7.1}dB",
+                name, ch.mae_16, ch.mae_8, ch.p95_8, ch.p99_8, ch.max_err_8, ch.psnr_8);
+        }
+        println!("  │  ΔE76(mean) = {:.2}", r.delta_e);
+        println!("  └────────────────────────────────────────────");
+    }
+}
+
+fn print_json(results: &[TestResult]) {
+    println!("[");
+    for (i, r) in results.iter().enumerate() {
+        let s = &r.ch_all;
+        let comma = if i + 1 < results.len() { "," } else { "" };
+        println!("  {{\"id\":\"{}\",\"name\":\"{}\",\"mae_8\":{:.2},\"mae_16\":{:.1},\
+            \"p95\":{},\"p99\":{},\"max\":{},\"psnr\":{:.1},\
+            \"delta_e\":{:.2},\"grade\":\"{}\",\
+            \"channels\":{{\"r\":{{\"mae_8\":{:.2},\"p99\":{}}},\
+            \"g\":{{\"mae_8\":{:.2},\"p99\":{}}},\
+            \"b\":{{\"mae_8\":{:.2},\"p99\":{}}}}}}}{}",
+            r.id, r.name, s.mae_8, s.mae_16,
+            s.p95_8, s.p99_8, s.max_err_8, s.psnr_8,
+            r.delta_e, r.grade.label(),
+            r.ch_r.mae_8, r.ch_r.p99_8,
+            r.ch_g.mae_8, r.ch_g.p99_8,
+            r.ch_b.mae_8, r.ch_b.p99_8,
+            comma);
+    }
+    println!("]");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// File Processing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn find_file_pairs(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
+    let mut pairs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let fff_files: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map_or(false, |e| e.eq_ignore_ascii_case("fff")))
+            .collect();
+        for fff in &fff_files {
+            let tif = fff.with_extension("tif");
+            if tif.exists() {
+                pairs.push((fff.clone(), tif));
+            }
         }
     }
-    out
+    pairs.sort();
+    pairs
 }
 
-fn image_to_rgb8(img: &image::DynamicImage) -> image::RgbImage {
-    img.to_rgb8()
+struct FileContext {
+    raw_16: image::DynamicImage,
+    reference: image::DynamicImage,
+    edit_history: EditHistory,
+    icc_data: Option<Vec<u8>>,
+    film_lut: Option<[Vec<f32>; 3]>,
+    setting_idx: usize,
 }
 
-fn compare_rgb_images(label: &str, ours: &image::RgbImage, reference: &image::RgbImage) {
-    assert_eq!(ours.dimensions(), reference.dimensions(),
-               "size mismatch: ours {:?} vs ref {:?}", ours.dimensions(), reference.dimensions());
-    let pixel_count = (ours.width() * ours.height()) as usize;
-    let our_raw = ours.as_raw();
-    let ref_raw = reference.as_raw();
+fn load_file_pair(fff_path: &Path, ref_path: &Path, setting_override: Option<usize>) -> Result<FileContext, String> {
+    let reference = image::open(ref_path).map_err(|e| format!("Cannot open reference TIF: {}", e))?;
+    let tiff = TiffFile::open(fff_path).map_err(|e| format!("Cannot open FFF file: {}", e))?;
 
-    let (mut our_r, mut our_g, mut our_b) = (vec![0u8; pixel_count], vec![0u8; pixel_count], vec![0u8; pixel_count]);
-    let (mut ref_r, mut ref_g, mut ref_b) = (vec![0u8; pixel_count], vec![0u8; pixel_count], vec![0u8; pixel_count]);
-    for i in 0..pixel_count {
-        our_r[i] = our_raw[i * 3];
-        our_g[i] = our_raw[i * 3 + 1];
-        our_b[i] = our_raw[i * 3 + 2];
-        ref_r[i] = ref_raw[i * 3];
-        ref_g[i] = ref_raw[i * 3 + 1];
-        ref_b[i] = ref_raw[i * 3 + 2];
+    let ifd0 = &tiff.ifds[0];
+    let raw_16 = tiff.decode_uncompressed_rgb(ifd0).ok_or_else(|| "Cannot decode IFD#0".to_string())?;
+
+    let edit_history = EditHistory::parse_from_tiff(&tiff).ok_or_else(|| "Cannot parse edit history".to_string())?;
+    let setting_idx = setting_override.unwrap_or_else(|| {
+        if edit_history.settings.len() > 1 { 1 } else { 0 }
+    });
+    let setting_idx = setting_idx.min(edit_history.settings.len() - 1);
+    let corr = &edit_history.settings[setting_idx].correction;
+
+    // ICC profile
+    let all_tags = tiff.all_tags();
+    let icc_data = color::extract_embedded_icc(tiff.raw_data(), &all_tags).or_else(|| {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("profiles")
+            .join("Flextight X5 & 949.icc");
+        std::fs::read(&path).ok()
+    });
+
+    // Film LUT extraction from thumbnail/preview
+    let thumb_img: Option<image::DynamicImage> = tiff.decode_thumbnail();
+    let preview_16: Option<image::ImageBuffer<image::Rgb<u16>, Vec<u16>>> = tiff.ifds.get(2)
+        .and_then(|ifd| tiff.decode_uncompressed_rgb(ifd))
+        .map(|img: image::DynamicImage| img.to_rgb16());
+    let film_lut = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
+        let t8: image::RgbImage = t.to_rgb8();
+        if corr.film_type == 1 || corr.film_type == 2 {
+            color::extract_film_curve(&t8, p, corr)
+        } else { None }
+    } else { None };
+
+    Ok(FileContext { raw_16, reference, edit_history, icc_data, film_lut, setting_idx })
+}
+
+fn process_file_pair(
+    fff_path: &Path, ref_path: &Path,
+    setting_override: Option<usize>,
+    verbose: bool, json_output: bool,
+) -> Option<Vec<TestResult>> {
+    let ctx = match load_file_pair(fff_path, ref_path, setting_override) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  ⚠ Skipping {}: {}", fff_path.file_name().unwrap_or_default().to_string_lossy(), e);
+            return None;
+        }
+    };
+    let sname = &ctx.edit_history.settings[ctx.setting_idx].name;
+    let corr = &ctx.edit_history.settings[ctx.setting_idx].correction;
+
+    if !json_output {
+        println!("\n═══════════════════════════════════════════════════");
+        println!("  FFF Pipeline Test Report");
+        println!("  File: {}", fff_path.file_name().unwrap_or_default().to_string_lossy());
+        println!("  Ref:  {}", ref_path.file_name().unwrap_or_default().to_string_lossy());
+        println!("  Setting #{} \"{}\" (film_type={}, γ={:.2})",
+            ctx.setting_idx, sname, corr.film_type, corr.gamma);
+        println!("  Film LUT: {}", if ctx.film_lut.is_some() { "extracted" } else { "hardcoded" });
+        println!("  ICC: {}", if ctx.icc_data.is_some() { "yes" } else { "no" });
+        println!("═══════════════════════════════════════════════════");
     }
 
-    let stats = vec![
-        compute_channel_stats("R", &our_r, &ref_r),
-        compute_channel_stats("G", &our_g, &ref_g),
-        compute_channel_stats("B", &our_b, &ref_b),
-        compute_channel_stats("All", our_raw, ref_raw),
-    ];
-    print_stats(label, &stats);
+    let results = run_tests(
+        &ctx.raw_16, &ctx.reference, &ctx.edit_history,
+        ctx.setting_idx, ctx.icc_data.as_deref(), ctx.film_lut.as_ref(),
+    );
+
+    if json_output {
+        print_json(&results);
+    } else {
+        print_summary(&results);
+        if verbose {
+            print_detail(&results);
+        }
+    }
+
+    Some(results)
 }
 
-// ─── 主函数 ──────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Main
+// ═══════════════════════════════════════════════════════════════════════════════
 
 fn main() {
     env_logger::init();
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("用法: cargo run --release --example tif_compare -- <file.fff> <reference.tif>");
+
+    // Parse arguments
+    let mut verbose = false;
+    let mut json_output = false;
+    let mut dir_path: Option<String> = None;
+    let mut setting_override: Option<usize> = None;
+    let mut positional = Vec::new();
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-v" | "--verbose" => verbose = true,
+            "--json" => json_output = true,
+            "--dir" => { i += 1; dir_path = args.get(i).cloned(); }
+            "--setting" => { i += 1; setting_override = args.get(i).and_then(|s| s.parse().ok()); }
+            _ => positional.push(args[i].clone()),
+        }
+        i += 1;
+    }
+
+    let pairs: Vec<(PathBuf, PathBuf)> = if let Some(ref dir) = dir_path {
+        let pairs = find_file_pairs(Path::new(dir));
+        if pairs.is_empty() {
+            eprintln!("No .fff + .tif pairs found in {}", dir);
+            std::process::exit(1);
+        }
+        pairs
+    } else if positional.len() >= 2 {
+        vec![(PathBuf::from(&positional[0]), PathBuf::from(&positional[1]))]
+    } else {
+        eprintln!("Usage: tif_compare <file.fff> <ref.tif> [-v] [--json] [--setting N]");
+        eprintln!("       tif_compare --dir <path> [-v] [--json]");
+        std::process::exit(1);
+    };
+
+    let mut all_results: Vec<(String, Vec<TestResult>)> = Vec::new();
+
+    for (fff, tif) in &pairs {
+        if let Some(results) = process_file_pair(fff, tif, setting_override, verbose, json_output) {
+            all_results.push((fff.file_name().unwrap_or_default().to_string_lossy().into_owned(), results));
+        }
+    }
+
+    // Grand summary for multi-file mode
+    if all_results.len() > 1 && !json_output {
+        println!("\n\n═══════════════════════════════════════════════════════════════════");
+        println!("  GRAND SUMMARY");
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("  {:<35} {:>5} {:>5} {:>5} {:>5} {:>8}",
+            "FILE", "TESTS", "PASS", "WARN", "FAIL", "BEST_MAE");
+        println!("  ─────────────────────────────────── ───── ───── ───── ───── ────────");
+        let (mut tp, mut tw, mut tf, mut tt) = (0, 0, 0, 0);
+        for (name, results) in &all_results {
+            let (p, w, f) = count_grades(results);
+            let best = results.iter().map(|r| r.ch_all.mae_8)
+                .min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(f64::NAN);
+            println!("  {:<35} {:>5} {:>5} {:>5} {:>5} {:>8.2}",
+                name, results.len(), p, w, f, best);
+            tp += p; tw += w; tf += f; tt += results.len();
+        }
+        println!("  ─────────────────────────────────── ───── ───── ───── ───── ────────");
+        println!("  {:<35} {:>5} {:>5} {:>5} {:>5}", "TOTAL", tt, tp, tw, tf);
+    }
+
+    // Exit with error if any test failed
+    let any_fail = all_results.iter().any(|(_, rs)| rs.iter().any(|r| r.grade == Grade::Fail));
+    if any_fail {
         std::process::exit(1);
     }
-
-    let fff_path = &args[1];
-    let ref_path = &args[2];
-
-    println!("════════════════════════════════════════════");
-    println!("  全分辨率 TIF 导出对照工具");
-    println!("  FFF: {}", fff_path);
-    println!("  参考: {}", ref_path);
-    println!("════════════════════════════════════════════");
-
-    // 加载参考 TIF
-    let ref_img = image::open(ref_path).expect("无法打开参考 TIF");
-    let ref_rgb8 = ref_img.to_rgb8();
-    let (ref_w, ref_h) = ref_rgb8.dimensions();
-    println!("\n参考 TIF: {}×{} ({}-bit)", ref_w, ref_h,
-             if ref_img.color().bytes_per_pixel() > 3 { 16 } else { 8 });
-
-    // 打开 FFF 文件
-    let tiff = TiffFile::open(Path::new(fff_path)).expect("无法打开 FFF 文件");
-
-    // 列出 IFD
-    println!("\n=== IFD 列表 ===");
-    for (idx, ifd) in tiff.ifds.iter().enumerate() {
-        let w = ifd.get_u32(0x0100).unwrap_or(0);
-        let h = ifd.get_u32(0x0101).unwrap_or(0);
-        let bps = ifd.get_u32(0x0102).unwrap_or(8);
-        let subfile = ifd.get_u32(0x00FE).unwrap_or(0);
-        println!("  IFD#{}: {}×{}, {}bit, SubfileType={}", idx, w, h, bps, subfile);
-    }
-
-    // 加载全分辨率 16-bit IFD#0
-    let ifd0 = &tiff.ifds[0];
-    let ifd0_w = ifd0.get_u32(0x0100).unwrap_or(0);
-    let ifd0_h = ifd0.get_u32(0x0101).unwrap_or(0);
-    println!("\n加载 IFD#0 全分辨率: {}×{}", ifd0_w, ifd0_h);
-
-    let raw_16 = tiff.decode_uncompressed_rgb(ifd0).expect("无法解码 IFD#0");
-    println!("解码完成: {}×{}", raw_16.width(), raw_16.height());
-
-    // 尺寸检查
-    if raw_16.width() != ref_w || raw_16.height() != ref_h {
-        println!("⚠ 尺寸不匹配！raw={}×{}, ref={}×{}",
-                 raw_16.width(), raw_16.height(), ref_w, ref_h);
-    }
-
-    // 提取编辑历史
-    let edit_history = EditHistory::parse_from_tiff(&tiff).expect("无法解析编辑历史");
-    let idx = edit_history.current_index.min(edit_history.settings.len() - 1);
-    let corr = &edit_history.settings[idx].correction;
-    println!("\n=== 色彩方案 #{} ({}) ===", idx, edit_history.settings[idx].name);
-    println!("  film_type={} ({})", corr.film_type, flexcolor::film_type_name(corr.film_type));
-    println!("  DotColor={:?}", corr.dot_color);
-    println!("  shadow={:?}, highlight={:?}", corr.shadow, corr.highlight);
-    println!("  gray={:?}, gamma={:.4}", corr.gray, corr.gamma);
-    println!("  apply: sliders={}, curves={}, histogram={}, cc={}, usm={}",
-             corr.apply_sliders, corr.apply_curves, corr.apply_histogram, corr.apply_cc, corr.apply_usm);
-    if corr.apply_sliders {
-        println!("  contrast={}, brightness={}, saturation={}, lightness={}",
-                 corr.contrast, corr.brightness, corr.saturation, corr.lightness);
-    }
-
-    // 提取 ICC 配置文件（嵌入或从磁盘加载）
-    let all_tags = tiff.all_tags();
-    let icc_data = color::extract_embedded_icc(tiff.raw_data(), &all_tags);
-    let icc_data = if icc_data.is_none() {
-        let profile_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("profiles")
-            .join("Flextight X5 & 949.icc");
-        if profile_path.exists() {
-            let data = std::fs::read(&profile_path).ok();
-            if let Some(ref d) = data {
-                println!("✓ ICC (from disk): {} bytes — {}", d.len(), profile_path.display());
-            }
-            data
-        } else {
-            println!("⚠ ICC profile not found at {}", profile_path.display());
-            None
-        }
-    } else {
-        println!("✓ ICC (embedded): {} bytes", icc_data.as_ref().unwrap().len());
-        icc_data
-    };
-
-    // 构建 ManualAdjust
-    let adj = build_manual_adjust(corr);
-    println!("\n=== ManualAdjust ===");
-    println!("  levels_black={:?}", adj.levels_black);
-    println!("  levels_white={:?}", adj.levels_white);
-    println!("  levels_gamma={:?}", adj.levels_gamma);
-    println!("  output_shadow={:?}", adj.output_shadow);
-    println!("  output_highlight={:?}", adj.output_highlight);
-
-    // 准备曲线
-    let curve_points: Vec<Vec<(i64, i64, i64)>> = if adj.apply_curves && !corr.gradations.is_empty() {
-        corr.gradations.clone()
-    } else {
-        (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect()
-    };
-    // 打印曲线数据
-    {
-        let names = ["RGB", "R", "G", "B", "C4", "C5", "C6"];
-        println!("\n=== Gradation Curves (apply={}) ===", adj.apply_curves);
-        for (i, curve) in curve_points.iter().enumerate() {
-            let name = if i < names.len() { names[i] } else { "?" };
-            let is_id = curve.len() == 2 && curve[0].0 == 0 && curve[0].1 == 0 && curve[1].0 == 255 && curve[1].1 == 255;
-            println!("  [{}] {} ({} pts, identity={}): {:?}", i, name, curve.len(), is_id, curve);
-        }
-    }
-
-    // 提取胶片曲线 LUT
-    let thumb_img = tiff.decode_thumbnail();
-    let preview_16 = tiff.decode_uncompressed_rgb(&tiff.ifds[2]).map(|img| img.to_rgb16());
-    let film_lut = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
-        let t8 = t.to_rgb8();
-        if corr.film_type == 1 || corr.film_type == 2 {
-            color::extract_film_curve(&t8, p, corr)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // ══════════════════════════════════════════════════════════════════
-    //  测试不同管线配置，找出最匹配的
-    // ══════════════════════════════════════════════════════════════════
-
-    // ─── Test A: 原始（无处理） ───
-    {
-        let our_8 = to_rgb8(&raw_16);
-        compare_rgb_images("A: Raw (无处理)", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test B: 仅底片反转 ───
-    let after_film = color::apply_film_processing(&raw_16, corr);
-    {
-        let our_8 = to_rgb8(&after_film);
-        compare_rgb_images("B: Film Processing", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test C: 完整管线（当前实现） ───
-    {
-        let result = color::apply_color_pipeline(
-            after_film.clone(),
-            &adj,
-            &curve_points,
-            film_lut.as_ref(),
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("C: Full Pipeline (当前)", &our_8, &ref_rgb8);
-
-        // 保存我们的结果
-        let out_path = "/tmp/fff_our_export.tif";
-        our_8.save(out_path).expect("无法保存我们的 TIF");
-        println!("  → 已保存到 {}", out_path);
-    }
-
-    // ─── Test D: 完整管线，但禁用 DotColor ───
-    {
-        let mut adj_no_dot = adj.clone();
-        adj_no_dot.output_shadow = [0.0; 4];
-        adj_no_dot.output_highlight = [255.0; 4];
-
-        let result = color::apply_color_pipeline(
-            after_film.clone(),
-            &adj_no_dot,
-            &curve_points,
-            film_lut.as_ref(),
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("D: Full Pipeline - 无DotColor", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test E: 完整管线，禁用 DotColor + 禁用色彩校正 ───
-    {
-        let mut adj_simple = adj.clone();
-        adj_simple.output_shadow = [0.0; 4];
-        adj_simple.output_highlight = [255.0; 4];
-        adj_simple.apply_color_corr = false;
-
-        let result = color::apply_color_pipeline(
-            after_film.clone(),
-            &adj_simple,
-            &curve_points,
-            film_lut.as_ref(),
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("E: Full Pipeline - 无DotColor/CC", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test F: 仅色阶（无其他效果） ───
-    {
-        let mut adj_levels = color::ManualAdjust::default();
-        adj_levels.film_type = adj.film_type;
-        adj_levels.film_curve = adj.film_curve;
-        adj_levels.film_gamma = adj.film_gamma;
-        adj_levels.levels_black = adj.levels_black;
-        adj_levels.levels_white = adj.levels_white;
-        adj_levels.levels_gamma = adj.levels_gamma;
-        // 不应用输出色阶
-        adj_levels.apply_film_curve = adj.apply_film_curve;
-
-        let result = color::apply_color_pipeline(
-            after_film.clone(),
-            &adj_levels,
-            &curve_points,
-            film_lut.as_ref(),
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("F: Film + Curves + Levels + ICC (无sliders)", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test G: 仅底片反转 + ICC ───
-    {
-        let adj_identity = color::ManualAdjust::default();
-        let identity_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
-
-        let result = color::apply_color_pipeline(
-            after_film.clone(),
-            &adj_identity,
-            &identity_curves,
-            None,
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("G: Film + ICC only", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test I: 管线重排 — 曲线放在最后 ───
-    // 假设 FlexColor 的顺序: Film → Levels → ICC → Display → Curves
-    {
-        let mut adj_no_curves = adj.clone();
-        adj_no_curves.apply_curves = false;  // 先跳过曲线
-        let identity_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
-
-        // 步骤 1-4: Film → Levels → ICC → Display (无曲线)
-        let result = color::apply_color_pipeline(
-            after_film.clone(),
-            &adj_no_curves,
-            &identity_curves,
-            film_lut.as_ref(),
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        // 步骤 5: 最后应用渐变曲线
-        let result = if adj.apply_curves && curve_points.len() >= 7 {
-            color::apply_gradation_curves(&result, &curve_points)
-        } else {
-            result
-        };
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("I: Curves LAST (Film→Levels→ICC→Adjust→Curves)", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test J: 曲线在 ICC 之后、Display 之前 ───
-    {
-        let mut adj_no_curves = adj.clone();
-        adj_no_curves.apply_curves = false;
-        let identity_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
-
-        // Film → Levels → ICC (无曲线，无 display)
-        let mut adj_levels_only = color::ManualAdjust::default();
-        adj_levels_only.film_type = adj.film_type;
-        adj_levels_only.film_curve = adj.film_curve;
-        adj_levels_only.film_gamma = adj.film_gamma;
-        adj_levels_only.levels_black = adj.levels_black;
-        adj_levels_only.levels_white = adj.levels_white;
-        adj_levels_only.levels_gamma = adj.levels_gamma;
-        adj_levels_only.apply_film_curve = adj.apply_film_curve;
-
-        let after_levels = color::apply_color_pipeline(
-            after_film.clone(),
-            &adj_levels_only,
-            &identity_curves,
-            film_lut.as_ref(),
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        // 然后曲线
-        let after_curves = if adj.apply_curves && curve_points.len() >= 7 {
-            color::apply_gradation_curves(&after_levels, &curve_points)
-        } else {
-            after_levels
-        };
-        // 然后 Display
-        let result = color::apply_manual_adjust(&after_curves, &adj_no_curves, None);
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("J: Curves between ICC and Display", &our_8, &ref_rgb8);
-    }
-
-    // ─── Test K: Setting #1 参数 + setting #6 的曲线 (验证曲线是否是主要差异) ───
-    {
-        let c1 = &edit_history.settings[1].correction;
-        let mut a1 = build_manual_adjust(c1);
-        a1.apply_curves = false;
-        let identity_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
-
-        let after1 = color::apply_film_processing(&raw_16, c1);
-        let result = color::apply_color_pipeline(
-            after1,
-            &a1,
-            &identity_curves,
-            film_lut.as_ref(),
-            icc_data.as_deref(),
-            color::TargetColorSpace::SRGB,
-        );
-        let result = if adj.apply_curves && curve_points.len() >= 7 {
-            color::apply_gradation_curves(&result, &curve_points)
-        } else {
-            result
-        };
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("K: Setting#1 params + Setting#6 curves (last)", &our_8, &ref_rgb8);
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  消融测试：从 Setting#1 逐步添加 Setting#6 的特征
-    // ══════════════════════════════════════════════════════════════════
-    println!("\n\n=== 消融测试: Setting#1 基础 + 逐步添加 Setting#7 特征 ===");
-    let c1 = &edit_history.settings[1].correction;
-    let c7 = corr;  // Current (latest) setting
-    let after_film_c1 = color::apply_film_processing(&raw_16, c1);
-    let identity_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
-
-    // 使用 c1 的 correction 提取 film_lut（确保与 H1 一致）
-    let film_lut_c1 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
-        let t8 = t.to_rgb8();
-        if c1.film_type == 1 || c1.film_type == 2 {
-            color::extract_film_curve(&t8, p, c1)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // L1: Setting#1 基础 (baseline)
-    {
-        let a = build_manual_adjust(c1);
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &identity_curves,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L1: Setting#1 baseline", &our_8, &ref_rgb8);
-    }
-
-    // L2: + gamma/gray 变化 (1.89844 + new gray)
-    {
-        let mut a = build_manual_adjust(c1);
-        a.film_gamma = c7.gamma;
-        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        for i in 1..4 {
-            a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0);
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &identity_curves,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L2: +gamma/gray变化", &our_8, &ref_rgb8);
-    }
-
-    // L3: + contrast=41
-    {
-        let mut a = build_manual_adjust(c1);
-        a.film_gamma = c7.gamma;
-        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
-        a.contrast = 41.0;
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &identity_curves,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L3: +contrast=41", &our_8, &ref_rgb8);
-    }
-
-    // L4: + brightness=42
-    {
-        let mut a = build_manual_adjust(c1);
-        a.film_gamma = c7.gamma;
-        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
-        a.contrast = 41.0;
-        a.brightness = 42.0;
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &identity_curves,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L4: +brightness=42", &our_8, &ref_rgb8);
-    }
-
-    // L5: + lightness=43
-    {
-        let mut a = build_manual_adjust(c1);
-        a.film_gamma = c7.gamma;
-        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
-        a.contrast = 41.0;
-        a.brightness = 42.0;
-        a.lightness = 43.0;
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &identity_curves,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L5: +lightness=43", &our_8, &ref_rgb8);
-    }
-
-    // L6: + DotColor [60,180]
-    {
-        let mut a = build_manual_adjust(c1);
-        a.film_gamma = c7.gamma;
-        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
-        a.contrast = 41.0;
-        a.brightness = 42.0;
-        a.lightness = 43.0;
-        if c7.dot_color.len() >= 14 {
-            a.output_shadow = [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32];
-            a.output_highlight = [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32];
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &identity_curves,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L6: +DotColor[60,180]", &our_8, &ref_rgb8);
-    }
-
-    // L7: + color_corr
-    {
-        let mut a = build_manual_adjust(c1);
-        a.film_gamma = c7.gamma;
-        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
-        a.contrast = 41.0;
-        a.brightness = 42.0;
-        a.lightness = 43.0;
-        if c7.dot_color.len() >= 14 {
-            a.output_shadow = [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32];
-            a.output_highlight = [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32];
-        }
-        if c7.apply_cc && c7.color_corr.len() == 36 {
-            for (i, &v) in c7.color_corr.iter().enumerate() { a.color_corr[i] = v; }
-            a.apply_color_corr = true;
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &identity_curves,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L7: +color_corr", &our_8, &ref_rgb8);
-    }
-
-    // L8: + gradation curves (全特征)
-    {
-        let mut a = build_manual_adjust(c1);
-        a.film_gamma = c7.gamma;
-        a.levels_gamma[0] = ((c7.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        for i in 1..4 { a.levels_gamma[i] = (c7.gray[i] as f32 / 128.0).clamp(0.01, 99.0); }
-        a.contrast = 41.0;
-        a.brightness = 42.0;
-        a.lightness = 43.0;
-        if c7.dot_color.len() >= 14 {
-            a.output_shadow = [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32];
-            a.output_highlight = [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32];
-        }
-        if c7.apply_cc && c7.color_corr.len() == 36 {
-            for (i, &v) in c7.color_corr.iter().enumerate() { a.color_corr[i] = v; }
-            a.apply_color_corr = true;
-        }
-        a.apply_curves = true;
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &curve_points,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L8: +curves (全特征)", &our_8, &ref_rgb8);
-    }
-
-    // L9: 仅 Setting#1 + curves (不加其它 slider)
-    {
-        let mut a = build_manual_adjust(c1);
-        a.apply_curves = true;
-        let result = color::apply_color_pipeline(
-            after_film_c1.clone(), &a, &curve_points,
-            film_lut_c1.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("L9: Setting#1 + curves only", &our_8, &ref_rgb8);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // M 测试: 公式变体搜索 — 寻找正确的 FlexColor 调整公式
-    // ═══════════════════════════════════════════════════════════════════
-    println!("\n\n=== 公式变体测试: 使用 Setting#7 全参数 ===");
-
-    // 提取 Setting#7 的 film_lut
-    let film_lut_c7 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
-        let t8 = t.to_rgb8();
-        if c7.film_type == 1 || c7.film_type == 2 {
-            color::extract_film_curve(&t8, p, c7)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let after_film_c7 = color::apply_film_processing(&raw_16, c7);
-
-    // M0: 原始 Setting#7，不做任何修改 (通过 apply_color_pipeline 的 baseline)
-    {
-        let a = build_manual_adjust(c7);
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M0: 原始Setting#7 (pipeline baseline)", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // === BCL 系数扫描: 测试不同 brightness/contrast/lightness 系数 ===
-    println!("\n--- BCL 系数扫描 (brightness_mult, contrast_mult, lightness_mult) ---");
-    {
-        // 当前系数: brightness × 0.5, contrast × 2.0, lightness gamma = 1/(1+l)
-        // 替代方案: 调整这些乘数
-        let bri_mults = [0.25, 0.35, 0.5, 0.75, 1.0];
-        let con_mults = [1.0, 1.5, 2.0, 2.5];
-        let lit_mults = [0.5, 0.75, 1.0, 1.5];
-
-        let mut best_mae = f64::MAX;
-        let mut best_params = (0.0f32, 0.0f32, 0.0f32);
-
-        for &bm in &bri_mults {
-            for &cm in &con_mults {
-                for &lm in &lit_mults {
-                    let mut a = build_manual_adjust(c7);
-                    // 修改 BCL 参数（通过缩放原始值来模拟不同系数）
-                    a.brightness = c7.brightness as f32 * bm / 0.5;  // normalize: actual_mult = bm
-                    a.contrast = c7.contrast as f32 * cm / 2.0;
-                    a.lightness = c7.lightness as f32 * lm / 1.0;
-                    let result = color::apply_color_pipeline(
-                        after_film_c7.clone(), &a, &curve_points,
-                        film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-                    );
-                    let our_8 = to_rgb8(&result);
-                    let our_raw = our_8.as_raw();
-                    let ref_raw = ref_rgb8.as_raw();
-                    let total: u64 = our_raw.iter().zip(ref_raw.iter())
-                        .map(|(&a, &b)| (a as i32 - b as i32).unsigned_abs() as u64)
-                        .sum();
-                    let mae = total as f64 / our_raw.len() as f64;
-                    if mae < best_mae {
-                        best_mae = mae;
-                        best_params = (bm, cm, lm);
-                    }
-                }
-            }
-        }
-        println!("  最佳 BCL 系数: bri_mult={:.2}, con_mult={:.2}, lit_mult={:.2} → MAE={:.2}",
-            best_params.0, best_params.1, best_params.2, best_mae);
-
-        // 用最佳系数重新运行并展示详情
-        {
-            let (bm, cm, lm) = best_params;
-            let mut a = build_manual_adjust(c7);
-            a.brightness = c7.brightness as f32 * bm / 0.5;
-            a.contrast = c7.contrast as f32 * cm / 2.0;
-            a.lightness = c7.lightness as f32 * lm / 1.0;
-            let result = color::apply_color_pipeline(
-                after_film_c7.clone(), &a, &curve_points,
-                film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-            );
-            compare_rgb_images(&format!("BCL最佳: b={:.2} c={:.2} l={:.2}", bm, cm, lm),
-                &to_rgb8(&result), &ref_rgb8);
-        }
-    }
-
-    // M1: 反转 per-channel gamma 方向 (v^gamma 而非 v^(1/gamma))
-    // 实现方式: 将 levels_gamma[i] 设为 1/original，使得 v^(1/(1/g)) = v^g
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M1: 反转 per-ch gamma", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M2: 反转 per-ch gamma + 反转 master gamma
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        let mg = (c7.gamma as f32 - 1.0).max(0.01);
-        a.levels_gamma[0] = (1.0 / mg).clamp(0.01, 99.0);
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M2: 反转 per-ch + master gamma", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M3: 原始 gamma + 禁用 color_corr
-    {
-        let mut a = build_manual_adjust(c7);
-        a.apply_color_corr = false;
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M3: 禁用 color_corr", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M4: 反转 gamma + 禁用 color_corr
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M4: 反转gamma + 禁用cc", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M5: 反转 gamma + 禁用 color_corr + 弱化 brightness (×0.25)
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        a.brightness *= 0.25;
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M5: M4 + brightness×0.25", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M6: 反转 gamma + 禁用 color_corr + 弱化 brightness + 弱化 contrast
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        a.brightness *= 0.25;
-        a.contrast *= 0.5;
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M6: M5 + contrast×0.5", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M7: 反转 gamma + color_corr ÷1000 (而非÷100)
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        // color_corr 保留但需要在 pipeline 中用不同缩放 — 无法通过参数修改
-        // 改为禁用 cc 并手动计算效果大致方向
-        a.apply_color_corr = false;
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M7: 反转gamma + 无cc (=M4重复,用作基准)", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M8: 反转 gamma + 禁用 cc + 禁用 curves
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        a.apply_curves = false;
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &identity_curves,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M8: 反转gamma + 无cc + 无curves", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M9: 反转 gamma + 禁用 cc + 禁用 brightness/contrast/lightness
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        a.brightness = 0.0;
-        a.contrast = 0.0;
-        a.lightness = 0.0;
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M9: 反转gamma + 无cc/bri/con/lit", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // M10: 仅反转 gamma (保留所有其它原样，包括 cc)
-    // 与 H7 (原始) 对比，看 gamma 方向的纯影响
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("M10: 仅反转 per-ch gamma (=M1)", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // 打印曲线控制点
-    println!("\n--- 曲线控制点 (Setting#7) ---");
-    let ch_names = ["RGB(master)", "R", "G", "B", "C", "M", "Y"];
-    for (ci, pts) in curve_points.iter().enumerate() {
-        if ci < ch_names.len() {
-            let pts_str: Vec<String> = pts.iter().map(|&(x,y,dy)| format!("({},{},{})", x, y, dy)).collect();
-            println!("  {}: {}", ch_names[ci], pts_str.join(" "));
-        }
-    }
-
-    // P 测试: DotColor 公式修正 — 使用 per-channel 值而非 max/min(master, channel)
-    println!("\n\n=== DotColor 公式修正测试 ===");
-
-    // P1: 仅修正 DotColor 公式 (per-channel 直接使用)
-    {
-        let mut a = build_manual_adjust(c7);
-        if c7.dot_color.len() >= 14 {
-            // 直接使用 per-channel 值，不与 master 做 max/min
-            a.output_shadow[0] = 0.0;  // master shadow 清零
-            a.output_highlight[0] = 255.0;  // master highlight 满
-            // per-channel 保持原样
-            a.output_shadow[1] = c7.dot_color[0] as f32;  // R shadow
-            a.output_shadow[2] = c7.dot_color[1] as f32;  // G shadow
-            a.output_shadow[3] = c7.dot_color[2] as f32;  // B shadow
-            a.output_highlight[1] = c7.dot_color[7] as f32;  // R highlight
-            a.output_highlight[2] = c7.dot_color[8] as f32;  // G highlight
-            a.output_highlight[3] = c7.dot_color[9] as f32;  // B highlight
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("P1: DotColor per-ch 直接 (当前管线)", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // P2: P1 + 反转 gamma
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        if c7.dot_color.len() >= 14 {
-            a.output_shadow[0] = 0.0;
-            a.output_highlight[0] = 255.0;
-            a.output_shadow[1] = c7.dot_color[0] as f32;
-            a.output_shadow[2] = c7.dot_color[1] as f32;
-            a.output_shadow[3] = c7.dot_color[2] as f32;
-            a.output_highlight[1] = c7.dot_color[7] as f32;
-            a.output_highlight[2] = c7.dot_color[8] as f32;
-            a.output_highlight[3] = c7.dot_color[9] as f32;
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("P2: P1 + 反转gamma", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // P3: P2 + 禁用 cc
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        if c7.dot_color.len() >= 14 {
-            a.output_shadow[0] = 0.0;
-            a.output_highlight[0] = 255.0;
-            a.output_shadow[1] = c7.dot_color[0] as f32;
-            a.output_shadow[2] = c7.dot_color[1] as f32;
-            a.output_shadow[3] = c7.dot_color[2] as f32;
-            a.output_highlight[1] = c7.dot_color[7] as f32;
-            a.output_highlight[2] = c7.dot_color[8] as f32;
-            a.output_highlight[3] = c7.dot_color[9] as f32;
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("P3: P2 + 禁用cc", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // P4: P3 + brightness×0.25
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        a.brightness *= 0.25;
-        if c7.dot_color.len() >= 14 {
-            a.output_shadow[0] = 0.0;
-            a.output_highlight[0] = 255.0;
-            a.output_shadow[1] = c7.dot_color[0] as f32;
-            a.output_shadow[2] = c7.dot_color[1] as f32;
-            a.output_shadow[3] = c7.dot_color[2] as f32;
-            a.output_highlight[1] = c7.dot_color[7] as f32;
-            a.output_highlight[2] = c7.dot_color[8] as f32;
-            a.output_highlight[3] = c7.dot_color[9] as f32;
-        }
-        let result = color::apply_color_pipeline(
-            after_film_c7.clone(), &a, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("P4: P3 + brightness×0.25", &to_rgb8(&result), &ref_rgb8);
-    }
-
-    // P5: DotColor 公式修正 + curves→display→DotColor 管线
-    {
-        let mut a = build_manual_adjust(c7);
-        let oshadow = if c7.dot_color.len() >= 14 {
-            [0.0, c7.dot_color[0] as f32, c7.dot_color[1] as f32, c7.dot_color[2] as f32]
-        } else { [0.0; 4] };
-        let ohigh = if c7.dot_color.len() >= 14 {
-            [255.0, c7.dot_color[7] as f32, c7.dot_color[8] as f32, c7.dot_color[9] as f32]
-        } else { [255.0; 4] };
-        a.output_shadow = [0.0; 4];
-        a.output_highlight = [255.0; 4];
-        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
-        let img = if let Some(icc) = icc_data.as_deref() {
-            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
-        } else { img };
-        let img = color::apply_gradation_curves(&img, &curve_points);
-        let img = color::apply_display_adjust(&img, &a);
-        let img = apply_dotcolor_last(&img, &oshadow, &ohigh);
-        compare_rgb_images("P5: curves→display→DotColor(per-ch)", &to_rgb8(&img), &ref_rgb8);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // Q 测试: 反向求解 — 从参考 TIF 反推各阶段应有的正确值
-    // ═══════════════════════════════════════════════════════════════════
-    println!("\n\n=== Q: 反向求解测试 ===");
-    {
-        // 打印 S7 参数摘要
-        println!("Setting#7 参数:");
-        println!("  film_type={}, gamma={}", c7.film_type, c7.gamma);
-        println!("  shadow={:?}", &c7.shadow);
-        println!("  highlight={:?}", &c7.highlight);
-        println!("  gray={:?}", &c7.gray);
-        println!("  saturation={}, contrast={}, brightness={}, lightness={}",
-            c7.saturation, c7.contrast, c7.brightness, c7.lightness);
-        println!("  dot_color={:?}", &c7.dot_color);
-        println!("  color_corr[ALL]={:?}", &c7.color_corr);
-        if c7.color_corr.len() == 36 {
-            let m = &c7.color_corr;
-            println!("  6x6 矩阵:");
-            for r in 0..6 {
-                let row: Vec<i64> = (0..6).map(|c| m[r*6+c]).collect();
-                println!("    row{}: {:?}", r, row);
-            }
-        }
-        println!("  ev={}", c7.ev);
-
-        // 构建 7 通道 curves LUT (256 entries each for 8-bit)
-        let curve_luts: Vec<Vec<u8>> = curve_points.iter().map(|pts| {
-            let lut = color::build_curve_lut(pts);
-            lut.to_vec()
-        }).collect();
-
-        // 构建反转 LUT: 对于 master curve + per-channel curve, 找出 output→input 映射
-        // curves 应用顺序: master first, then per-channel
-        // combined(x) = ch_curve(master_curve(x))
-        // 构建组合 LUT
-        let mut combined_luts: Vec<Vec<u8>> = Vec::new();
-        for ch in 0..3 {
-            let master = &curve_luts[0];
-            let ch_lut = &curve_luts[ch + 1]; // R=1, G=2, B=3
-            let combined: Vec<u8> = (0..256).map(|i| {
-                let after_master = master[i] as usize;
-                ch_lut[after_master.min(255)]
-            }).collect();
-            combined_luts.push(combined);
-        }
-
-        // 构建反转 LUT (output → input)
-        // 由于曲线可能不是单调的，我们使用最近匹配
-        let mut inv_luts: Vec<Vec<u8>> = Vec::new();
-        for ch in 0..3 {
-            let forward = &combined_luts[ch];
-            let mut inv = vec![0u8; 256];
-            for out in 0..256u32 {
-                let mut best_in = 0u8;
-                let mut best_diff = 256i32;
-                for inp in 0..256u32 {
-                    let diff = (forward[inp as usize] as i32 - out as i32).abs();
-                    if diff < best_diff {
-                        best_diff = diff;
-                        best_in = inp as u8;
-                    }
-                }
-                inv[out as usize] = best_in;
-            }
-            inv_luts.push(inv);
-        }
-
-        // 反转参考 TIF: 得到 curves 之前的值
-        let ref_img = image::open(&ref_path).unwrap().to_rgb8();
-        let (w, h) = (ref_img.width(), ref_img.height());
-        let mut pre_curves_ref = vec![0u8; (w * h * 3) as usize];
-        for i in 0..(w * h) as usize {
-            let px = ref_img.as_raw();
-            for ch in 0..3 {
-                pre_curves_ref[i * 3 + ch] = inv_luts[ch][px[i * 3 + ch] as usize];
-            }
-        }
-
-        // 打印 pre-curves 参考值统计
-        let mut ch_means = [0.0f64; 3];
-        let mut ch_min = [255u8; 3];
-        let mut ch_max = [0u8; 3];
-        for i in 0..(w * h) as usize {
-            for ch in 0..3 {
-                let v = pre_curves_ref[i * 3 + ch];
-                ch_means[ch] += v as f64;
-                ch_min[ch] = ch_min[ch].min(v);
-                ch_max[ch] = ch_max[ch].max(v);
-            }
-        }
-        let n = (w * h) as f64;
-        println!("参考TIF 反推 pre-curves 值:");
-        println!("  R: mean={:.1}, range=[{}-{}]", ch_means[0] / n, ch_min[0], ch_max[0]);
-        println!("  G: mean={:.1}, range=[{}-{}]", ch_means[1] / n, ch_min[1], ch_max[1]);
-        println!("  B: mean={:.1}, range=[{}-{}]", ch_means[2] / n, ch_min[2], ch_max[2]);
-
-        // 打印 curves 单调性分析
-        for ch in 0..3 {
-            let f = &combined_luts[ch];
-            let mut non_mono = 0;
-            for i in 1..256 {
-                if f[i] < f[i-1] { non_mono += 1; }
-            }
-            let ch_name = ["R", "G", "B"][ch];
-            println!("  {ch_name} curve: 非单调段数={non_mono}, range=[{}-{}]", f.iter().min().unwrap(), f.iter().max().unwrap());
-        }
-
-        // 我们管线的 pre-curves 值 (scanner→ICC→DotColor→sliders, 无curves)
-        let a7 = build_manual_adjust(c7);
-        let mut a_no_curves = a7.clone();
-        a_no_curves.apply_curves = false;
-        let result_no_curves = color::apply_color_pipeline(
-            after_film_c7.clone(), &a_no_curves, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_pre_curves = to_rgb8(&result_no_curves);
-
-        // 比较
-        let pre_ref_img = image::RgbImage::from_raw(w, h, pre_curves_ref.clone()).unwrap();
-        let pre_ref_dyn = image::DynamicImage::ImageRgb8(pre_ref_img);
-        compare_rgb_images("Q1: 我们的pre-curves vs 参考的pre-curves", &our_pre_curves, &image_to_rgb8(&pre_ref_dyn));
-
-        // 也计算: 无 DotColor、无 cc、无 sliders 的 pre-curves
-        let mut a_base = a7.clone();
-        a_base.apply_curves = false;
-        a_base.apply_contrast = false;
-        a_base.apply_brightness = false;
-        a_base.apply_shadow_depth = false;
-        a_base.apply_color_corr = false;
-        a_base.output_shadow = [0.0; 4];
-        a_base.output_highlight = [255.0; 4];
-        let result_base = color::apply_color_pipeline(
-            after_film_c7.clone(), &a_base, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_base = to_rgb8(&result_base);
-        compare_rgb_images("Q2: 仅scanner+ICC (无显示调整) vs 参考pre-curves", &our_base, &image_to_rgb8(&pre_ref_dyn));
-
-        // Q3: 仅scanner+ICC+DotColor (无sliders)
-        let mut a_dot_only = a7.clone();
-        a_dot_only.apply_curves = false;
-        a_dot_only.apply_contrast = false;
-        a_dot_only.apply_brightness = false;
-        a_dot_only.apply_shadow_depth = false;
-        a_dot_only.apply_color_corr = false;
-        let result_dot = color::apply_color_pipeline(
-            after_film_c7.clone(), &a_dot_only, &curve_points,
-            film_lut_c7.as_ref(), icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        compare_rgb_images("Q3: scanner+ICC+DotColor vs 参考pre-curves", &to_rgb8(&result_dot), &image_to_rgb8(&pre_ref_dyn));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // N 测试: 管线顺序变体 — 曲线在 display_adjust 之前，DotColor 在最后
-    // ═══════════════════════════════════════════════════════════════════
-    println!("\n\n=== 管线顺序变体测试 ===");
-
-    // 辅助函数: 将 DotColor 作为最后一步应用
-    fn apply_dotcolor_last(img: &image::DynamicImage, oshadow: &[f32; 4], ohigh: &[f32; 4]) -> image::DynamicImage {
-        if let image::DynamicImage::ImageRgb16(ref rgb16) = img {
-            let (w, h) = (rgb16.width(), rgb16.height());
-            let src = rgb16.as_raw();
-            let mut out = vec![0u16; src.len()];
-            for ch in 0..3 {
-                let lo = oshadow[0].max(oshadow[ch + 1]) / 255.0;
-                let hi = ohigh[0].min(ohigh[ch + 1]) / 255.0;
-                let range = (hi - lo).max(0.001);
-                for y in 0..h as usize {
-                    for x in 0..w as usize {
-                        let i = (y * w as usize + x) * 3 + ch;
-                        let v = src[i] as f32 / 65535.0;
-                        out[i] = ((lo + v * range).clamp(0.0, 1.0) * 65535.0) as u16;
-                    }
-                }
-            }
-            let buf = image::ImageBuffer::from_raw(w, h, out).unwrap();
-            image::DynamicImage::ImageRgb16(buf)
-        } else {
-            img.clone()
-        }
-    }
-
-    let real_oshadow = build_manual_adjust(c7).output_shadow;
-    let real_ohigh = build_manual_adjust(c7).output_highlight;
-
-    // N1: scanner→ICC→curves→display(无DotColor)→DotColor
-    {
-        let mut a = build_manual_adjust(c7);
-        a.output_shadow = [0.0; 4];
-        a.output_highlight = [255.0; 4];
-        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
-        let img = if let Some(icc) = icc_data.as_deref() {
-            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
-        } else { img };
-        let img = color::apply_gradation_curves(&img, &curve_points);
-        let img = color::apply_display_adjust(&img, &a);
-        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
-        compare_rgb_images("N1: curves→display→DotColor", &to_rgb8(&img), &ref_rgb8);
-    }
-
-    // N2: N1 + 反转 per-ch gamma
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.output_shadow = [0.0; 4];
-        a.output_highlight = [255.0; 4];
-        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
-        let img = if let Some(icc) = icc_data.as_deref() {
-            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
-        } else { img };
-        let img = color::apply_gradation_curves(&img, &curve_points);
-        let img = color::apply_display_adjust(&img, &a);
-        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
-        compare_rgb_images("N2: N1 + 反转gamma", &to_rgb8(&img), &ref_rgb8);
-    }
-
-    // N3: N2 + 禁用 color_corr
-    {
-        let mut a = build_manual_adjust(c7);
-        for i in 1..4 {
-            let g = c7.gray[i] as f32 / 128.0;
-            a.levels_gamma[i] = (1.0 / g.max(0.01)).clamp(0.01, 99.0);
-        }
-        a.apply_color_corr = false;
-        a.output_shadow = [0.0; 4];
-        a.output_highlight = [255.0; 4];
-        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
-        let img = if let Some(icc) = icc_data.as_deref() {
-            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
-        } else { img };
-        let img = color::apply_gradation_curves(&img, &curve_points);
-        let img = color::apply_display_adjust(&img, &a);
-        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
-        compare_rgb_images("N3: N2 + 禁用cc", &to_rgb8(&img), &ref_rgb8);
-    }
-
-    // N4: 原始gamma + curves→display→DotColor + 禁用cc
-    {
-        let mut a = build_manual_adjust(c7);
-        a.apply_color_corr = false;
-        a.output_shadow = [0.0; 4];
-        a.output_highlight = [255.0; 4];
-        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
-        let img = if let Some(icc) = icc_data.as_deref() {
-            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
-        } else { img };
-        let img = color::apply_gradation_curves(&img, &curve_points);
-        let img = color::apply_display_adjust(&img, &a);
-        let img = apply_dotcolor_last(&img, &real_oshadow, &real_ohigh);
-        compare_rgb_images("N4: 原始gamma + curves→disp→Dot, 无cc", &to_rgb8(&img), &ref_rgb8);
-    }
-
-    // N5: scanner→ICC→DotColor→curves (当前顺序但 DotColor 先于 curves)
-    {
-        let mut a = build_manual_adjust(c7);
-        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
-        let img = if let Some(icc) = icc_data.as_deref() {
-            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
-        } else { img };
-        // display_adjust (includes DotColor as step ①)
-        let img = color::apply_display_adjust(&img, &a);
-        // curves AFTER display_adjust (current order)
-        let img = color::apply_gradation_curves(&img, &curve_points);
-        compare_rgb_images("N5: display(+Dot)→curves (当前顺序)", &to_rgb8(&img), &ref_rgb8);
-    }
-
-    // N6: scanner→ICC→DotColor→curves→brightness/contrast/lightness
-    // DotColor before curves, display sliders after curves
-    {
-        let mut a = build_manual_adjust(c7);
-        let saved_bri = a.brightness;
-        let saved_con = a.contrast;
-        let saved_lit = a.lightness;
-        let saved_sat = a.saturation;
-        // Phase 1: DotColor only
-        a.brightness = 0.0;
-        a.contrast = 0.0;
-        a.lightness = 0.0;
-        a.saturation = 0.0;
-        a.apply_color_corr = false;
-        let img = color::apply_scanner_levels(&after_film_c7, &a, film_lut_c7.as_ref());
-        let img = if let Some(icc) = icc_data.as_deref() {
-            color::apply_icc_transform(&img, icc, color::TargetColorSpace::SRGB).unwrap_or(img)
-        } else { img };
-        let img = color::apply_display_adjust(&img, &a); // only DotColor
-        // Phase 2: curves
-        let img = color::apply_gradation_curves(&img, &curve_points);
-        // Phase 3: brightness/contrast/lightness/saturation
-        a.output_shadow = [0.0; 4];
-        a.output_highlight = [255.0; 4];
-        a.brightness = saved_bri;
-        a.contrast = saved_con;
-        a.lightness = saved_lit;
-        a.saturation = saved_sat;
-        let img = color::apply_display_adjust(&img, &a);
-        compare_rgb_images("N6: Dot→curves→sliders, 无cc", &to_rgb8(&img), &ref_rgb8);
-    }
-
-    // ─── Pipeline Step Trace for Setting #1 ───
-    println!("\n\n=== 管线逐步追踪 (Setting #1) ===");
-    {
-        let c1 = &edit_history.settings[1].correction;
-        let a1 = build_manual_adjust(c1);
-
-        // Pick 5 sample pixels at different brightness levels
-        let (w, h) = (raw_16.width(), raw_16.height());
-        let sample_points = [
-            (w/4, h/4), (w/2, h/4), (3*w/4, h/4), (w/2, h/2), (w/4, 3*h/4),
-        ];
-
-        // Step 1: Film processing (inversion)
-        let after_film = color::apply_film_processing(&raw_16, c1);
-        let af_rgb16 = after_film.to_rgb16();
-
-        // Step 2a: Scanner levels with hardcoded LUT
-        let scanner_hardcoded = color::apply_scanner_levels(&after_film, &a1, None);
-        let sc_h_rgb16 = scanner_hardcoded.to_rgb16();
-
-        // Step 2b: Scanner levels with extracted LUT
-        let fl1 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
-            let t8 = t.to_rgb8();
-            color::extract_film_curve(&t8, p, c1)
-        } else { None };
-        let scanner_extracted = color::apply_scanner_levels(&after_film, &a1, fl1.as_ref());
-        let sc_e_rgb16 = scanner_extracted.to_rgb16();
-
-        // Step 3: ICC
-        let icc_hardcoded = if let Some(ref icc) = icc_data {
-            color::apply_icc_transform(&scanner_hardcoded, icc, color::TargetColorSpace::SRGB).ok()
-        } else { None };
-        let no_icc_h = scanner_hardcoded.clone();
-
-        // Step 4: Display adjust (saturation only for S1)
-        let display_h_icc = if let Some(ref img) = icc_hardcoded {
-            color::apply_display_adjust(img, &a1)
-        } else {
-            color::apply_display_adjust(&no_icc_h, &a1)
-        };
-
-        let display_h_no_icc = color::apply_display_adjust(&no_icc_h, &a1);
-
-        let disp_icc_rgb16 = display_h_icc.to_rgb16();
-        let disp_no_icc_rgb16 = display_h_no_icc.to_rgb16();
-
-        let raw_rgb16 = raw_16.to_rgb16();
-        let ref_rgb16 = ref_img.to_rgb16();
-
-        println!("  levels_black={:?}", a1.levels_black);
-        println!("  levels_white={:?}", a1.levels_white);
-        println!("  levels_gamma={:?}", a1.levels_gamma);
-        println!("  sat={}", a1.saturation);
-        println!();
-        println!("  {:>8} │ {:>20} │ {:>20} │ {:>20} │ {:>20} │ {:>20} │ {:>20} │ {:>13}",
-            "pos", "raw_16", "inverted", "scanner(hLUT)", "scanner(eLUT)", "after_ICC", "display(+ICC)", "reference");
-        for &(px, py) in &sample_points {
-            let raw_p = raw_rgb16.get_pixel(px, py);
-            let inv_p = af_rgb16.get_pixel(px, py);
-            let sch_p = sc_h_rgb16.get_pixel(px, py);
-            let sce_p = sc_e_rgb16.get_pixel(px, py);
-            let icc_p = if let Some(ref img) = icc_hardcoded {
-                let i16 = img.to_rgb16();
-                *i16.get_pixel(px, py)
-            } else {
-                *sch_p
-            };
-            let disp_p = disp_icc_rgb16.get_pixel(px, py);
-            let ref_p = ref_rgb16.get_pixel(px, py);
-
-            println!("  ({:>4},{:>4}) │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>6},{:>6},{:>6} │ {:>4},{:>4},{:>4}",
-                px, py,
-                raw_p[0], raw_p[1], raw_p[2],
-                inv_p[0], inv_p[1], inv_p[2],
-                sch_p[0], sch_p[1], sch_p[2],
-                sce_p[0], sce_p[1], sce_p[2],
-                icc_p[0], icc_p[1], icc_p[2],
-                disp_p[0], disp_p[1], disp_p[2],
-                ref_p[0]>>8, ref_p[1]>>8, ref_p[2]>>8);
-        }
-
-        // === 反向推导正确的胶片曲线（新管线顺序: levels→FC→γ） ===
-        println!("\n--- 反向推导: 从参考TIF反推正确的胶片曲线 (levels→FC→γ空间) ---");
-        // 新顺序: inverted → levels_normalize → film_curve → gamma → display → reference
-        // 反向: reference → reverse_display → reverse_gamma → film_curve_output
-        // FC input = levels_normalize(inverted) = (inverted/65535 - bl) / range
-        let sat_factor = a1.saturation / 100.0;  // 0.15
-        let gamma_m = a1.levels_gamma[0];
-        let bl_c = [a1.levels_black[1] / 255.0, a1.levels_black[2] / 255.0, a1.levels_black[3] / 255.0];
-        let wh_c = [a1.levels_white[1] / 255.0, a1.levels_white[2] / 255.0, a1.levels_white[3] / 255.0];
-        let gc = [a1.levels_gamma[1], a1.levels_gamma[2], a1.levels_gamma[3]];
-
-        // 收集所有像素: levels_normalized_inverted → correct_film_output
-        const REVERSE_BINS: usize = 256;
-        let mut rev_sums = [[0.0f64; REVERSE_BINS]; 3];
-        let mut rev_counts = [[0u32; REVERSE_BINS]; 3];
-
-        let af_raw = af_rgb16.as_raw();
-        let ref_raw = ref_rgb16.as_raw();
-
-        for y in 0..h {
-            for x in 0..w {
-                let pi = (y * w + x) as usize * 3;
-                let mut rgb_ref = [
-                    ref_raw[pi] as f32 / 65535.0,
-                    ref_raw[pi + 1] as f32 / 65535.0,
-                    ref_raw[pi + 2] as f32 / 65535.0,
-                ];
-
-                // 反向 saturation
-                if sat_factor.abs() > 0.001 {
-                    let lum = 0.2126 * rgb_ref[0] + 0.7152 * rgb_ref[1] + 0.0722 * rgb_ref[2];
-                    for ch in 0..3 {
-                        rgb_ref[ch] = lum + (rgb_ref[ch] - lum) / (1.0 + sat_factor);
-                    }
-                }
-
-                // 反向 master gamma
-                for ch in 0..3 {
-                    rgb_ref[ch] = rgb_ref[ch].clamp(0.0, 1.0).powf(gamma_m);
-                }
-
-                // 反向 per-channel gamma
-                for ch in 0..3 {
-                    rgb_ref[ch] = rgb_ref[ch].clamp(0.0, 1.0).powf(gc[ch]);
-                }
-
-                // 不反向 levels — FC 操作在 levels 标准化之后的空间
-                // rgb_ref[ch] 现在就是 FC 输出
-
-                // FC 输入 = levels 标准化后的 inverted
-                for ch in 0..3 {
-                    let inv = af_raw[pi + ch] as f32 / 65535.0;
-                    let range = (wh_c[ch] - bl_c[ch]).max(0.001);
-                    let normalized = ((inv - bl_c[ch]) / range).clamp(0.0, 1.0);
-                    let bin = (normalized * (REVERSE_BINS - 1) as f32) as usize;
-                    let bin = bin.min(REVERSE_BINS - 1);
-                    rev_sums[ch][bin] += rgb_ref[ch] as f64;
-                    rev_counts[ch][bin] += 1;
-                }
-            }
-        }
-
-        // 打印对比: hardcoded LUT vs 正确曲线
-        let ch_names = ["R", "G", "B"];
-        let lut_tables: [&[u8; 256]; 3] = [
-            &color::FILM_CURVE_LUT_R,
-            &color::FILM_CURVE_LUT_G,
-            &color::FILM_CURVE_LUT_B,
-        ];
-
-        for ch in 0..3 {
-            println!("\n  {} 通道: bin → hardcoded_LUT / 正确曲线 / 差值", ch_names[ch]);
-            for i in (0..REVERSE_BINS).step_by(8) {
-                let lut_val = lut_tables[ch][i] as f32 / 255.0;
-                let correct = if rev_counts[ch][i] > 0 {
-                    (rev_sums[ch][i] / rev_counts[ch][i] as f64) as f32
-                } else {
-                    -1.0
-                };
-                if correct >= 0.0 || lut_val > 0.0 {
-                    println!("    [{:>3}] ({:.3}): hLUT={:.3} correct={:.3} diff={:+.3}  (n={})",
-                        i, i as f32 / 255.0, lut_val,
-                        if correct >= 0.0 { correct } else { f32::NAN },
-                        if correct >= 0.0 { correct - lut_val } else { f32::NAN },
-                        rev_counts[ch][i]);
-                }
-            }
-        }
-
-        // 输出完整的 256 项正确曲线（Rust 数组格式）
-        println!("\n--- 新管线空间中的正确胶片曲线 (256项) ---");
-        for ch in 0..3 {
-            // 先用线性插值填充空 bin
-            let mut correct_256 = [0.0f32; 256];
-            let mut valid_idx = Vec::new();
-            let mut valid_val = Vec::new();
-            for i in 0..256 {
-                if rev_counts[ch][i] > 0 {
-                    let avg = (rev_sums[ch][i] / rev_counts[ch][i] as f64) as f32;
-                    correct_256[i] = avg;
-                    valid_idx.push(i);
-                    valid_val.push(avg);
-                }
-            }
-            // 线性插值填充空 bin
-            if valid_idx.len() >= 2 {
-                for i in 0..256 {
-                    if rev_counts[ch][i] == 0 {
-                        let right = valid_idx.partition_point(|&v| v <= i);
-                        if right == 0 {
-                            correct_256[i] = valid_val[0];
-                        } else if right >= valid_idx.len() {
-                            correct_256[i] = *valid_val.last().unwrap();
-                        } else {
-                            let li = valid_idx[right - 1];
-                            let ri = valid_idx[right];
-                            let frac = (i - li) as f32 / (ri - li) as f32;
-                            correct_256[i] = valid_val[right - 1] * (1.0 - frac)
-                                + valid_val[right] * frac;
-                        }
-                    }
-                }
-            }
-            // 单调性强制
-            for i in 1..256 {
-                if correct_256[i] < correct_256[i - 1] {
-                    correct_256[i] = correct_256[i - 1];
-                }
-            }
-            // 输出 Rust 数组
-            print!("pub static FILM_CURVE_LUT_{}: [u8; 256] = [\n    ", ch_names[ch]);
-            for i in 0..256 {
-                let val = (correct_256[i] * 255.0).round().clamp(0.0, 255.0) as u8;
-                if i == 255 {
-                    println!("{}", val);
-                } else if (i + 1) % 16 == 0 {
-                    println!("{},", val);
-                    print!("    ");
-                } else {
-                    print!("{}, ", val);
-                }
-            }
-            println!("];");
-        }
-    }
-
-    // ─── 诊断 S: 分阶段分析 Setting#7 ───
-    println!("\n\n=== 分阶段诊断: Setting#7 各管线阶段对比 ===");
-    {
-        let a7 = build_manual_adjust(c7);
-
-        // Stage 1: scanner_levels only (levels + film_curve + gamma)
-        let stage_scanner = color::apply_scanner_levels(&after_film_c7, &a7, film_lut_c7.as_ref());
-
-        // Stage 2: + ICC
-        let stage_icc = if let Some(ref icc) = icc_data {
-            match color::apply_icc_transform(&stage_scanner, icc, color::TargetColorSpace::SRGB) {
-                Ok(t) => t, Err(_) => stage_scanner.clone()
-            }
-        } else { stage_scanner.clone() };
-
-        // BW desaturate would happen here for film_type==2, but test file is C-41
-
-        // Stage 3: + display_adjust
-        let stage_display = color::apply_display_adjust(&stage_icc, &a7);
-
-        // Stage 4: + curves (full pipeline)
-        let stage_final = if a7.apply_curves && curve_points.len() >= 7 {
-            color::apply_gradation_curves(&stage_display, &curve_points)
-        } else { stage_display.clone() };
-
-        // Compare each stage
-        compare_rgb_images("S1: Scanner levels only", &to_rgb8(&stage_scanner), &ref_rgb8);
-        compare_rgb_images("S2: + ICC", &to_rgb8(&stage_icc), &ref_rgb8);
-        compare_rgb_images("S3: + Display adjust", &to_rgb8(&stage_display), &ref_rgb8);
-        compare_rgb_images("S4: + Curves (full)", &to_rgb8(&stage_final), &ref_rgb8);
-
-        // S5: ICC + display adjust WITHOUT brightness/contrast/lightness
-        {
-            let mut a_no_bcl = a7.clone();
-            a_no_bcl.apply_contrast = false;
-            a_no_bcl.apply_brightness = false;
-            a_no_bcl.apply_shadow_depth = false;
-            let result = color::apply_display_adjust(&stage_icc, &a_no_bcl);
-            let result = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&result, &curve_points)
-            } else { result };
-            compare_rgb_images("S5: 无brightness/contrast/lightness + curves", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S6: ICC + display adjust WITHOUT color_corr
-        {
-            let mut a_no_cc = a7.clone();
-            a_no_cc.apply_color_corr = false;
-            let result = color::apply_display_adjust(&stage_icc, &a_no_cc);
-            let result = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&result, &curve_points)
-            } else { result };
-            compare_rgb_images("S6: 无color_corr + curves", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S7: ICC + display adjust WITHOUT saturation
-        {
-            let mut a_no_sat = a7.clone();
-            a_no_sat.apply_saturation = false;
-            a_no_sat.saturation = 0.0;
-            let result = color::apply_display_adjust(&stage_icc, &a_no_sat);
-            let result = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&result, &curve_points)
-            } else { result };
-            compare_rgb_images("S7: 无saturation + curves", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S8: ONLY output levels (DotColor) + curves — no other display adjustments
-        {
-            let mut a_levels_only = color::ManualAdjust::default();
-            a_levels_only.film_type = a7.film_type;
-            a_levels_only.output_shadow = a7.output_shadow;
-            a_levels_only.output_highlight = a7.output_highlight;
-            a_levels_only.apply_levels = true;
-            let result = color::apply_display_adjust(&stage_icc, &a_levels_only);
-            let result = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&result, &curve_points)
-            } else { result };
-            compare_rgb_images("S8: 仅output levels + curves", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S9: output_levels → curves → BCL (无 cc/sat)
-        {
-            let mut a_ol = color::ManualAdjust::default();
-            a_ol.film_type = a7.film_type;
-            a_ol.output_shadow = a7.output_shadow;
-            a_ol.output_highlight = a7.output_highlight;
-            a_ol.apply_levels = true;
-            let after_ol = color::apply_display_adjust(&stage_icc, &a_ol);
-            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&after_ol, &curve_points)
-            } else { after_ol };
-            // Then BCL only
-            let mut a_bcl = color::ManualAdjust::default();
-            a_bcl.film_type = a7.film_type;
-            a_bcl.contrast = a7.contrast;
-            a_bcl.brightness = a7.brightness;
-            a_bcl.lightness = a7.lightness;
-            a_bcl.apply_contrast = a7.apply_contrast;
-            a_bcl.apply_brightness = a7.apply_brightness;
-            a_bcl.apply_shadow_depth = a7.apply_shadow_depth;
-            let result = color::apply_display_adjust(&after_curves, &a_bcl);
-            compare_rgb_images("S9: OL→curves→BCL (无cc/sat)", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S10: output_levels → curves → BCL → cc → sat (全特征，曲线在中间)
-        {
-            let mut a_ol = color::ManualAdjust::default();
-            a_ol.film_type = a7.film_type;
-            a_ol.output_shadow = a7.output_shadow;
-            a_ol.output_highlight = a7.output_highlight;
-            a_ol.apply_levels = true;
-            let after_ol = color::apply_display_adjust(&stage_icc, &a_ol);
-            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&after_ol, &curve_points)
-            } else { after_ol };
-            // Then BCL + cc + sat
-            let mut a_rest = a7.clone();
-            a_rest.output_shadow = [0.0; 4];
-            a_rest.output_highlight = [255.0; 4];
-            // Keep BCL, cc, saturation
-            let result = color::apply_display_adjust(&after_curves, &a_rest);
-            compare_rgb_images("S10: OL→curves→BCL+cc+sat", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S11: curves first (before any display adjust)
-        {
-            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&stage_icc, &curve_points)
-            } else { stage_icc.clone() };
-            let result = color::apply_display_adjust(&after_curves, &a7);
-            compare_rgb_images("S11: curves→全display adjust", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S12: curves → display (no color_corr)
-        {
-            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&stage_icc, &curve_points)
-            } else { stage_icc.clone() };
-            let mut a_nocc = a7.clone();
-            a_nocc.color_corr = [0i64; 36];
-            let result = color::apply_display_adjust(&after_curves, &a_nocc);
-            compare_rgb_images("S12: curves→display(无cc)", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S13: curves → display (no cc, no sat)
-        {
-            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&stage_icc, &curve_points)
-            } else { stage_icc.clone() };
-            let mut a_min = a7.clone();
-            a_min.color_corr = [0i64; 36];
-            a_min.saturation = 0.0;
-            let result = color::apply_display_adjust(&after_curves, &a_min);
-            compare_rgb_images("S13: curves→display(无cc/sat)", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // S14: curves → OL only (DotColor remapping only)
-        {
-            let after_curves = if a7.apply_curves && curve_points.len() >= 7 {
-                color::apply_gradation_curves(&stage_icc, &curve_points)
-            } else { stage_icc.clone() };
-            let mut a_ol = color::ManualAdjust::default();
-            a_ol.film_type = a7.film_type;
-            a_ol.output_shadow = a7.output_shadow;
-            a_ol.output_highlight = a7.output_highlight;
-            a_ol.apply_levels = true;
-            let result = color::apply_display_adjust(&after_curves, &a_ol);
-            compare_rgb_images("S14: curves→OL only", &to_rgb8(&result), &ref_rgb8);
-        }
-
-        // ─── 逐像素分析: pre-display vs post-display vs reference ───
-        println!("\n--- 逐像素对比: post-ICC → display → curves → reference ---");
-        let icc_rgb16 = stage_icc.to_rgb16();
-        let disp_rgb16 = stage_display.to_rgb16();
-        let final_rgb16 = stage_final.to_rgb16();
-        let ref_rgb16 = ref_img.to_rgb16();
-        let sample_pts: Vec<(u32,u32)> = vec![
-            (500,500),(1000,1000),(1500,1500),(2000,2000),(2500,2500),
-            (800,300),(1200,800),(1800,1200),(300,2000),(2800,3500),
-            (1000,500),(2000,1000),(500,1500),(1500,3000),(2500,4000),
-        ];
-        println!("  {:>12} │ {:>18} │ {:>18} │ {:>18} │ {:>18}",
-            "pos", "post-ICC(16b)", "display(16b)", "final(16b)", "reference(16b)");
-        for &(px,py) in &sample_pts {
-            if px < icc_rgb16.width() && py < icc_rgb16.height() {
-                let ip = icc_rgb16.get_pixel(px,py);
-                let dp = disp_rgb16.get_pixel(px,py);
-                let fp = final_rgb16.get_pixel(px,py);
-                let rp = ref_rgb16.get_pixel(px,py);
-                println!("  ({:>4},{:>4}) │ {:>5},{:>5},{:>5} │ {:>5},{:>5},{:>5} │ {:>5},{:>5},{:>5} │ {:>5},{:>5},{:>5}",
-                    px,py,
-                    ip[0],ip[1],ip[2],
-                    dp[0],dp[1],dp[2],
-                    fp[0],fp[1],fp[2],
-                    rp[0],rp[1],rp[2]);
-            }
-        }
-
-        // ─── 反推 display transfer function ───
-        // 对于每个通道，收集 (post-ICC-value, reference-value) 对
-        // 在 display_adjust 中忽略 color_corr 和 saturation 的交叉通道效应
-        // 仅计算 per-channel LUT 部分
-        println!("\n--- 反推: 每通道 display transfer function ---");
-        println!("(post-ICC 8bit → reference 8bit, 忽略交叉通道效应)");
-        let (w, h) = (icc_rgb16.width().min(ref_rgb16.width()),
-                       icc_rgb16.height().min(ref_rgb16.height()));
-        // Collect per-channel mapping
-        let mut ch_map: [Vec<Vec<u16>>; 3] = [
-            vec![Vec::new(); 256],
-            vec![Vec::new(); 256],
-            vec![Vec::new(); 256],
-        ];
-        for y in 0..h {
-            for x in 0..w {
-                let ip = icc_rgb16.get_pixel(x, y);
-                let rp = ref_rgb16.get_pixel(x, y);
-                for ch in 0..3 {
-                    let in_8 = (ip[ch] >> 8) as usize;
-                    let out_8 = (rp[ch] >> 8) as u16;
-                    ch_map[ch][in_8].push(out_8);
-                }
-            }
-        }
-        let ch_names = ["R", "G", "B"];
-        println!("通道 │ post-ICC-8b → FlexColor-8b (median) │ 我们的LUT产出");
-        for ch in 0..3 {
-            print!("  {} │ ", ch_names[ch]);
-            let mut printed = 0;
-            for bin in (0..256).step_by(16) {
-                if !ch_map[ch][bin].is_empty() {
-                    let mut v = ch_map[ch][bin].clone();
-                    v.sort();
-                    let median = v[v.len()/2];
-                    // Compute what our LUT produces for this input
-                    let our_out = {
-                        let mut v = bin as f32 / 255.0;
-                        // output levels
-                        let out_lo = a7.output_shadow[ch+1] / 255.0;
-                        let out_hi = a7.output_highlight[ch+1] / 255.0;
-                        let out_range = (out_hi - out_lo).max(0.001);
-                        v = out_lo + v * out_range;
-                        // contrast
-                        if a7.contrast.abs() > 0.1 {
-                            let c = a7.contrast / 100.0;
-                            let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
-                            v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
-                        }
-                        // brightness
-                        if a7.brightness.abs() > 0.1 {
-                            let b = a7.brightness / 100.0;
-                            v = (v + b * 0.5).clamp(0.0, 1.0);
-                        }
-                        // lightness
-                        if a7.lightness.abs() > 0.1 {
-                            let l = a7.lightness / 100.0;
-                            let gamma = 1.0 / (1.0 + l).max(0.1);
-                            v = v.powf(gamma).clamp(0.0, 1.0);
-                        }
-                        (v * 255.0).round() as u16
-                    };
-                    if printed > 0 { print!(", "); }
-                    print!("{}→{}(ours:{})", bin, median, our_out);
-                    printed += 1;
-                }
-            }
-            println!();
-        }
-
-        // 打印 color_corr 矩阵
-        if a7.apply_color_corr {
-            let m = &a7.color_corr;
-            println!("\n  color_corr 矩阵 (RGB 3x3):");
-            println!("    R' = {:.2}*R + {:.2}*G + {:.2}*B (sum={:.2})",
-                (100+m[0]) as f32/100.0, m[1] as f32/100.0, m[2] as f32/100.0,
-                (100+m[0]+m[1]+m[2]) as f32/100.0);
-            println!("    G' = {:.2}*R + {:.2}*G + {:.2}*B (sum={:.2})",
-                m[6] as f32/100.0, (100+m[7]) as f32/100.0, m[8] as f32/100.0,
-                (m[6]+100+m[7]+m[8]) as f32/100.0);
-            println!("    B' = {:.2}*R + {:.2}*G + {:.2}*B (sum={:.2})",
-                m[12] as f32/100.0, m[13] as f32/100.0, (100+m[14]) as f32/100.0,
-                (m[12]+m[13]+100+m[14]) as f32/100.0);
-        }
-    }
-
-    // ─── Test H: 尝试不同的编辑历史索引 ───
-    println!("\n\n=== 测试不同编辑历史索引 ===");
-
-    // 先打印所有 settings 的关键参数
-    println!("\n--- 各 Setting 参数对比 ---");
-    for (si, setting) in edit_history.settings.iter().enumerate() {
-        let c = &setting.correction;
-        println!("  S{}: '{}' ft={} gamma={:.2} shadow={:?} highlight={:?} gray={:?} con={} bri={} lit={} sat={} ev={:.2}",
-            si, setting.name, c.film_type, c.gamma,
-            &c.shadow, &c.highlight, &c.gray,
-            c.contrast, c.brightness, c.lightness, c.saturation, c.ev);
-        if !c.dot_color.is_empty() {
-            let dc = &c.dot_color;
-            let has_dc = dc.iter().any(|&v| v != 0 && v != 255);
-            if has_dc {
-                println!("       dot=[s:{},{},{},{} h:{},{},{},{}]",
-                    dc[0], dc[1], dc[2], dc[3], dc[7], dc[8], dc[9], dc[10]);
-            }
-        }
-    }
-    println!();
-
-    // 缩略图由当前设置渲染 — 比较不同胶片曲线提取策略
-    let current_corr = &edit_history.settings[idx].correction;
-    let film_lut_current = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
-        let t8 = t.to_rgb8();
-        if current_corr.film_type == 1 || current_corr.film_type == 2 {
-            color::extract_film_curve(&t8, p, current_corr)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    // 用 S1 提取（之前的行为）
-    let s1_corr = &edit_history.settings[1].correction;
-    let film_lut_s1 = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
-        let t8 = t.to_rgb8();
-        if s1_corr.film_type == 1 || s1_corr.film_type == 2 {
-            color::extract_film_curve(&t8, p, s1_corr)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    println!("  胶片曲线: current=#{} extract={}, S1 extract={}",
-        idx, if film_lut_current.is_some() { "OK" } else { "None" },
-        if film_lut_s1.is_some() { "OK" } else { "None" });
-
-    // Test H: 不同策略渲染 Setting #1（与参考对照）
-    let s1_setting = &edit_history.settings[1];
-    let s1_adj = build_manual_adjust(&s1_setting.correction);
-    let s1_curves: Vec<Vec<(i64, i64, i64)>> = (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect();
-    let after_s1 = color::apply_film_processing(&raw_16, &s1_setting.correction);
-
-    // H1a: Setting #1, 真正的 identity（禁用胶片曲线）
-    {
-        let mut a_no_fc = s1_adj.clone();
-        a_no_fc.apply_film_curve = false;
-        let result = color::apply_color_pipeline(
-            after_s1.clone(), &a_no_fc, &s1_curves, None,
-            icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("H1a: S1 identity（禁用胶片曲线）", &our_8, &ref_rgb8);
-    }
-
-    // H1b: Setting #1, hardcoded LUT (默认 fallback)
-    {
-        let result = color::apply_color_pipeline(
-            after_s1.clone(), &s1_adj, &s1_curves, None,
-            icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("H1b: S1 + 硬编码LUT", &our_8, &ref_rgb8);
-    }
-
-    // H1c: Setting #1, extracted with S1's correction
-    {
-        let result = color::apply_color_pipeline(
-            after_s1.clone(), &s1_adj, &s1_curves, film_lut_s1.as_ref(),
-            icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("H1c: S1 + S1提取曲线", &our_8, &ref_rgb8);
-    }
-
-    // H1d: Setting #1, extracted with current (S7) correction
-    {
-        let result = color::apply_color_pipeline(
-            after_s1.clone(), &s1_adj, &s1_curves, film_lut_current.as_ref(),
-            icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("H1d: S1 + 当前设置提取曲线", &our_8, &ref_rgb8);
-    }
-
-    // H1e: Setting #1, no ICC
-    {
-        let result = color::apply_color_pipeline(
-            after_s1.clone(), &s1_adj, &s1_curves, film_lut_s1.as_ref(),
-            None, color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("H1e: S1 + S1曲线 + 无ICC", &our_8, &ref_rgb8);
-    }
-
-    // H1f: 管线顺序测试 — 先色阶后胶片曲线 (levels → film_curve → gamma)
-    {
-        use rayon::prelude::*;
-        let s1c = &s1_setting.correction;
-        let gamma_m = ((s1c.gamma as f32) - 1.0).clamp(0.01, 3.0);
-        let af_rgb16 = after_s1.to_rgb16();
-        let (w, h) = (af_rgb16.width(), af_rgb16.height());
-
-        // Build per-channel LUT: levels→film_curve→gamma
-        let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
-        for ch in 0..3usize {
-            let bl_c = s1c.shadow[ch + 1] as f32 * 4.0 / 65535.0;
-            let wh_c = s1c.highlight[ch + 1] as f32 * 4.0 / 65535.0;
-            let range_c = (wh_c - bl_c).max(0.001);
-            let gamma_c = (s1c.gray[ch + 1] as f32 / 128.0).max(0.01);
-
-            let lut_table: &[u8; 256] = match ch {
-                0 => &color::FILM_CURVE_LUT_R,
-                1 => &color::FILM_CURVE_LUT_G,
-                _ => &color::FILM_CURVE_LUT_B,
-            };
-
-            let mut lut = vec![0u16; 65536];
-            for i in 0..65536u32 {
-                let mut v = i as f32 / 65535.0;
-                // ① 先色阶（标准化到 [0,1]）
-                v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
-                // ② 然后胶片曲线（在标准化空间中）
-                v = color::lut_interp_16(v, lut_table) / 65535.0;
-                // ③ gamma
-                v = v.powf(1.0 / gamma_c);
-                v = v.powf(1.0 / gamma_m);
-                v = v.clamp(0.0, 1.0);
-                lut[i as usize] = (v * 65535.0) as u16;
-            }
-            luts.push(lut);
-        }
-
-        let row_len = w as usize * 3;
-        let mut out_buf = vec![0u16; row_len * h as usize];
-        let src = af_rgb16.as_raw();
-        out_buf.par_chunks_mut(row_len).enumerate().for_each(|(y, row)| {
-            for x in 0..w as usize {
-                let si_pix = (y * w as usize + x) * 3;
-                for ch in 0..3 {
-                    let val = src[si_pix + ch] as usize;
-                    row[x * 3 + ch] = luts[ch][val];
-                }
-            }
-        });
-        let scanner_img: image::ImageBuffer<image::Rgb<u16>, _> =
-            image::ImageBuffer::from_raw(w, h, out_buf).unwrap();
-        let scanner_dyn = image::DynamicImage::ImageRgb16(scanner_img);
-
-        // Apply saturation + ICC (no display adjustments for S1)
-        let mut a_no_fc = s1_adj.clone();
-        a_no_fc.apply_film_curve = false;
-        a_no_fc.apply_levels = false; // levels already applied manually
-        let result = color::apply_color_pipeline(
-            scanner_dyn, &a_no_fc, &s1_curves, None,
-            icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("H1f: S1 先色阶后胶片曲线 (levels→FC→γ)", &our_8, &ref_rgb8);
-    }
-
-    // H1g: 先色阶后胶片曲线，但不用 ICC
-    {
-        use rayon::prelude::*;
-        let s1c = &s1_setting.correction;
-        let gamma_m = ((s1c.gamma as f32) - 1.0).clamp(0.01, 3.0);
-        let af_rgb16 = after_s1.to_rgb16();
-        let (w, h) = (af_rgb16.width(), af_rgb16.height());
-
-        let mut luts: Vec<Vec<u16>> = Vec::with_capacity(3);
-        for ch in 0..3usize {
-            let bl_c = s1c.shadow[ch + 1] as f32 * 4.0 / 65535.0;
-            let wh_c = s1c.highlight[ch + 1] as f32 * 4.0 / 65535.0;
-            let range_c = (wh_c - bl_c).max(0.001);
-            let gamma_c = (s1c.gray[ch + 1] as f32 / 128.0).max(0.01);
-
-            let lut_table: &[u8; 256] = match ch {
-                0 => &color::FILM_CURVE_LUT_R,
-                1 => &color::FILM_CURVE_LUT_G,
-                _ => &color::FILM_CURVE_LUT_B,
-            };
-
-            let mut lut = vec![0u16; 65536];
-            for i in 0..65536u32 {
-                let mut v = i as f32 / 65535.0;
-                v = ((v - bl_c) / range_c).clamp(0.0, 1.0);
-                v = color::lut_interp_16(v, lut_table) / 65535.0;
-                v = v.powf(1.0 / gamma_c);
-                v = v.powf(1.0 / gamma_m);
-                v = v.clamp(0.0, 1.0);
-                lut[i as usize] = (v * 65535.0) as u16;
-            }
-            luts.push(lut);
-        }
-
-        let row_len = w as usize * 3;
-        let mut out_buf = vec![0u16; row_len * h as usize];
-        let src = af_rgb16.as_raw();
-        out_buf.par_chunks_mut(row_len).enumerate().for_each(|(y, row)| {
-            for x in 0..w as usize {
-                let si_pix = (y * w as usize + x) * 3;
-                for ch in 0..3 {
-                    let val = src[si_pix + ch] as usize;
-                    row[x * 3 + ch] = luts[ch][val];
-                }
-            }
-        });
-        let scanner_img: image::ImageBuffer<image::Rgb<u16>, _> =
-            image::ImageBuffer::from_raw(w, h, out_buf).unwrap();
-        let scanner_dyn = image::DynamicImage::ImageRgb16(scanner_img);
-
-        let mut a_no_fc = s1_adj.clone();
-        a_no_fc.apply_film_curve = false;
-        a_no_fc.apply_levels = false;
-        let result = color::apply_color_pipeline(
-            scanner_dyn, &a_no_fc, &s1_curves, None,
-            None, color::TargetColorSpace::SRGB,  // 无 ICC
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images("H1g: S1 先色阶后FC (无ICC)", &our_8, &ref_rgb8);
-    }
-
-    // Full H tests with S1-extracted curve (original behavior)
-    for (si, setting) in edit_history.settings.iter().enumerate() {
-        let c = &setting.correction;
-        let a = build_manual_adjust(c);
-        let cp: Vec<Vec<(i64, i64, i64)>> = if a.apply_curves && !c.gradations.is_empty() {
-            c.gradations.clone()
-        } else {
-            (0..7).map(|_| vec![(0, 0, 0), (255, 255, 0)]).collect()
-        };
-
-        // 用每个 setting 自己的 correction 提取（原始行为）
-        let fl = if let (Some(ref t), Some(ref p)) = (&thumb_img, &preview_16) {
-            let t8 = t.to_rgb8();
-            if c.film_type == 1 || c.film_type == 2 {
-                color::extract_film_curve(&t8, p, c)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let after = color::apply_film_processing(&raw_16, c);
-        let result = color::apply_color_pipeline(
-            after, &a, &cp, fl.as_ref(),
-            icc_data.as_deref(), color::TargetColorSpace::SRGB,
-        );
-        let our_8 = to_rgb8(&result);
-        compare_rgb_images(&format!("H{}: Setting #{} '{}'", si, si, setting.name), &our_8, &ref_rgb8);
-    }
-
-    println!("\n完成。");
 }
