@@ -4562,3 +4562,72 @@ PERM = [2, 1, 0, 5, 4, 3]
 | 0x70733750 | double 100.0（delta 分母）|
 | this+0x976..0x998 | M3x6 (18 × int16)，行主 |
 
+
+---
+
+## 53. T26 · e2e_all_config 矩阵转置实验（2026-04-20）
+
+### 53.1 假设
+
+e2e_all_config 在 T25 之后 T6 MAE 3798→7203（+3405 回归）。怀疑 6×6 源矩阵的
+row/col 主序与 compile 假设相反。
+
+### 53.2 实验
+
+1. **from_image_correction 转置**：`matrix[i%6][i/6] = color_corr[i]`
+   - e2e_all_config T6: 7203 → **6352**（改善 -851）
+   - 其他 case 基本不变（因大多 ColorCorr=0 或对称）
+
+2. **compile 转置**：访问 `m[j][k]` 替代 `m[k][j]`
+   - 数学等价于 (1)，结果相同 6352
+
+### 53.3 结论
+
+- **方向正确但不完整**：转置改善 851，但仍差 disabled baseline 2554。
+- **留给深入调研**：agent 的 compile 公式可能还有一层索引误（如 cols 顺序与 o 映射反向）。
+- **处置**：revert 转置保持 T22-follow 原公式；e2e_all_config 回归记为已知，等 round-trip
+  或更深 Ghidra 调研。
+- 相比 T25 之前（disabled）baseline：`+4 PASS - 1 大幅 FAIL`，净正。
+
+### 53.4 下一步研究方向
+
+选择 1+2 任一：
+1. 更深 Ghidra：逐字节 trace `FUN_702d57b0` 的 `cols[o]` 索引 ↔ output row 映射。
+2. 动态实验：手工构造极简 XML（单 cell M6x6[i][j]=100），生成 ref，比对 ours，
+   定位 cell-by-cell 的正确行为。
+
+---
+
+## 54. T29 · Gray 字段深度调研（2026-04-20）
+
+### 54.1 结论：Gray 不参与 LUT/曲线计算
+
+Agent 用 pyghidra `find_offset_refs --offset 0x536` 扫描所有读取 Gray（ushort[4]@+0x536）的指令。
+**26 条 reference 全部位于 UI/XML-save 代码路径**，没有一条进入 pipeline LUT 构造或 apply。
+
+### 54.2 关键函数列表
+
+| 函数 | 用途 | 与 pipeline 关系 |
+|------|------|------------------|
+| FUN_701674f0, FUN_701698f0, FUN_7016cac0 | XML → struct writer | 写入 |
+| FUN_70167600 | Levels dialog refresh | UI echo |
+| FUN_701676f0 | Levels dialog accessor (0=Shadow, 1=Gray, 2=Highlight) | UI |
+| FUN_70167b50 | Levels 滑块 hit-test | UI |
+| FUN_70248370, FUN_705d0670 | XML serialize | 存档 |
+| **FUN_70268080** (CHighShadowCurve 真正的 per-ch init) | **不读 Gray！** 只读 Shadow/Highlight + shadow_out/highlight_out + +0x510/+0x514 | 反证：Gray 不参与 pipeline |
+
+### 54.3 影响
+
+- **老 pipeline** 用 `levels_gamma[i] = gray[i] / 128.0` + `pow(v, 1/gamma)` per-channel —
+  这套公式**在 FlexColor.dll 里没有任何依据**，是纯猜测的仿真。
+- **flex pipeline** 目前正确忽略 Gray — 不需补加。
+- 若 e2e_default / dark 系列 MAE 需进一步降低，**不要**加 Gray。应查：
+  - CHighShadowCurve 的 Shadow/Highlight + shadow_out/highlight_out 是否读 正确的偏移
+  - `+0x52c`（master gamma float）和 `+0x510/+0x514` 是否有未实现的 enhanced 参数
+
+### 54.4 模糊点
+
+- `+0x52c` (master gamma float) adjacent to Gray — 有 pipeline-adjacent 读取（FUN_70167600）
+  但只是 UI 回显单一 master，未确认是否 per-channel pipeline 使用。
+- 部分 `0x536` 命中来自无关 struct（`[EBP+0x5360]` 等）— 已 register/base 过滤排除。
+
