@@ -1259,13 +1259,23 @@ impl FffViewerApp {
 
         let adjusted = if let Some(corr) = active_correction {
             // flex pipeline 路径（T6 等效）
-            // 注：flex::Pipeline 输出已在 sRGB 等效空间（T32 实测确认），
-            // 不要再套 in_icc → target 变换 —— 否则会把已对齐的像素当作 scanner RGB 重新映射。
             let step1 = color::apply_flex_pipeline_no_icc(
                 image::DynamicImage::ImageRgb16(base.clone()),
                 &corr,
             );
-            color::apply_usm(&step1, &self.manual_adjust)
+            let step2 = if let Some(icc) = self.active_icc_data.as_deref() {
+                let icc_bytes = icc.to_vec();
+                color::apply_icc_transform_ex(
+                    &step1,
+                    &icc_bytes,
+                    self.target_color_space,
+                    Default::default(),
+                )
+                .unwrap_or(step1)
+            } else {
+                step1
+            };
+            color::apply_usm(&step2, &self.manual_adjust)
         } else {
             // 旧路径（无 correction 时回退）
             color::apply_color_pipeline(
