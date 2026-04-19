@@ -4483,3 +4483,82 @@ cols[2] = {0, 1, 5}   // B output
 - 启用错误公式的风险：e2e_all_config 大幅回归，但多数其他 cases 小幅改善。净值为负（回归大于改善）。
 - 正确启用的上限：**无法确定** — 需要 round-trip 才能估算。
 
+
+---
+
+## 52. T25 · 定位真实 ColorCorrection per-pixel apply（2026-04-20 完成）
+
+### 52.1 Agent 结果（`FUN_702d4b50` R-row 字节级 decompile）
+
+Agent 跑了 pyghidra `disasm` + `decompile`，在 R 输出行（0x702d4cba..0x702d4d6e）逐条 trace
+FPU 栈，得出**正确的 chroma 顺序 + dot-product permutation**。
+
+### 52.2 DLL chroma 栈槽顺序（c0..c5）
+
+| 索引 | 公式 | 含义 |
+|------|------|------|
+| c0 | max(0, B − max(R,G)) | pure blue excess |
+| c1 | max(0, G − max(R,B)) | pure green excess |
+| c2 | max(0, R − max(G,B)) | **pure red excess** |
+| c3 | max(0, min(R,G) − B) | **yellow** |
+| c4 | max(0, min(R,B) − G) | **magenta** |
+| c5 | max(0, min(G,B) − R) | **cyan** |
+
+差异于我们原实现：c2..c5 的角色被错换。
+
+### 52.3 Dot-product permutation（R row 验证，G/B 推定同）
+
+```
+delta_R = Σ_{k=0..5} m3x6[R][k] · c[PERM[k]] / 100.0
+PERM = [2, 1, 0, 5, 4, 3]
+```
+
+即 M3x6 的 6 列对应 chroma：`[R_exc, G_exc, B_exc, cyan, magenta, yellow]`。
+与 T22 compile pattern 的语义一致：
+- cols[0]={1,2,3} (R out) = G_exc + B_exc + cyan — R 受"非 R"与其互补色调制
+- cols[1]={0,2,4} (G out) = R_exc + B_exc + magenta
+- cols[2]={0,1,5} (B out) = R_exc + G_exc + yellow
+
+### 52.4 Rust 修复（已提交）
+
+`src/color/flex/color_correction.rs::apply_rgb_chunk`：
+- 重排 chroma 数组到 DLL 顺序
+- dot-product 应用 PERM `[2,1,0,5,4,3]`
+- 保留 `-delta`、`/100.0`、14-bit clamp
+
+### 52.5 实测影响
+
+| 指标 | T22 禁用（baseline） | T22 错 perm | T25 修复 |
+|------|---------------------|-------------|----------|
+| STRICT | 6 | 6 | **7** |
+| PASS | 0 | 0 | **4** |
+| WARN | 5 | 7 | 4 |
+| FAIL | 134 | 132 | **130** |
+| T6 e2e_all_config | 3798 | 8780 | 7203 (仍回归) |
+| T6 emb_neg_rgb_standard | 931 | 1386 | **276 PASS** |
+| T6 emb_neg_rgb_saturated | 1513 | 1889 | **304 PASS** |
+| T6 ext_neg_rgb_standard  | 931 | 1386 | **276 PASS** |
+| T6 ext_neg_rgb_saturated | 1513 | 1889 | **304 PASS** |
+
+**净值正**：neg RGB 4 个 case 进入 PASS tier，1 个 ext_rgb_saturated 升 STRICT。
+
+### 52.6 未验证 / 剩余研究
+
+1. **G/B row permutation**：agent 只逐行验证 R-row FPU trace；G 从 0x702d4d84 开始带 `FMUL ST4`（依赖 R block 留在 FPU 栈的数据），**可能 permutation 不同**。
+2. **FSUBRP 符号**：G block 0x702d4eae 是 `FSUBRP` 而非 `FSUBP`，可能 sign convention 翻转。
+3. **e2e_all_config 残余 3405 回归**：可能源自 (1) 或 (2)，或 e2e_all_config 本身还有未模拟的步骤（ApplyCC XML 值极端）。
+
+下一步：继续 agent 跑 `FUN_702d4b50` 的 G/B block 完整 FPU trace（0x702d4d84 + 0x702d4e27）。
+
+### 52.7 关键地址
+
+| 地址 | 角色 |
+|------|------|
+| **0x702d4b50** | ColorCorrection per-pixel apply loop |
+| 0x702d4cba..0x702d4d6e | R-row dot-product（已验证 PERM=[2,1,0,5,4,3]）|
+| 0x702d4d84+ | G-row dot-product（未 byte-trace）|
+| 0x702d4e27+ | B-row dot-product（未 byte-trace）|
+| 0x702d4ebd | 最终 clamp + pack to 14-bit |
+| 0x70733750 | double 100.0（delta 分母）|
+| this+0x976..0x998 | M3x6 (18 × int16)，行主 |
+

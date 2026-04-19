@@ -74,18 +74,9 @@ impl ColorCorrParams {
             .any(|&c| c != -self.saturation)
     }
 
-    /// 是否启用 apply
-    ///
-    /// **暂时禁用** — T22-follow 给出的 compile pattern 未消除 e2e_all_config 回归
-    /// (MAE 3798→8780)，说明 compile 或 per-pixel apply 公式仍有误。
-    /// 需要 round-trip 测试（生成 ref TIFF with known ApplyCC params vs ours）
-    /// 才能 lock down 正确公式。
-    ///
-    /// 目前 fast-path 行为：apply_cc gate + identity check，但 should_apply 强制 false。
+    /// 是否启用 apply（§52 chroma permutation 修复后启用）
     pub fn should_apply(&self) -> bool {
-        // MVP: 禁用，避免 e2e_all_config 回归；compile pattern 保留供日后验证
-        let _ = self.apply_cc && self.is_customized();
-        false
+        self.apply_cc && self.is_customized()
     }
 }
 
@@ -152,7 +143,11 @@ impl ColorCorrection {
         }
     }
 
-    /// 单 RGB 像素 apply（§49.1 `FUN_702d4b50` 核心循环）
+    /// 单 RGB 像素 apply（§52 `FUN_702d4b50` 核心循环，agent 验证）
+    ///
+    /// DLL 把 6 个 chroma 按 `[B_exc, G_exc, R_exc, yellow, magenta, cyan]` 存栈，
+    /// 但 M3x6 列索引 k=0..5 按 `[R_exc, G_exc, B_exc, cyan, magenta, yellow]` 访问。
+    /// 等价于对 dot-product 应用 permutation `[2,1,0,5,4,3]`。
     pub fn apply_rgb_chunk(&self, chunk: &mut [u16]) {
         debug_assert_eq!(chunk.len(), 3);
         if !self.enabled {
@@ -163,21 +158,23 @@ impl ColorCorrection {
         let g = chunk[1] as i32;
         let b = chunk[2] as i32;
 
-        // 6 个 opponent-excess 色彩项
+        // DLL chroma 顺序（c0..c5），与 FUN_702d4b50 栈槽一致
         let c = [
-            (b - r.max(g)).max(0) as f32,         // pure blue excess
-            (g - r.max(b)).max(0) as f32,         // pure green excess
-            (r.min(g) - b).max(0) as f32,         // yellow content
-            (r.min(b) - g).max(0) as f32,         // magenta content
-            (g.min(b) - r).max(0) as f32,         // cyan content
-            (r - g.max(b)).max(0) as f32,         // pure red excess
+            (b - r.max(g)).max(0) as f32,         // c0: pure blue excess
+            (g - r.max(b)).max(0) as f32,         // c1: pure green excess
+            (r - g.max(b)).max(0) as f32,         // c2: pure red excess
+            (r.min(g) - b).max(0) as f32,         // c3: yellow content
+            (r.min(b) - g).max(0) as f32,         // c4: magenta content
+            (g.min(b) - r).max(0) as f32,         // c5: cyan content
         ];
 
-        // 每通道: delta = dot(M3x6[ch], c) / 100; out = in - delta
+        // DLL M3x6 列 → chroma permutation (agent 验证 R-row；G/B 推定同)
+        const PERM: [usize; 6] = [2, 1, 0, 5, 4, 3];
+
         for (ch, val) in chunk.iter_mut().enumerate() {
             let mut sum = 0.0f32;
             for k in 0..6 {
-                sum += (self.m3x6[ch][k] as f32) * c[k];
+                sum += (self.m3x6[ch][k] as f32) * c[PERM[k]];
             }
             let delta = (sum / 100.0).round() as i32;
             *val = ((*val as i32) - delta).clamp(0, MAX_14BIT as i32) as u16;
@@ -246,21 +243,19 @@ mod tests {
     }
 
     #[test]
-    fn saturation_only_customized() {
-        // Sat != 0 且 matrix 全 0 → any(0 != -Sat) = true → customized
+    fn saturation_only_triggers_apply() {
         let mut p = zero_params();
         p.saturation = 20;
         assert!(p.is_customized());
-        // should_apply 当前强制 false（MVP），参见 should_apply 注释
-        assert!(!p.should_apply());
+        assert!(p.should_apply());
     }
 
     #[test]
-    fn matrix_nonzero_customized() {
+    fn matrix_nonzero_triggers_apply() {
         let mut p = zero_params();
         p.matrix[2][3] = 50;
         assert!(p.is_customized());
-        assert!(!p.should_apply());
+        assert!(p.should_apply());
     }
 
     #[test]
@@ -342,9 +337,8 @@ mod tests {
             }
         }
         let cc = ColorCorrection::compile(&p);
-        // MVP: should_apply forced false; passthrough guaranteed
-        assert!(!cc.enabled);
-
+        assert!(cc.enabled);
+        // 灰度像素 → 所有 6 chroma 项为 0 → delta=0 → 输出不变
         let mut px = [5000u16, 5000, 5000];
         cc.apply_rgb_chunk(&mut px);
         assert_eq!(px, [5000, 5000, 5000]);
