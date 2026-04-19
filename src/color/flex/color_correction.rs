@@ -76,10 +76,15 @@ impl ColorCorrParams {
 
     /// 是否启用 apply
     ///
-    /// **当前完全禁用**（MVP 保守）：T22 的 3×6 compile pattern 是推测，未经
-    /// round-trip 验证。实测 e2e_all_config（有真实 matrix 数据）启用后 MAE 3798→8755 回归。
-    /// 保留代码 + 单测，待 round-trip 验证 compile pattern 后再启用。
+    /// **暂时禁用** — T22-follow 给出的 compile pattern 未消除 e2e_all_config 回归
+    /// (MAE 3798→8780)，说明 compile 或 per-pixel apply 公式仍有误。
+    /// 需要 round-trip 测试（生成 ref TIFF with known ApplyCC params vs ours）
+    /// 才能 lock down 正确公式。
+    ///
+    /// 目前 fast-path 行为：apply_cc gate + identity check，但 should_apply 强制 false。
     pub fn should_apply(&self) -> bool {
+        // MVP: 禁用，避免 e2e_all_config 回归；compile pattern 保留供日后验证
+        let _ = self.apply_cc && self.is_customized();
         false
     }
 }
@@ -93,34 +98,41 @@ pub struct ColorCorrection {
 }
 
 impl ColorCorrection {
-    /// 从 params 预编译（镜像 FUN_702d57b0）
+    /// 从 params 预编译（镜像 FUN_702d57b0，T22-follow 完整反编译验证）
     ///
-    /// 编译规则（§49.1）：每个 M3x6[out][k] = 3 个源 6×6 cells 求和，
-    /// Saturation 添加到特定 cells。具体列选择模式**未完全证实**，
-    /// 当前实现基于 T22 agent 的推测（需 round-trip test 验证）。
+    /// 公式（每 cell 独立，全部 18 个从 Ghidra 1:1 decode）：
+    ///
+    /// ```text
+    /// M3x6[o][k] = Σ_{j ∈ cols[o]} M6x6[k][j] + (Sat if k ∈ cols[o] else 0)
+    ///
+    /// cols[0] = {1, 2, 3}   // R output: 副列{1,2} + primary{3}
+    /// cols[1] = {0, 2, 4}   // G output: 副列{0,2} + primary{4}
+    /// cols[2] = {0, 1, 5}   // B output: 副列{0,1} + primary{5}
+    /// ```
+    ///
+    /// 对称模式：`cols[o] = ({0,1,2} \ {o}) ∪ {o + 3}`
     pub fn compile(params: &ColorCorrParams) -> Self {
         let enabled = params.should_apply();
 
-        // 推测的编译模式（§49.1 snippet）：
-        //   M3x6[out][k] = M6x6[k][3] + M6x6[k][1] + M6x6[k][2] + (Sat_if_k_in_{1,2,3})
-        //
-        // 注：每一行 out (0, 1, 2 = R/G/B output) 选择的 6×6 列组合可能不同。
-        // T22 agent 只提供了 out=0 行的 snippet。其他行先假设对称（pattern-symmetric）。
-        //
-        // **这是 MVP 占位实现**，精度需 round-trip test 调整。
+        // T22-follow 反编译得出的精确列选择
+        const COLS: [[usize; 3]; 3] = [
+            [1, 2, 3], // out=0 (R)
+            [0, 2, 4], // out=1 (G)
+            [0, 1, 5], // out=2 (B)
+        ];
+
         let mut m3x6 = [[0i16; 6]; 3];
         let sat = params.saturation;
         let m = &params.matrix;
 
-        for k in 0..6 {
-            // 3 个源 cells 求和 (列 3, 1, 2 of 6×6[k] — 推测)
-            let sum = m[k][3] as i32 + m[k][1] as i32 + m[k][2] as i32;
-            // Sat 添加模式（T22 snippet 示例：k in {1,2,3} 时 +Sat）
-            let sat_add = if k >= 1 && k <= 3 { sat as i32 } else { 0 };
-
-            for out in 0..3 {
-                // 同样 pattern 适用于 3 个输出行（推测）
-                m3x6[out][k] = (sum + sat_add).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        for o in 0..3 {
+            for k in 0..6 {
+                // 3 列求和
+                let sum: i32 = COLS[o].iter().map(|&j| m[k][j] as i32).sum();
+                // Sat 加到 k ∈ cols[o] 的 cell
+                let sat_add = if COLS[o].contains(&k) { sat as i32 } else { 0 };
+                // i16 wrap (与原 x86 short 加法一致)
+                m3x6[o][k] = (sum + sat_add) as i16;
             }
         }
 
@@ -234,19 +246,69 @@ mod tests {
     }
 
     #[test]
-    fn saturation_only_does_not_trigger_mvp() {
-        // MVP 保守策略：Sat != 0 但 matrix 全 0 时不启用
+    fn saturation_only_customized() {
+        // Sat != 0 且 matrix 全 0 → any(0 != -Sat) = true → customized
         let mut p = zero_params();
         p.saturation = 20;
+        assert!(p.is_customized());
+        // should_apply 当前强制 false（MVP），参见 should_apply 注释
         assert!(!p.should_apply());
     }
 
     #[test]
-    fn matrix_nonzero_does_not_trigger_mvp() {
-        // MVP 完全禁用 apply（待 round-trip 验证 compile pattern）
+    fn matrix_nonzero_customized() {
         let mut p = zero_params();
         p.matrix[2][3] = 50;
+        assert!(p.is_customized());
         assert!(!p.should_apply());
+    }
+
+    #[test]
+    fn compile_pattern_out0_r() {
+        // T22-follow: cols[0] = {1, 2, 3}
+        // Put distinct values at m[0][1], m[0][2], m[0][3]; Sat=0
+        let mut p = zero_params();
+        p.saturation = 0;
+        p.matrix[0][1] = 10;
+        p.matrix[0][2] = 20;
+        p.matrix[0][3] = 30;
+        let cc = ColorCorrection::compile(&p);
+        // M3x6[0][0] = M6x6[0][1] + M6x6[0][2] + M6x6[0][3] = 10+20+30 = 60
+        assert_eq!(cc.m3x6[0][0], 60);
+        // M3x6[1][0] = cols[1]={0,2,4}: 0 + 20 + 0 = 20
+        assert_eq!(cc.m3x6[1][0], 20);
+        // M3x6[2][0] = cols[2]={0,1,5}: 0 + 10 + 0 = 10
+        assert_eq!(cc.m3x6[2][0], 10);
+    }
+
+    #[test]
+    fn compile_saturation_pattern() {
+        // Sat 加到 k ∈ cols[o] 的 cell
+        let mut p = zero_params();
+        p.saturation = 100;
+        // matrix 全 0，所以 sum=0, cell = sat_add
+        let cc = ColorCorrection::compile(&p);
+        // out=0, cols={1,2,3}: Sat 加到 k∈{1,2,3}
+        assert_eq!(cc.m3x6[0][0], 0);
+        assert_eq!(cc.m3x6[0][1], 100);
+        assert_eq!(cc.m3x6[0][2], 100);
+        assert_eq!(cc.m3x6[0][3], 100);
+        assert_eq!(cc.m3x6[0][4], 0);
+        assert_eq!(cc.m3x6[0][5], 0);
+        // out=1, cols={0,2,4}
+        assert_eq!(cc.m3x6[1][0], 100);
+        assert_eq!(cc.m3x6[1][1], 0);
+        assert_eq!(cc.m3x6[1][2], 100);
+        assert_eq!(cc.m3x6[1][3], 0);
+        assert_eq!(cc.m3x6[1][4], 100);
+        assert_eq!(cc.m3x6[1][5], 0);
+        // out=2, cols={0,1,5}
+        assert_eq!(cc.m3x6[2][0], 100);
+        assert_eq!(cc.m3x6[2][1], 100);
+        assert_eq!(cc.m3x6[2][2], 0);
+        assert_eq!(cc.m3x6[2][3], 0);
+        assert_eq!(cc.m3x6[2][4], 0);
+        assert_eq!(cc.m3x6[2][5], 100);
     }
 
     #[test]
@@ -271,8 +333,7 @@ mod tests {
 
     #[test]
     fn gray_pixel_no_chroma_terms() {
-        // 灰度像素 (R=G=B) → 所有 6 个 chroma 项都是 0 → 无 delta
-        // 注：当前 should_apply=false (MVP 禁用)，此测试验证禁用时 passthrough
+        // 灰度像素 (R=G=B) → 所有 6 个 chroma 项都是 0 → 无 delta → 输出不变
         let mut p = zero_params();
         p.saturation = 50;
         for row in &mut p.matrix {
@@ -281,12 +342,12 @@ mod tests {
             }
         }
         let cc = ColorCorrection::compile(&p);
-        // MVP 禁用：enabled 应 false
+        // MVP: should_apply forced false; passthrough guaranteed
         assert!(!cc.enabled);
 
         let mut px = [5000u16, 5000, 5000];
         cc.apply_rgb_chunk(&mut px);
-        assert_eq!(px, [5000, 5000, 5000]); // passthrough
+        assert_eq!(px, [5000, 5000, 5000]);
     }
 
     #[test]

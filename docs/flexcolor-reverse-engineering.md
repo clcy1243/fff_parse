@@ -4411,3 +4411,75 @@ impl LightnessCurve {
 | this+0x84 | CPointCurve* ptr |
 
 ---
+
+---
+
+## 51. T22-follow 验证结果（2026-04-20）
+
+### 51.1 T22-follow 反编译结果
+
+T22-follow agent 完整反编译 `FUN_702d57b0`，给出 18-cell compile pattern：
+
+```
+cols[0] = {1, 2, 3}   // R output: M3x6[0][k] = Σ_{j∈cols[0]} M6x6[k][j] + (Sat if k∈cols[0] else 0)
+cols[1] = {0, 2, 4}   // G output
+cols[2] = {0, 1, 5}   // B output
+```
+
+对称式：`cols[o] = ({0,1,2}\{o}) ∪ {o+3}`。已实现于 `color_correction.rs::ColorCorrection::compile`。
+
+### 51.2 Apply 测试结果
+
+开启 `should_apply = apply_cc && is_customized` 后 manifest 结果：
+
+| 指标 | 禁用（baseline） | T22 启用 | Δ |
+|------|-----------------|----------|----|
+| STRICT | 6 | 6 | 0 |
+| WARN   | 5 | 7 | +2 |
+| FAIL   | 134 | 132 | -2 |
+| T6 e2e_all_config MAE | 3798 | **8780** | +4982（回归）|
+| T6 e2e_default MAE | 2009 | 1396 | -613 |
+| T6 其他大多数 cases | — | 略有改善（~-100..200）| |
+
+**结论**：compile pattern 对**绝大多数 cases**（ApplyCC=false 或小 Sat）保持不变或有小幅改善，
+但 **e2e_all_config**（ApplyCC=true + 极端 Sat）产生 4982 MAE 大幅回归。
+
+### 51.3 推测错误来源
+
+候选问题（按可能性排序）：
+
+1. **Per-pixel apply 公式 scale**：`delta = dot(M,chromas) / 100`。分母可能不是 100
+   （可能 10000、128、256、或 bit-shift）。`FUN_702d4b50` 需要追看 arithmetic scale。
+2. **Sign**：`out = in - delta`。可能应该是 `+ delta`，或因为 Sat 正负语义翻转。
+3. **6 个 opponent-excess 公式**：对 R/G/B 三组 3 通道 opponent / 3 个 primary excess
+   的划分、符号或 clamp 可能误解。
+4. **compile pattern 小差异**：Sat 加到哪些 cell（currently `k ∈ cols[o]`），也可能是
+   `k = o + 3` 单一 cell 或 inverted。
+
+### 51.4 本轮处置
+
+`should_apply` 强制返回 `false`（MVP），compile pattern 保留供 round-trip 验证。
+这保持了 e2e_all_config = 3798 baseline，并避免 categorical 回归。
+
+### 51.5 下一步研究方向
+
+要 lock down 正确公式，需要：
+
+**A. Round-trip 实验**：
+1. 在 test XML 上手动设置 `ApplyCC=true, Sat=小值, 矩阵=单 cell`。
+2. 跑 FlexColor 生成 ref TIFF。
+3. 比较 ours vs ref 找出 delta scale / sign。
+
+**B. Ghidra 继续追**：
+1. `FUN_702d4b50` 逐行 decompile（特别是 6 chroma 项构造 + 除法/移位）。
+2. 确认 Sat 进入 compile 时的 sign convention。
+
+**C. 参考 FilmCurve preset 类比**：
+本项目 FilmCurve 的常数分母是 10000（§T18），可能 ColorCorr 也用 10000。
+
+### 51.6 影响 & 风险
+
+- MVP 禁用无副作用（identity STRICT 保留，e2e_all_config baseline 保留）。
+- 启用错误公式的风险：e2e_all_config 大幅回归，但多数其他 cases 小幅改善。净值为负（回归大于改善）。
+- 正确启用的上限：**无法确定** — 需要 round-trip 才能估算。
+
