@@ -362,3 +362,28 @@ TOTAL: **7 STRICT / 4 PASS / 4 WARN / 130 FAIL** (145 tests)
   - 推测：G/B row permutation 或 sign 可能与 R-row 不同，agent 未验证 byte-by-byte。
   - 下一步：launch agent 跑 FUN_702d4b50 的 G block (0x702d4d84) + B block (0x702d4e27) 完整 FPU trace。
 
+
+---
+
+## v7 阶段：T22b M6x6 列主序字节级确认（2026-04-20）
+
+Agent 字节级 trace `FUN_702d57b0`（ColorCorrection compile 函数）全 18 cell：
+- M6x6 源矩阵存 `this+0x4b4`，**列主序**（offset `2*(k*6+i)` = `M6x6_colmajor[i][k]`）
+- 我们当前 Rust 代码（`matrix[i/6][i%6]=XML[i]` + `m[k][j]` 求和）数学上
+  等于 agent 正确公式 `Σ M6x6_colmajor[j][k] for j∈rows[o]`
+- **compile 不需改**。T22-follow 的 cols{1,2,3}/{0,2,4}/{0,1,5} 是 rows，数值一致
+
+### e2e_all_config 回归定位（后续研究方向）
+
+- compile ✓ byte-verified
+- apply ✓ byte-verified (T25)
+- **回归源**不在 ColorCorr 本身，而在 pre-ColorCorr 阶段某个 slider 实现漂移被 apply 放大
+- 候选：Saturation slider / Lightness / ColorTemp / Tint / CN Filter
+
+### v7 基线（不变于 v6）
+
+TOTAL: **7 STRICT / 4 PASS / 4 WARN / 130 FAIL** (145 tests / 29 cases)
+
+关键改善 v4 → v7：
+- 4 neg RGB 首次进入 PASS tier (T25 chroma permutation 修复)
+- 1 新 STRICT 升级 (ext_rgb_saturated)
