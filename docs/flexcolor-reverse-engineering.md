@@ -4686,3 +4686,54 @@ compile 正确 + apply 正确（T25 byte-verified），但 e2e_all_config T6 MAE
 T26 转置 `matrix[i%6][i/6]` 把 `matrix[k][i]` 变成 `M6x6_colmajor[k][i]`，错误地读 col=i（应 col=k）。
 7203 → 6352 的改善不是"更正确"，而是**恰好凑到**不同 cell 值的组合，部分抵消了另一处漂移。
 不应采纳此转置。
+
+---
+
+## 56. T31 · Lightness luma formula 实验（2026-04-20）
+
+### 56.1 Agent 反编译 FUN_702d4720（Lightness per-row apply）
+
+关键发现：
+- Per-pixel loop 从**预先计算**的行缓冲区取 `src[i]` 作 LUT 查询键
+- **源缓冲**由**源图对象 vtbl[0x34]** 填充（不在 Lightness 内部算）
+- delta = `LUT(src[i]) - src[i]`，然后**同 delta 加到 R/G/B**，clamp 到 0x3FFF
+- 3 个 gate 条件（`+0x84` 指针非 NULL，`+0x96c > 0`，`+0x1218 != 0`）
+
+### 56.2 Rust 猜测对比
+
+我们当前用 BT.601 luma 作 LUT 键（placeholder）。Agent 指出真实的 src 来自
+外部 vtbl[0x34]，可能是 luma / max / 某通道 / raw scanner input — **未字节验证**。
+
+### 56.3 实验：max(R,G,B) 替代 BT.601 luma
+
+| case | BT.601 | max(R,G,B) |
+|------|--------|-----------|
+| e2e_default | 2133 | 2133（Lightness=0，should_apply=false）|
+| e2e_all_config | 7203 | **7203（相同！）** |
+| emb_neg_rgb_standard | 276 | 276 |
+| ext_rgb_saturated | 95 | 95 |
+
+**结论**：luma 公式对 MAE 影响极小。原因：Lightness 4 点曲线 `[(0,0),(2,Y1),(50,50),(255,255)]`
+只在 **byte < 50**（14-bit < 3212）时有 delta。对正常曝光图，绝大多数像素 > 3212，delta=0。
+Lightness 不是 e2e_all_config 3798→7203 回归的源。
+
+### 56.4 剩余未解：vtbl[0x34] 真源
+
+Agent 未追到底，但 Lightness MAE 影响小这一事实表明追踪优先级可降低。
+
+### 56.5 e2e_all_config 回归真源的新收窄
+
+Setting #7（current）参数 dump：
+```
+film_type=1, gamma=1.89844 (非默认 2!)
+contrast=41, brightness=42, lightness=43, saturation=15
+color_corr=[1,3,4,2,5,6, 7,9,11,8,10,12, ...36 values test pattern]
+apply_sliders/curves/cc/histogram/cn/usm=all true
+```
+
+候选回归源（优先级）：
+1. **Gamma=1.89844** 走 GammaCurve 的 `G<2` 分支（`exp = 1/(1-(2-G)*0.8) = 1/0.9188 ≈ 1.088`）
+2. **Contrast=41 + Brightness=42** 是高 slider，S-curve 偏差放大
+3. **ColorCorr 非平凡 matrix**（byte-verified 无误）
+4. Lightness=43（已证实影响小）
+

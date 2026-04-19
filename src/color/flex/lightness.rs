@@ -56,8 +56,7 @@ impl LightnessCurve {
         if !self.should_apply() {
             return;
         }
-        // 用 luma 查 LUT（§50.3 推测：可能是某通道 raw 值，待 round-trip 验证）
-        // 此处用 BT.601 luma 作近似；若不准确再改
+        // 用 luma 查 LUT（§50.3 推测：vtbl[0x34] 预计算，当前用 BT.601 近似）
         let r = chunk[0] as u32;
         let g = chunk[1] as u32;
         let b = chunk[2] as u32;
