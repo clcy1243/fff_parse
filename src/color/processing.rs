@@ -331,7 +331,26 @@ pub fn extract_film_curve(
     preview_16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
     correction: &crate::flexcolor::ImageCorrection,
 ) -> Option<[Vec<f32>; 3]> {
-    let (w, h) = (thumb_8.width() as usize, thumb_8.height() as usize);
+    // 将 8-bit thumbnail 升采到 16-bit（乘以 257 保证 0→0, 255→65535）后走 16-bit 路径
+    let (w, h) = thumb_8.dimensions();
+    let mut buf16 = Vec::with_capacity((w as usize * h as usize) * 3);
+    for p in thumb_8.pixels() {
+        buf16.push(p[0] as u16 * 257);
+        buf16.push(p[1] as u16 * 257);
+        buf16.push(p[2] as u16 * 257);
+    }
+    let thumb_16 = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(w, h, buf16)?;
+    extract_film_curve_16(&thumb_16, preview_16, correction)
+}
+
+/// 16-bit 版本的胶片曲线反推。thumb/preview 均为 RGB16。
+/// 对 ref-TIF 16-bit → LUT 的反推精度远高于 8-bit 升采。
+pub fn extract_film_curve_16(
+    thumb_16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    preview_16: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    correction: &crate::flexcolor::ImageCorrection,
+) -> Option<[Vec<f32>; 3]> {
+    let (w, h) = (thumb_16.width() as usize, thumb_16.height() as usize);
     if w != preview_16.width() as usize || h != preview_16.height() as usize {
         log::warn!("extract_film_curve: dimension mismatch {}x{} vs {}x{}",
             w, h, preview_16.width(), preview_16.height());
@@ -339,9 +358,9 @@ pub fn extract_film_curve(
     }
 
     let film_type = correction.film_type;
-    if film_type != 1 && film_type != 2 {
-        return None;
-    }
+    // 过去限制：只对负片/BW 做 LUT 提取。现扩展到正片（film_type=0）——
+    // 让 --use-ref-lut 能一起标定 Contrast/Lightness 等 display_adjust 的综合效果。
+    // 对正片，后续的 "inv" 步骤直接取 raw（不做负片反转）。
 
     // 检测较重的显示调整 — 仅记录警告，仍然尝试提取
     // （之前会直接返回 None，导致使用不匹配的 Setting 参数时提取失败）
@@ -382,7 +401,7 @@ pub fn extract_film_curve(
     }
 
     let n_pixels = w * h;
-    let thumb_raw = thumb_8.as_raw();
+    let thumb_raw = thumb_16.as_raw();
     let prev_raw = preview_16.as_raw();
 
     // ── 反转参数（与 apply_film_processing 一致）──
@@ -487,10 +506,11 @@ pub fn extract_film_curve(
     };
 
     // ── 构建映射 ──
-    // 使用 1024 bins（缩略图像素有限，太多 bins 导致每 bin 样本不足）
-    const BINS: usize = 1024;
-    let mut sums = [[0.0f64; BINS]; 3];
-    let mut counts = [[0u32; BINS]; 3];
+    // 1024 bins 经验上在精度和稳定性间平衡最佳。更高 bin 数会在 full-res ref 下
+    // 放大尾部噪声（p99 会超出 WARN 阈值）。
+    let bins = 1024usize;
+    let mut sums: [Vec<f64>; 3] = [vec![0.0f64; bins], vec![0.0f64; bins], vec![0.0f64; bins]];
+    let mut counts: [Vec<u32>; 3] = [vec![0u32; bins], vec![0u32; bins], vec![0u32; bins]];
 
     for y in 0..h {
         for x in 0..w {
@@ -500,7 +520,12 @@ pub fn extract_film_curve(
             let mut inv = [0.0f32; 3];
             for ch in 0..3 {
                 let raw_val = prev_raw[pi + ch] as f32;
-                inv[ch] = ((hi[ch] - raw_val).max(0.0) * scale[ch]).clamp(0.0, 65535.0);
+                if film_type == 1 || film_type == 2 {
+                    inv[ch] = ((hi[ch] - raw_val).max(0.0) * scale[ch]).clamp(0.0, 65535.0);
+                } else {
+                    // 正片：直接用 raw，跳过负片反转
+                    inv[ch] = raw_val;
+                }
             }
 
             // B&W 负片灰度化
@@ -509,11 +534,11 @@ pub fn extract_film_curve(
                 inv = [lum, lum, lum];
             }
 
-            // 2. 缩略图值 → 浮点
+            // 2. 缩略图值 → 浮点（16-bit 归一）
             let mut rgb = [
-                thumb_raw[pi] as f32 / 255.0,
-                thumb_raw[pi + 1] as f32 / 255.0,
-                thumb_raw[pi + 2] as f32 / 255.0,
+                thumb_raw[pi] as f32 / 65535.0,
+                thumb_raw[pi + 1] as f32 / 65535.0,
+                thumb_raw[pi + 2] as f32 / 65535.0,
             ];
 
             // 3. 反向处理缩略图（从显示值恢复到胶片曲线输出）
@@ -607,8 +632,8 @@ pub fn extract_film_curve(
             for ch in 0..3 {
                 let range = (wh_c[ch] - bl[ch]).max(0.001);
                 let normalized = ((inv[ch] / 65535.0 - bl[ch]) / range).clamp(0.0, 1.0);
-                let bin = (normalized * (BINS - 1) as f32) as usize;
-                let bin = bin.min(BINS - 1);
+                let bin = (normalized * (bins - 1) as f32) as usize;
+                let bin = bin.min(bins - 1);
                 sums[ch][bin] += rgb[ch] as f64;
                 counts[ch][bin] += 1;
             }
@@ -624,10 +649,10 @@ pub fn extract_film_curve(
 
     for ch in 0..3 {
         // 计算有数据的 bin 的平均值
-        let mut bin_avgs = vec![0.0f32; BINS];
+        let mut bin_avgs = vec![0.0f32; bins];
         let mut valid_indices: Vec<usize> = Vec::new();
         let mut valid_values: Vec<f32> = Vec::new();
-        for i in 0..BINS {
+        for i in 0..bins {
             if counts[ch][i] > 0 {
                 let avg = (sums[ch][i] / counts[ch][i] as f64) as f32;
                 bin_avgs[i] = avg;
@@ -638,7 +663,7 @@ pub fn extract_film_curve(
 
         // 用线性插值填充空 bin（含首尾外推用边界值）
         if valid_indices.len() >= 2 {
-            for i in 0..BINS {
+            for i in 0..bins {
                 if counts[ch][i] == 0 {
                     // 找到左右最近的 valid bin 并线性插值
                     let right = valid_indices.partition_point(|&v| v <= i);
@@ -660,13 +685,13 @@ pub fn extract_film_curve(
             }
         } else if valid_indices.len() == 1 {
             let v = valid_values[0];
-            for i in 0..BINS {
+            for i in 0..bins {
                 bin_avgs[i] = v;
             }
         }
 
         // 强制单调递增
-        for i in 1..BINS {
+        for i in 1..bins {
             if bin_avgs[i] < bin_avgs[i - 1] {
                 bin_avgs[i] = bin_avgs[i - 1];
             }
@@ -674,8 +699,8 @@ pub fn extract_film_curve(
 
         // 插值到 65536 项
         for i in 0..65536 {
-            let pos = i as f32 / 65535.0 * (BINS - 1) as f32;
-            let lo = (pos as usize).min(BINS - 2);
+            let pos = i as f32 / 65535.0 * (bins - 1) as f32;
+            let lo = (pos as usize).min(bins - 2);
             let hi_idx = lo + 1;
             let frac = pos - lo as f32;
             luts[ch][i] = bin_avgs[lo] * (1.0 - frac) + bin_avgs[hi_idx] * frac;
@@ -684,7 +709,7 @@ pub fn extract_film_curve(
 
     log::info!(
         "extract_film_curve: extracted from {}x{} ({} pixels), bins={}, lut[R][32768]={:.4}, lut[G][32768]={:.4}, lut[B][32768]={:.4}",
-        w, h, n_pixels, BINS,
+        w, h, n_pixels, bins,
         luts[0][32768], luts[1][32768], luts[2][32768],
     );
 
@@ -1051,12 +1076,28 @@ pub fn apply_color_pipeline(
     icc_data: Option<&[u8]>,
     target_color_space: TargetColorSpace,
 ) -> image::DynamicImage {
+    apply_color_pipeline_ex(
+        img, adjust, curve_points, film_lut, icc_data, target_color_space,
+        super::transform::IccSettings::default(),
+    )
+}
+
+/// apply_color_pipeline 的扩展版本，可显式指定 ICC 的 rendering intent 与 BPC。
+pub fn apply_color_pipeline_ex(
+    img: image::DynamicImage,
+    adjust: &ManualAdjust,
+    curve_points: &[Vec<(i64, i64, i64)>],
+    film_lut: Option<&[Vec<f32>; 3]>,
+    icc_data: Option<&[u8]>,
+    target_color_space: TargetColorSpace,
+    icc_settings: super::transform::IccSettings,
+) -> image::DynamicImage {
     // 1. 扫描仪空间色阶（film_curve + levels + gamma）— 在 ICC 之前
     let img = super::adjust::apply_scanner_levels(&img, adjust, film_lut);
 
     // 2. ICC 色彩空间转换（扫描仪 → 输出色域）
     let img = if let Some(icc) = icc_data {
-        match super::transform::apply_icc_transform(&img, icc, target_color_space) {
+        match super::transform::apply_icc_transform_ex(&img, icc, target_color_space, icc_settings) {
             Ok(transformed) => transformed,
             Err(e) => {
                 log::warn!("ICC transform failed: {}", e);
@@ -1089,7 +1130,10 @@ pub fn apply_color_pipeline(
         img
     };
 
-    // 4. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在曲线之后应用
+    // 4. USM 锐化 — 在曲线之后、显示调整之前（输出色彩空间中应用）
+    let img = super::usm::apply_usm(&img, adjust);
+
+    // 5. 显示空间调整（曝光/对比度/亮度/饱和度等）— 在曲线之后应用
     super::adjust::apply_display_adjust(&img, adjust)
 }
 

@@ -391,7 +391,10 @@ fn apply_display_adjust_16(
             }
             if adj.apply_contrast && adj.contrast.abs() > 0.1 {
                 let c = adj.contrast / 100.0;
-                let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
+                // ⚠️ FlexColor 的 contrast 公式尚未精准还原，不同预设最优 mult 不一致
+                // （rgb_dark: 0.2 最佳，cmyk_dark: 2.0 最佳）。保留 FFF_CONTRAST_MULT 可调。
+                let mult: f32 = std::env::var("FFF_CONTRAST_MULT").ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
+                let scale = if c >= 0.0 { 1.0 + c * mult } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
             }
             if adj.apply_brightness && adj.brightness.abs() > 0.1 {
@@ -562,7 +565,10 @@ fn apply_adjust_16(
             }
             if adj.apply_contrast && adj.contrast.abs() > 0.1 {
                 let c = adj.contrast / 100.0;
-                let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
+                // ⚠️ FlexColor 的 contrast 公式尚未精准还原，不同预设最优 mult 不一致
+                // （rgb_dark: 0.2 最佳，cmyk_dark: 2.0 最佳）。保留 FFF_CONTRAST_MULT 可调。
+                let mult: f32 = std::env::var("FFF_CONTRAST_MULT").ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
+                let scale = if c >= 0.0 { 1.0 + c * mult } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
             }
             if adj.apply_brightness && adj.brightness.abs() > 0.1 {
@@ -733,7 +739,10 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust, film_lut: Option<&
             }
             if adj.apply_contrast && adj.contrast.abs() > 0.1 {
                 let c = adj.contrast / 100.0;
-                let scale = if c >= 0.0 { 1.0 + c * 2.0 } else { 1.0 + c };
+                // ⚠️ FlexColor 的 contrast 公式尚未精准还原，不同预设最优 mult 不一致
+                // （rgb_dark: 0.2 最佳，cmyk_dark: 2.0 最佳）。保留 FFF_CONTRAST_MULT 可调。
+                let mult: f32 = std::env::var("FFF_CONTRAST_MULT").ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
+                let scale = if c >= 0.0 { 1.0 + c * mult } else { 1.0 + c };
                 v = ((v - 0.5) * scale + 0.5).clamp(0.0, 1.0);
             }
             if adj.apply_brightness && adj.brightness.abs() > 0.1 {

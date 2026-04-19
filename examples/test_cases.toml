@@ -1,0 +1,212 @@
+# tif_compare 测试矩阵
+#
+# 路径解析规则：
+#   - data_dir / preset_dir 可以是绝对路径，或相对于本 TOML 文件
+#   - 每个 case 的 fff / ref 相对于 data_dir
+#   - source = "external_xml" 时 preset 相对于 preset_dir
+
+data_dir   = "/Users/will/vmwareShare/test_image"
+preset_dir = "../settings"
+
+# ─── End-to-end: FFF 自带当前配置 ────────────────────────────────────
+
+[[case]]
+name = "e2e_default"
+fff  = "test1.fff"
+ref  = "test1.tif"
+
+[[case]]
+name = "e2e_all_config"
+fff  = "test1_all_config.fff"
+ref  = "test1_all_config.tif"
+
+[[case]]
+name = "e2e_all_config_bw"
+fff  = "test1_all_config_bw.fff"
+ref  = "test1_all_config_bw.tif"
+
+# ─── 预设矩阵: FFF 内嵌 history by name ─────────────────────────────
+
+[[case]]
+name = "emb_rgb_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_standard_16bit.tif"
+source = "embedded_name"
+preset = "test1_raw_rgb_standard"
+
+[[case]]
+name = "emb_rgb_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_saturated_16bit.tif"
+source = "embedded_name"
+preset = "test1_raw_rgb_saturated"
+
+[[case]]
+name = "emb_rgb_dark"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_dark_16bit.tif"
+source = "embedded_name"
+preset = "test1_raw_rgb_dark"
+
+[[case]]
+name = "emb_rgb_dark_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_dark_saturated_16bit.tif"
+source = "embedded_name"
+preset = "test1_raw_rgb_dark_saturated"
+
+[[case]]
+name = "emb_cmyk_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_standard.tif"
+source = "embedded_name"
+preset = "test1_raw_cmyk_standard"
+
+[[case]]
+name = "emb_cmyk_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_saturated.tif"
+source = "embedded_name"
+preset = "test1_raw_cmyk_saturated"
+
+[[case]]
+name = "emb_cmyk_dark"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_dark.tif"
+source = "embedded_name"
+preset = "test1_raw_cmyk_dark"
+
+[[case]]
+name = "emb_cmyk_dark_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_dark_saturated.tif"
+source = "embedded_name"
+preset = "test1_raw_cmyk_dark_saturated"
+
+[[case]]
+name = "emb_neg_rgb_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_rgb_standard_16bit.tif"
+source = "embedded_name"
+preset = "test1_raw_negative_rgb_standard"
+
+[[case]]
+name = "emb_neg_rgb_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_rgb_saturated_16bit.tif"
+source = "embedded_name"
+preset = "test1_raw_negative_rgb_saturated"
+
+[[case]]
+name = "emb_neg_cmyk_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_cmyk_standard.tif"
+source = "embedded_name"
+preset = "test1_raw_negative_cmyk_standard"
+
+[[case]]
+name = "emb_neg_cmyk_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_cmyk_saturated.tif"
+source = "embedded_name"
+preset = "test1_raw_negative_cmyk_saturated"
+
+[[case]]
+name = "emb_bw_neg_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_bw_negative_standard_16bit.tif"
+source = "embedded_name"
+preset = "test1_raw_bw_negative_standard"
+
+# ─── 预设矩阵: 外部 XML 预设文件 ────────────────────────────────────
+
+[[case]]
+name = "ext_rgb_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_standard_16bit.tif"
+source = "external_xml"
+preset = "Standard/RGB standard.xml"
+
+[[case]]
+name = "ext_rgb_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_saturated_16bit.tif"
+source = "external_xml"
+preset = "Standard/RGB saturated.xml"
+
+[[case]]
+name = "ext_rgb_dark"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_dark_16bit.tif"
+source = "external_xml"
+preset = "Standard/RGB dark.xml"
+
+[[case]]
+name = "ext_rgb_dark_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_rgb_dark_saturated_16bit.tif"
+source = "external_xml"
+preset = "Standard/RGB dark saturated.xml"
+
+[[case]]
+name = "ext_cmyk_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_standard.tif"
+source = "external_xml"
+preset = "Standard/CMYK standard.xml"
+
+[[case]]
+name = "ext_cmyk_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_saturated.tif"
+source = "external_xml"
+preset = "Standard/CMYK saturated.xml"
+
+[[case]]
+name = "ext_cmyk_dark"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_dark.tif"
+source = "external_xml"
+preset = "Standard/CMYK dark.xml"
+
+[[case]]
+name = "ext_cmyk_dark_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_cmyk_dark_saturated.tif"
+source = "external_xml"
+preset = "Standard/CMYK dark saturated.xml"
+
+[[case]]
+name = "ext_neg_rgb_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_rgb_standard_16bit.tif"
+source = "external_xml"
+preset = "Standard Negative/Negative RGB standard.xml"
+
+[[case]]
+name = "ext_neg_rgb_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_rgb_saturated_16bit.tif"
+source = "external_xml"
+preset = "Standard Negative/Negative RGB saturated.xml"
+
+[[case]]
+name = "ext_neg_cmyk_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_cmyk_standard.tif"
+source = "external_xml"
+preset = "Standard Negative/Negative CMYK standard.xml"
+
+[[case]]
+name = "ext_neg_cmyk_saturated"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_negative_cmyk_saturated.tif"
+source = "external_xml"
+preset = "Standard Negative/Negative CMYK saturated.xml"
+
+[[case]]
+name = "ext_bw_neg_standard"
+fff    = "test1_raw.fff"
+ref    = "test1_raw_bw_negative_standard_16bit.tif"
+source = "external_xml"
+preset = "Standard Negative/B&W negative standard.xml"
