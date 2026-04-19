@@ -58,6 +58,10 @@ pub fn apply_flex_pipeline_no_icc(
     img: image::DynamicImage,
     ic: &ImageCorrection,
 ) -> image::DynamicImage {
+    // Note: BW (film_type=2) pre-luma-collapse 试验过但 e2e_all_config_bw 从 WARN→FAIL 回归。
+    // 目前依赖下游 desaturate_bw 做 BT.601 luma 平均（由 tif_compare/viewer 调用），
+    // 精确匹配需 Hasselblad Gray.icc kTRC（§45.4）。MVP 保留现状。
+
     let pipeline = Pipeline::build(ic);
 
     // ColorCorrection 预编译（默认参数下 enabled=false fast-path）
@@ -73,6 +77,9 @@ pub fn apply_flex_pipeline_no_icc(
 
     apply_pipeline_full(img, &pipeline, &color_correction, &lightness)
 }
+
+// （历史：BW luma-collapse 函数已移除。emb_bw_neg 有改善但 e2e_all_config_bw 分类回归
+// 到 FAIL。正确路径需 Hasselblad Gray ICC，留待后续。）
 
 /// 完整应用：Pipeline LUT → ColorCorrection → Lightness
 fn apply_pipeline_full(

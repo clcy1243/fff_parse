@@ -3955,17 +3955,33 @@ agent 装了 `pefile` Python 库（`pip3 install --user --break-system-packages 
 
 Cox-de Boor 递归已实现在 `src/color/flex/bspline.rs`（§16.9）。当前 PointCurve 对 2 点（identity 常见）走纯线性；对 >2 点走 cubic B-spline clamped knots。**FlexColor 实际 knot vector 与 order 未完全证实**，多点情况可能有偏差。
 
-### 46.3 29 case 结果汇总（2026-04-19）
+### 46.3 29 case 结果汇总（迭代版）
 
-`cargo run --release --example tif_compare -- --manifest examples/test_cases.toml --flex-pipeline`：
+**v1** = 纯 Pipeline（Phase 3 集成后）。**v4** = 加 T21 BW gate 修复 + T24 Lightness，T22 ColorCorr 保留代码但禁用。
 
-| Grade | 数 | Case 列表 |
-|-------|----|-----------|
-| 🟢 STRICT (MAE ≤ 100) | 2 | emb_rgb_standard, ext_rgb_standard |
-| ⚠️ WARN (MAE 100-1000) | 1 | ext_rgb_saturated (921) |
-| ❌ FAIL (MAE 1000-2000) | 6 | neg_rgb×2, ext_neg_rgb_saturated×2, cmyk_saturated×2, neg_cmyk_standard×2, neg_cmyk_saturated×2 |
-| ❌ FAIL (MAE 2000-5000) | 18 | rgb_dark×2, rgb_saturated×2, rgb_dark_saturated×2, cmyk_standard/dark/dark_saturated×2, e2e_default/all_config |
-| ❌ FAIL (MAE > 10000) | 2 | bw_neg×2, e2e_all_config_bw |
+| Grade | v1 | v4 | 变化 |
+|-------|----|----|------|
+| 🟢 STRICT | 2 | 2 | rgb_standard×2 稳定 |
+| ⚠️ WARN | 1 | **2** | 新：e2e_all_config_bw (-92%!) |
+| ❌ FAIL | 26 | 25 | 整体 MAE 下降 |
+
+**关键 case 对比（MAE16）**：
+
+| Case | v1 baseline | v4 | Δ |
+|------|-----|-----|----|
+| emb_rgb_standard | 92 STRICT | 92 STRICT | — |
+| emb_rgb_dark | 2369 | **1940** | **-18%** |
+| **emb_bw_neg_standard** | **13046** | **3844** | **-70%** ✨ |
+| **e2e_all_config_bw** | **12629** | **990 WARN** | **-92%** ✨ |
+| emb_cmyk_dark | 4148 | 3569 | -14% |
+| emb_cmyk_dark_saturated | 3467 | 2890 | -17% |
+| e2e_all_config | 3798 | 3798 | — (T22 禁用) |
+
+### 46.3.1 实际跑 tif_compare 命令
+
+```bash
+cargo run --release --example tif_compare -- --manifest examples/test_cases.toml --flex-pipeline
+```
 
 ### 46.4 T6 vs T1（ref-LUT cheat）对比 — §43 验证
 
