@@ -1285,7 +1285,21 @@ impl FffViewerApp {
             let (r1, g1, b1) = mean_8bit(&step1);
             log::debug!("[viewer] step1 (flex pipeline out) means: R={:.1} G={:.1} B={:.1}", r1, g1, b1);
 
-            let step2 = if let Some(icc) = self.active_icc_data.as_deref() {
+            // T37: BW (film_type=2) 跳过 sRGB 中间态，直接 input_icc → Hasselblad Gray。
+            // 实测 MAE 787 → 487 (-38%)，逼近 PASS tier。非 BW 走标准 sRGB ICC。
+            const HASSELBLAD_GRAY_ICC: &[u8] = include_bytes!(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/Hasselblad Gray.icc")
+            );
+            let step2b = if corr.film_type == 2 {
+                let d = color::desaturate_bw_via_gray_icc(
+                    &step1,
+                    self.active_icc_data.as_deref(),
+                    HASSELBLAD_GRAY_ICC,
+                );
+                let (dr, dg, db) = mean_8bit(&d);
+                log::debug!("[viewer] step2b (direct BW gray) means: R={:.1} G={:.1} B={:.1}", dr, dg, db);
+                d
+            } else if let Some(icc) = self.active_icc_data.as_deref() {
                 log::debug!("[viewer] step2: applying in_icc ({} bytes) → {:?}", icc.len(), self.target_color_space);
                 let icc_bytes = icc.to_vec();
                 let result = color::apply_icc_transform_ex(
@@ -1300,20 +1314,6 @@ impl FffViewerApp {
             } else {
                 log::debug!("[viewer] step2: no active ICC data, skipping");
                 step1
-            };
-            // T34/T36: BW (film_type=2) 需要在 ICC 后去色。
-            // flex::Pipeline 不做 luma-collapse（依赖下游），用 Hasselblad Gray.icc (gamma 2.2)
-            // 比 BT.601 luma 更准确（实测 BW 平均 MAE 从 3844 降到 787）。ICC 字节编译期嵌入避免 I/O。
-            const HASSELBLAD_GRAY_ICC: &[u8] = include_bytes!(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/Hasselblad Gray.icc")
-            );
-            let step2b = if corr.film_type == 2 {
-                let d = color::desaturate_bw_via_hasselblad(&step2, HASSELBLAD_GRAY_ICC);
-                let (dr, dg, db) = mean_8bit(&d);
-                log::debug!("[viewer] step2b (BW desaturate) means: R={:.1} G={:.1} B={:.1}", dr, dg, db);
-                d
-            } else {
-                step2
             };
             let out = color::apply_usm(&step2b, &self.manual_adjust);
             let (ro, go, bo) = mean_8bit(&out);

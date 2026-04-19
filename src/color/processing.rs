@@ -1145,8 +1145,25 @@ pub fn desaturate_bw_via_hasselblad(
     img: &image::DynamicImage,
     gray_icc: &[u8],
 ) -> image::DynamicImage {
+    desaturate_bw_via_gray_icc(img, None, gray_icc)
+}
+
+/// 通用 RGB → Gray 转换：若提供 input_icc 则 input→Gray，否则 sRGB→Gray。
+///
+/// T37：可选用原输入 ICC（scanner profile）直接 → Gray，跳过 sRGB 中间态。
+pub fn desaturate_bw_via_gray_icc(
+    img: &image::DynamicImage,
+    input_icc: Option<&[u8]>,
+    gray_icc: &[u8],
+) -> image::DynamicImage {
     use lcms2::*;
-    let srgb = Profile::new_srgb();
+    let in_profile = match input_icc {
+        Some(bytes) => match Profile::new_icc(bytes) {
+            Ok(p) => p,
+            Err(_) => Profile::new_srgb(),
+        },
+        None => Profile::new_srgb(),
+    };
     let gray = match Profile::new_icc(gray_icc) {
         Ok(p) => p,
         Err(_) => return desaturate_bw(img),
@@ -1155,7 +1172,7 @@ pub fn desaturate_bw_via_hasselblad(
         image::DynamicImage::ImageRgb16(rgb16) => {
             let (w, h) = (rgb16.width(), rgb16.height());
             let transform = match Transform::new(
-                &srgb, PixelFormat::RGB_16,
+                &in_profile, PixelFormat::RGB_16,
                 &gray, PixelFormat::GRAY_16,
                 Intent::Perceptual,
             ) {
@@ -1173,7 +1190,7 @@ pub fn desaturate_bw_via_hasselblad(
             image::DynamicImage::ImageRgb16(
                 image::ImageBuffer::from_raw(w, h, out).unwrap())
         }
-        _ => desaturate_bw(img), // 8-bit 暂走老路径
+        _ => desaturate_bw(img),
     }
 }
 

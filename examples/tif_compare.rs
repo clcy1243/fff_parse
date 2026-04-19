@@ -1448,37 +1448,31 @@ fn run_tests(
         // 剩余步骤：ICC（若 input != ref）+ BW desat（若 film_type=2）+ USM
         let step1 = color::apply_flex_pipeline_no_icc(ctx.raw_16.clone(), corr);
 
-        // ICC step
-        let step2 = if let (Some(in_icc), Some(out_icc)) = (icc, ref_icc) {
-            // 先试 in_icc → ref_icc；若 ref 是 CMYK 等非 RGB profile 会失败，回退 sRGB
-            match color::apply_icc_transform_profiles(&step1, in_icc, out_icc, icc_settings) {
-                Ok(img) => img,
-                Err(_) => color::apply_icc_transform_ex(
-                    &step1, in_icc, color::TargetColorSpace::SRGB, icc_settings,
-                )
-                .unwrap_or(step1),
-            }
-        } else if let Some(in_icc) = icc {
-            color::apply_icc_transform_ex(
-                &step1, in_icc, color::TargetColorSpace::SRGB, icc_settings,
-            )
-            .unwrap_or(step1)
-        } else {
-            step1
-        };
-
-        // BW desat：ICC 后做，因为 ICC 可能重新引入 chroma
-        // T36: 用 Hasselblad Gray.icc (gamma 2.2) 替代 BT.601 luma
+        // BW (film_type=2): T37 直接 input_icc → Hasselblad Gray，跳过 sRGB 中间态
         let step2b = if adj.film_type == 2 {
             let gray_icc_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("profiles").join("Hasselblad Gray.icc");
             if let Ok(gray_data) = std::fs::read(&gray_icc_path) {
-                color::desaturate_bw_via_hasselblad(&step2, &gray_data)
+                color::desaturate_bw_via_gray_icc(&step1, icc, &gray_data)
             } else {
-                desaturate_bw_local(&step2)
+                desaturate_bw_local(&step1)
             }
         } else {
-            step2
+            // 非 BW：标准 ICC step
+            if let (Some(in_icc), Some(out_icc)) = (icc, ref_icc) {
+                match color::apply_icc_transform_profiles(&step1, in_icc, out_icc, icc_settings) {
+                    Ok(img) => img,
+                    Err(_) => color::apply_icc_transform_ex(
+                        &step1, in_icc, color::TargetColorSpace::SRGB, icc_settings,
+                    ).unwrap_or(step1),
+                }
+            } else if let Some(in_icc) = icc {
+                color::apply_icc_transform_ex(
+                    &step1, in_icc, color::TargetColorSpace::SRGB, icc_settings,
+                ).unwrap_or(step1)
+            } else {
+                step1
+            }
         };
 
         // USM（外部步骤，flex 暂未吸收）
