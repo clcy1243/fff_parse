@@ -1468,8 +1468,15 @@ fn run_tests(
         };
 
         // BW desat：ICC 后做，因为 ICC 可能重新引入 chroma
+        // T36: 用 Hasselblad Gray.icc (gamma 2.2) 替代 BT.601 luma
         let step2b = if adj.film_type == 2 {
-            desaturate_bw_local(&step2)
+            let gray_icc_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("profiles").join("Hasselblad Gray.icc");
+            if let Ok(gray_data) = std::fs::read(&gray_icc_path) {
+                color::desaturate_bw_via_hasselblad(&step2, &gray_data)
+            } else {
+                desaturate_bw_local(&step2)
+            }
         } else {
             step2
         };

@@ -1137,6 +1137,46 @@ pub fn apply_color_pipeline_ex(
     super::adjust::apply_display_adjust(&img, adjust)
 }
 
+/// B&W 去色：通过 Hasselblad Gray.icc kTRC 把 sRGB → Gray → 复制到三通道。
+///
+/// T36：FlexColor BW 路径（§48.1）用 Hasselblad Gray.icc (gamma 2.2) 做 RGB→Gray，
+/// 而非 BT.601 luma。如果 profile 加载失败，回退到 BT.601。
+pub fn desaturate_bw_via_hasselblad(
+    img: &image::DynamicImage,
+    gray_icc: &[u8],
+) -> image::DynamicImage {
+    use lcms2::*;
+    let srgb = Profile::new_srgb();
+    let gray = match Profile::new_icc(gray_icc) {
+        Ok(p) => p,
+        Err(_) => return desaturate_bw(img),
+    };
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            let (w, h) = (rgb16.width(), rgb16.height());
+            let transform = match Transform::new(
+                &srgb, PixelFormat::RGB_16,
+                &gray, PixelFormat::GRAY_16,
+                Intent::Perceptual,
+            ) {
+                Ok(t) => t,
+                Err(_) => return desaturate_bw(img),
+            };
+            let src: &[u16] = rgb16.as_raw();
+            let pixels: Vec<[u16; 3]> = (0..src.len()/3).map(|i| [src[i*3], src[i*3+1], src[i*3+2]]).collect();
+            let mut gray_out = vec![0u16; pixels.len()];
+            transform.transform_pixels(&pixels, &mut gray_out);
+            let mut out = vec![0u16; pixels.len() * 3];
+            for (i, &g) in gray_out.iter().enumerate() {
+                out[i*3] = g; out[i*3+1] = g; out[i*3+2] = g;
+            }
+            image::DynamicImage::ImageRgb16(
+                image::ImageBuffer::from_raw(w, h, out).unwrap())
+        }
+        _ => desaturate_bw(img), // 8-bit 暂走老路径
+    }
+}
+
 /// B&W 去色：将 RGB 转为灰度（ITU-R BT.601 权重），保持 Rgb16/Rgb8 格式
 pub fn desaturate_bw(img: &image::DynamicImage) -> image::DynamicImage {
     use rayon::prelude::*;

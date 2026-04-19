@@ -4737,3 +4737,45 @@ apply_sliders/curves/cc/histogram/cn/usm=all true
 3. **ColorCorr 非平凡 matrix**（byte-verified 无误）
 4. Lightness=43（已证实影响小）
 
+
+---
+
+## 57. T36 · Hasselblad Gray.icc BW 去色（2026-04-20）
+
+### 57.1 问题
+
+BW（film_type=2）T6 MAE 3844，signed -3820（整张图过暗 ~23%）。
+T21 文档（§48.1）明确指出 FlexColor BW 用 **Hasselblad Gray.icc 的 kTRC** 做
+RGB→Gray，但我们一直用 BT.601 luma (`0.299R+0.587G+0.114B`)。
+
+### 57.2 Hasselblad Gray.icc 结构
+
+364 字节 v2 灰度 profile：
+- `colorSpace`: GRAY  `PCS`: XYZ
+- `kTRC`: 单 gamma = `0x0233 / 256 = 2.199`（约 2.2，近 sRGB gamma）
+- `wtpt`: 标准 D50
+
+### 57.3 实现
+
+`color::desaturate_bw_via_hasselblad(img, gray_icc_bytes)`：
+- lcms2 Transform sRGB → GRAY_16
+- 把单通道 gray 复制到 RGB 三通道（保持 RGB16 输出便于下游 USM）
+
+tif_compare T6 + viewer 均改用此函数（profile 字节 `include_bytes!` 编译时嵌入）。
+
+### 57.4 实测影响
+
+| case | BT.601 | Hasselblad Gray | Δ |
+|------|--------|----------------|---|
+| e2e_all_config_bw | 990 WARN | **888 WARN** | -10% |
+| emb_bw_neg_standard | 3844 FAIL | **787 WARN** | **-79%** ⬆️ |
+| ext_bw_neg_standard | 3844 FAIL | **787 WARN** | **-79%** ⬆️ |
+
+**TOTAL**: 7 STRICT / 4 PASS / **6 WARN** / 128 FAIL（+2 非-FAIL）
+
+### 57.5 剩余
+
+787 MAE 还不是 STRICT/PASS。可能来自：
+- ICC intent（Perceptual）与 FlexColor 内部变换不完全一致
+- sRGB → Gray 前的 RGB 已有小偏差（被 gamma 2.2 放大）
+- Hasselblad 的 Gray 生成在 FlexColor 里可能**绕过 sRGB 中间态**（直接 scanner→gray）
