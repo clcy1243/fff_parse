@@ -4631,3 +4631,58 @@ Agent 用 pyghidra `find_offset_refs --offset 0x536` 扫描所有读取 Gray（u
   但只是 UI 回显单一 master，未确认是否 per-channel pipeline 使用。
 - 部分 `0x536` 命中来自无关 struct（`[EBP+0x5360]` 等）— 已 register/base 过滤排除。
 
+
+---
+
+## 55. T22b · FUN_702d57b0 列主序字节级确认（2026-04-20）
+
+### 55.1 Agent 结论
+
+Agent 用 pyghidra 字节级 trace `FUN_702d57b0`（0x702d57b0..0x702d5a1b）：
+
+- **M6x6 源矩阵是列主序** — `M6x6_colmajor[i][k]` 存 `this + 0x4b4 + 2*(k*6 + i)`
+- 算术：i16 wrap (无 i32 widening / 无 clamp)，Sat 从 `+0x4fc` 载入 CX 一次
+- **正确公式**：
+  ```
+  M3x6[o][k] = Σ_{i ∈ rows[o]} M6x6_colmajor[i][k] + (Sat if k ∈ rows[o] else 0)
+  rows[0] = {1, 2, 3}   R output
+  rows[1] = {0, 2, 4}   G output
+  rows[2] = {0, 1, 5}   B output
+  ```
+
+### 55.2 T22-follow vs 真实
+
+| 项 | T22-follow (旧) | 实际 (byte-verified) |
+|----|----------------|---------------------|
+| 矩阵存储 | 未明说（默认 row-major） | **col-major** |
+| 求和集合 | "cols" {1,2,3} 等 | "rows" {1,2,3} 等 — **同样的数值** |
+| Sat 附加条件 | k ∈ cols[o] | k ∈ rows[o] — **相同** |
+
+### 55.3 我们 Rust 代码的状态
+
+**已经正确**。论证：
+- `from_image_correction`: `matrix[i/6][i%6] = XML[i]`
+  → `matrix[k][i] = XML[k*6+i] = M6x6_colmajor[i][k]`
+- `compile`: `m[k][j] for j ∈ COLS[o]`
+  → 求和 `matrix[k][j] = M6x6_colmajor[j][k]` for j ∈ rows[o]
+  → 与 agent 公式一致 ✓
+
+### 55.4 e2e_all_config 回归的真源
+
+compile 正确 + apply 正确（T25 byte-verified），但 e2e_all_config T6 MAE 3798 → 7203 仍回归。
+**推测**：ColorCorr 之前的某个 pipeline 阶段对我们略有漂移，ApplyCC 的 matrix apply 把漂移放大。
+
+候选漂移源（按可能性）：
+1. Saturation slider 本体（matrix-独立的 saturation effect — FlexColor 可能还在别处应用）
+2. Lightness slider（T24 实现可能不完整）
+3. Contrast / Brightness / EV slider 实现
+4. ColorTemperature / Tint
+5. CN Filter
+
+下一步：round-trip 实验，手工调一个 slider 至极端值生成 ref，对比 ours 定位漂移源。
+
+### 55.5 T26 转置实验的重新解释
+
+T26 转置 `matrix[i%6][i/6]` 把 `matrix[k][i]` 变成 `M6x6_colmajor[k][i]`，错误地读 col=i（应 col=k）。
+7203 → 6352 的改善不是"更正确"，而是**恰好凑到**不同 cell 值的组合，部分抵消了另一处漂移。
+不应采纳此转置。
