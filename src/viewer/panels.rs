@@ -1242,10 +1242,13 @@ impl FffViewerApp {
     /// 色阶（film_curve + levels + gamma）在 ICC 之前应用，确保正确的色彩映射。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
         // 在拿 &mut self.detail 之前先 clone 出需要的数据（避免借用冲突）
-        let (base, active_correction) = {
+        // T33: flex pipeline 需要真正 raw scanner 数据（preview_raw），
+        // 而 raw_rgb 是 apply_film_processing 输出（已反转），double-invert 会把 G/B 压到 0。
+        let (flex_base, legacy_base, active_correction) = {
             let Some(detail) = &self.detail else { return };
-            let source = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
-            let Some(base) = source else { return };
+            let legacy = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
+            let Some(legacy) = legacy else { return };
+            let flex = detail.preview_raw.as_ref().unwrap_or(legacy);
             let active_correction = detail.edit_history.as_ref().and_then(|h| {
                 if h.settings.is_empty() {
                     None
@@ -1254,32 +1257,69 @@ impl FffViewerApp {
                     h.settings.get(idx).map(|s| s.correction.clone())
                 }
             });
-            (base.clone(), active_correction)
+            (flex.clone(), legacy.clone(), active_correction)
         };
 
+        // T32 diag: dump pipeline stages means
+        fn mean_8bit(img: &image::DynamicImage) -> (f64, f64, f64) {
+            let rgb = img.clone().into_rgb16();
+            let mut sr=0u64; let mut sg=0u64; let mut sb=0u64; let mut n=0u64;
+            for p in rgb.pixels() {
+                sr += p[0] as u64; sg += p[1] as u64; sb += p[2] as u64;
+                n += 1;
+            }
+            (sr as f64/n as f64/257.0, sg as f64/n as f64/257.0, sb as f64/n as f64/257.0)
+        }
+        let flex_base_img = image::DynamicImage::ImageRgb16(flex_base.clone());
+        let legacy_base_img = image::DynamicImage::ImageRgb16(legacy_base.clone());
+        let (fr, fg, fb) = mean_8bit(&flex_base_img);
+        let (lr, lg, lb) = mean_8bit(&legacy_base_img);
+        eprintln!("[viewer] flex_base (preview_raw) means: R={:.1} G={:.1} B={:.1}", fr, fg, fb);
+        eprintln!("[viewer] legacy_base (raw_rgb)  means: R={:.1} G={:.1} B={:.1}", lr, lg, lb);
+
         let adjusted = if let Some(corr) = active_correction {
-            // flex pipeline 路径（T6 等效）
-            let step1 = color::apply_flex_pipeline_no_icc(
-                image::DynamicImage::ImageRgb16(base.clone()),
-                &corr,
-            );
+            eprintln!("[viewer] flex path | film_type={} gamma={} sat={} contrast={} brightness={} lightness={} | apply_cc={} apply_sliders={} apply_histogram={}",
+                corr.film_type, corr.gamma, corr.saturation, corr.contrast, corr.brightness, corr.lightness,
+                corr.apply_cc, corr.apply_sliders, corr.apply_histogram);
+            let step1 = color::apply_flex_pipeline_no_icc(flex_base_img.clone(), &corr);
+            let (r1, g1, b1) = mean_8bit(&step1);
+            eprintln!("[viewer] step1 (flex pipeline out) means: R={:.1} G={:.1} B={:.1}", r1, g1, b1);
+
             let step2 = if let Some(icc) = self.active_icc_data.as_deref() {
+                eprintln!("[viewer] step2: applying in_icc ({} bytes) → {:?}", icc.len(), self.target_color_space);
                 let icc_bytes = icc.to_vec();
-                color::apply_icc_transform_ex(
+                let result = color::apply_icc_transform_ex(
                     &step1,
                     &icc_bytes,
                     self.target_color_space,
                     Default::default(),
-                )
-                .unwrap_or(step1)
+                ).unwrap_or(step1);
+                let (r2, g2, b2) = mean_8bit(&result);
+                eprintln!("[viewer] step2 (post-ICC) means: R={:.1} G={:.1} B={:.1}", r2, g2, b2);
+                result
             } else {
+                eprintln!("[viewer] step2: no active ICC data, skipping");
                 step1
             };
-            color::apply_usm(&step2, &self.manual_adjust)
+            // T34: BW (film_type=2) 需要在 ICC 后 desaturate 到 BT.601 luma
+            // flex::Pipeline 不做 luma-collapse（依赖下游调用方），与 tif_compare T6 对齐。
+            let step2b = if corr.film_type == 2 {
+                let d = color::desaturate_bw(&step2);
+                let (dr, dg, db) = mean_8bit(&d);
+                eprintln!("[viewer] step2b (BW desaturate) means: R={:.1} G={:.1} B={:.1}", dr, dg, db);
+                d
+            } else {
+                step2
+            };
+            let out = color::apply_usm(&step2b, &self.manual_adjust);
+            let (ro, go, bo) = mean_8bit(&out);
+            eprintln!("[viewer] USM amount={} radius={} | final means: R={:.1} G={:.1} B={:.1}",
+                self.manual_adjust.usm_amount, self.manual_adjust.usm_radius, ro, go, bo);
+            out
         } else {
-            // 旧路径（无 correction 时回退）
+            eprintln!("[viewer] legacy path (no correction)");
             color::apply_color_pipeline(
-                image::DynamicImage::ImageRgb16(base.clone()),
+                legacy_base_img,
                 &self.manual_adjust,
                 &self.curve_points,
                 self.extracted_film_lut.as_ref(),

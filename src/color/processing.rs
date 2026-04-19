@@ -1138,7 +1138,7 @@ pub fn apply_color_pipeline_ex(
 }
 
 /// B&W 去色：将 RGB 转为灰度（ITU-R BT.601 权重），保持 Rgb16/Rgb8 格式
-fn desaturate_bw(img: &image::DynamicImage) -> image::DynamicImage {
+pub fn desaturate_bw(img: &image::DynamicImage) -> image::DynamicImage {
     use rayon::prelude::*;
     match img {
         image::DynamicImage::ImageRgb16(rgb16) => {
