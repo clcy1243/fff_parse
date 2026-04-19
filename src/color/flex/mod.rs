@@ -8,6 +8,10 @@
 pub mod curves;
 pub mod bspline;
 pub mod pipeline;
+pub mod lightness;
+pub mod color_correction;
 
 pub use curves::{Curve, CompositionMode};
 pub use pipeline::Pipeline;
+pub use lightness::LightnessCurve;
+pub use color_correction::{ColorCorrParams, ColorCorrection};

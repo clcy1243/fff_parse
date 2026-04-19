@@ -1241,20 +1241,52 @@ impl FffViewerApp {
     /// 新管线：raw_rgb（scanner 空间）→ 渐变曲线 → 扫描仪色阶 → ICC → 显示调整 → 纹理。
     /// 色阶（film_curve + levels + gamma）在 ICC 之前应用，确保正确的色彩映射。
     pub(super) fn rebuild_texture_from_base(&mut self, ctx: &egui::Context) {
-        let Some(detail) = &mut self.detail else { return };
+        // 在拿 &mut self.detail 之前先 clone 出需要的数据（避免借用冲突）
+        let (base, active_correction) = {
+            let Some(detail) = &self.detail else { return };
+            let source = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
+            let Some(base) = source else { return };
+            let active_correction = detail.edit_history.as_ref().and_then(|h| {
+                if h.settings.is_empty() {
+                    None
+                } else {
+                    let idx = h.current_index.min(h.settings.len().saturating_sub(1));
+                    h.settings.get(idx).map(|s| s.correction.clone())
+                }
+            });
+            (base.clone(), active_correction)
+        };
 
-        let source = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
-        let Some(base) = source else { return };
-
-        // 统一色彩管线（渐变曲线 → 色阶 → ICC → 显示调整）
-        let adjusted = color::apply_color_pipeline(
-            image::DynamicImage::ImageRgb16(base.clone()),
-            &self.manual_adjust,
-            &self.curve_points,
-            self.extracted_film_lut.as_ref(),
-            self.active_icc_data.as_deref(),
-            self.target_color_space,
-        );
+        let adjusted = if let Some(corr) = active_correction {
+            // flex pipeline 路径（T6 等效）
+            let step1 = color::apply_flex_pipeline_no_icc(
+                image::DynamicImage::ImageRgb16(base.clone()),
+                &corr,
+            );
+            let step2 = if let Some(icc) = self.active_icc_data.as_deref() {
+                let icc_bytes = icc.to_vec();
+                color::apply_icc_transform_ex(
+                    &step1,
+                    &icc_bytes,
+                    self.target_color_space,
+                    Default::default(),
+                )
+                .unwrap_or(step1)
+            } else {
+                step1
+            };
+            color::apply_usm(&step2, &self.manual_adjust)
+        } else {
+            // 旧路径（无 correction 时回退）
+            color::apply_color_pipeline(
+                image::DynamicImage::ImageRgb16(base.clone()),
+                &self.manual_adjust,
+                &self.curve_points,
+                self.extracted_film_lut.as_ref(),
+                self.active_icc_data.as_deref(),
+                self.target_color_space,
+            )
+        };
         let rgb16 = to_rgb16(&adjusted);
 
         // 从最终渲染结果计算处理后直方图
@@ -1271,7 +1303,9 @@ impl FffViewerApp {
         }
         self.histogram_processed = Some(proc_hist);
 
-        detail.texture = Some(texture_from_16bit(&rgb16, ctx));
+        if let Some(detail) = &mut self.detail {
+            detail.texture = Some(texture_from_16bit(&rgb16, ctx));
+        }
     }
 
     /// 将当前 `manual_adjust` 中的色阶手柄保存到两组存储（raw/processed 始终同步）。

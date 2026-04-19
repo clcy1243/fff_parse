@@ -11,7 +11,7 @@
 //! - ICC 位置与旧路径一致：LUT 之后做 output ICC transform
 //! - USM 保留为独立步骤（T10 Phase 4 再重构）
 
-use super::flex::Pipeline;
+use super::flex::{ColorCorrParams, ColorCorrection, LightnessCurve, Pipeline};
 use super::transform::{IccSettings, TargetColorSpace};
 use crate::flexcolor::ImageCorrection;
 
@@ -33,33 +33,100 @@ pub fn apply_flex_pipeline(
     target: TargetColorSpace,
     icc_settings: IccSettings,
 ) -> image::DynamicImage {
-    // 1. 构造 flex::Pipeline（§16.5 全拓扑）
-    let pipeline = Pipeline::build(ic);
+    // 1-3. Pipeline + ColorCorrection + Lightness 全链
+    let img_after_flex = apply_flex_pipeline_no_icc(img, ic);
 
-    // 2. 应用 LUT 到每个像素
-    let img_after_lut = apply_pipeline_to_image(img, &pipeline);
-
-    // 3. Output ICC transform（可选）
+    // 4. Output ICC transform（可选）
     if let Some(icc) = icc_data {
-        match super::transform::apply_icc_transform_ex(&img_after_lut, icc, target, icc_settings) {
+        match super::transform::apply_icc_transform_ex(&img_after_flex, icc, target, icc_settings) {
             Ok(transformed) => transformed,
             Err(e) => {
                 log::warn!("flex_pipeline ICC transform failed: {}", e);
-                img_after_lut
+                img_after_flex
             }
         }
     } else {
-        img_after_lut
+        img_after_flex
     }
 }
 
 /// 不带 ICC 的简单应用（Tier 0 identity 验证场景最常用）
+///
+/// 包括：flex::Pipeline LUT + ColorCorrection (T22) + Lightness (T24)
+/// 不包括：ICC / BW desat / USM（由调用方添加）
 pub fn apply_flex_pipeline_no_icc(
     img: image::DynamicImage,
     ic: &ImageCorrection,
 ) -> image::DynamicImage {
     let pipeline = Pipeline::build(ic);
-    apply_pipeline_to_image(img, &pipeline)
+
+    // ColorCorrection 预编译（默认参数下 enabled=false fast-path）
+    let cc_params = ColorCorrParams::from_image_correction(
+        &ic.color_corr,
+        ic.saturation,
+        ic.apply_cc,
+    );
+    let color_correction = ColorCorrection::compile(&cc_params);
+
+    // Lightness 曲线构造（Lightness=0 或 ApplySliders=false 时 should_apply=false）
+    let lightness = LightnessCurve::new(ic.lightness as i16, ic.apply_sliders);
+
+    apply_pipeline_full(img, &pipeline, &color_correction, &lightness)
+}
+
+/// 完整应用：Pipeline LUT → ColorCorrection → Lightness
+fn apply_pipeline_full(
+    img: image::DynamicImage,
+    pipeline: &Pipeline,
+    color_correction: &ColorCorrection,
+    lightness: &LightnessCurve,
+) -> image::DynamicImage {
+    match img {
+        image::DynamicImage::ImageRgb16(rgb16) => {
+            let (w, h) = (rgb16.width(), rgb16.height());
+            let mut raw: Vec<u16> = rgb16.into_raw();
+
+            // 1. Pipeline LUT（14-bit 域）— 内部自带 16/14-bit 转换
+            pipeline.apply_16bit_rgb(&mut raw);
+
+            // 2+3 如果启用，需切到 14-bit domain apply
+            let need_post = color_correction.enabled || lightness.should_apply();
+            if need_post {
+                // 16-bit → 14-bit in-place (>>2)
+                for v in raw.iter_mut() {
+                    *v >>= 2;
+                }
+                // 2. ColorCorrection apply (14-bit domain)
+                color_correction.apply_14bit_rgb(&mut raw);
+                // 3. Lightness apply (14-bit domain)
+                lightness.apply_14bit_rgb(&mut raw);
+                // 14-bit → 16-bit (<<2)
+                for v in raw.iter_mut() {
+                    *v <<= 2;
+                }
+            }
+
+            image::DynamicImage::ImageRgb16(
+                image::ImageBuffer::from_raw(w, h, raw).expect("buffer size mismatch"),
+            )
+        }
+        other => {
+            let rgb16 = other.into_rgb16();
+            let (w, h) = (rgb16.width(), rgb16.height());
+            let mut raw: Vec<u16> = rgb16.into_raw();
+            pipeline.apply_16bit_rgb(&mut raw);
+            let need_post = color_correction.enabled || lightness.should_apply();
+            if need_post {
+                for v in raw.iter_mut() { *v >>= 2; }
+                color_correction.apply_14bit_rgb(&mut raw);
+                lightness.apply_14bit_rgb(&mut raw);
+                for v in raw.iter_mut() { *v <<= 2; }
+            }
+            image::DynamicImage::ImageRgb16(
+                image::ImageBuffer::from_raw(w, h, raw).expect("buffer size mismatch"),
+            )
+        }
+    }
 }
 
 /// 核心像素循环：对 DynamicImage 应用预构建的 Pipeline

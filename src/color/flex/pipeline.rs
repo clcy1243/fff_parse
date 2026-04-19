@@ -77,7 +77,9 @@ impl Pipeline {
         inner.children.push((Box::new(master_pc), CompositionMode::Sequential));
 
         // [2] CNegativeCurve (shared default)
-        let neg_shared = if ic.film_type != 0 {
+        // T21 勘误：FUN_70266ac0 严格 `FilmType == 1` 才启用（不是 != 0）
+        // BW negative (film_type=2) 应走 identity，由 Mode=2 的 RGB→Gray collapse 处理
+        let neg_shared = if ic.film_type == 1 {
             NegativeCurve::default_shared()
         } else {
             NegativeCurve::disabled()
@@ -427,6 +429,79 @@ mod tests {
         for i in (0..16384usize).step_by(1024) {
             assert_eq!(pipe.channel_luts[0][i], pipe.channel_luts[1][i]);
             assert_eq!(pipe.channel_luts[1][i], pipe.channel_luts[2][i]);
+        }
+    }
+
+    #[test]
+    fn dotcolor_shadow_lifts_baseline() {
+        // §28 + §47.3：DotColor shadow 非 0 时，低输入应被抬升到 shadow_out
+        // dot_color[0..3] = 60,60,60 → shadow_out = 60 × 16383 / 255 = 3854
+        let mut ic = default_ic();
+        ic.apply_histogram = true;
+        ic.shadow = [0, 960, 960, 960];
+        ic.highlight = [0, 14400, 14400, 14400];
+        ic.dot_color = vec![60, 60, 60, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255];
+
+        let pipe = Pipeline::build(&ic);
+
+        // v=0 落入 shadow 区 (< 960 boundary)，Linear mode: out = shadow_out * 0 / 960 = 0
+        // 但 v=shadow_bnd-1 = 959 (接近 boundary) 应接近 shadow_out
+        // 实际测试：中间 v 应该在 [shadow_out, highlight_out] 区间
+        let v_mid = 8192;
+        let out = pipe.channel_luts[0][v_mid];
+        assert!(
+            out >= 3800,
+            "DotColor shadow=60 应产生 ≥ 3800 baseline, got {} @ v={}",
+            out,
+            v_mid
+        );
+    }
+
+    #[test]
+    fn dotcolor_highlight_caps_peak() {
+        // DotColor hi=180 → highlight_out = 180 × 16383 / 255 = 11564
+        // 高输入不应超过 highlight_out
+        let mut ic = default_ic();
+        ic.apply_histogram = true;
+        ic.shadow = [0, 0, 0, 0];
+        ic.highlight = [0, 14400, 14400, 14400];
+        ic.dot_color = vec![0, 0, 0, 0, 0, 0, 0, 180, 180, 180, 255, 255, 255, 255];
+
+        let pipe = Pipeline::build(&ic);
+
+        // v = 14400 (= highlight boundary) 应输出 highlight_out = 11564 左右
+        // v > 14400 → highlight zone, Linear mode 下 hi_out → max 线性
+        // 我们测试临界点输出 ≤ 11564（未超过 hi_out 理论上限）
+        // 注意：Linear mode 在 hi zone 会从 hi_out 线性上升到 16383，所以 v=14400 ≈ hi_out
+        let out_at_hi = pipe.channel_luts[0][14400];
+        assert!(
+            out_at_hi <= 11700 && out_at_hi >= 11400,
+            "在 hi_boundary 处应 ≈ hi_out (11564), got {}",
+            out_at_hi
+        );
+    }
+
+    #[test]
+    fn dotcolor_zero_boundaries_match_old_behavior() {
+        // DotColor = all 0/255 (default) 应该和 identity-like HighShadow 一致
+        let mut ic = default_ic();
+        ic.apply_histogram = true;
+        ic.shadow = [0, 0, 0, 0];
+        ic.highlight = [0, 16383, 16383, 16383];
+        ic.dot_color = vec![0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255];
+
+        let pipe = Pipeline::build(&ic);
+        // 应该接近 identity（各通道输出 ≈ 输入）
+        for i in (0..16384u16).step_by(1024) {
+            let out = pipe.channel_luts[0][i as usize];
+            let diff = (out as i32 - i as i32).abs();
+            assert!(
+                diff <= 50,
+                "全默认 DotColor 应近 identity, v={} out={} diff={}",
+                i,
+                out,
+                diff
+            );
         }
     }
 

@@ -4121,3 +4121,277 @@ src/color/
 - **测试 harness**：`tif_compare --flex-pipeline --trace x,y` 单像素定位
 - **可构造 minimal XML**（§33.4）隔离单一特性
 - **已完成 agent 模板**（审查/深挖类任务可复用）
+
+---
+
+## 48. T21 · BW Negative 完整路径（2026-04-19 完成）
+
+agent `a0733a49abb89d0e9` 产出。
+
+### 48.1 BW 与 color neg 的**唯一算法差异**
+
+FlexColor 对 BW（film_type=2）与 color neg（film_type=1）**共用 CGammaNegCurve**（`pow(1-v², 1/γ) × 16383`）。差异只在两处：
+
+1. **CNegativeCurve gate 严格 `== 1`**（FUN_70266ac0）：BW **跳过** 2 段二次曲线
+2. **Mode==2/5 → RGB→Gray collapse**（FUN_702d90b0）：输出走 Hasselblad Gray.icc 的 kTRC + vtable[0x48] 灰度 writer
+
+### 48.2 核心 bug 修复（已应用）
+
+```rust
+// 错误：过去 shared Neg 对 BW 也启用
+if ic.film_type != 0 { NegativeCurve::default_shared() } else { disabled() }
+
+// 正确：严格 FilmType==1 才启用
+if ic.film_type == 1 { NegativeCurve::default_shared() } else { disabled() }
+```
+
+`src/color/flex/pipeline.rs` 已修。per-channel Neg 本来就是 `== 1` gate，无需改。
+
+### 48.3 Mode 枚举完整解读
+
+| Mode | 用途 | output writer |
+|------|------|--------------|
+| 0 | RGB 标准 | vtable[0x10] 3-channel |
+| 2 | **Grayscale（BW output）** ★ | vtable[0x48] 1-channel via vtable[0x1c] collapse |
+| 3 | Lineart 二值化 | Threshold (0x11f0) 硬阈值 |
+| 4 | 8-bit SoftProof 分支 | (特殊) |
+| 5 | Grayscale 变体 | 同 Mode=2 |
+
+**BW preset XML**（`Standard Negative/B&W negative standard.xml`）：`<FilmType>2</FilmType>` + `<Mode>2</Mode>`。两者配对但在代码中**独立生效**。
+
+### 48.4 Gray ICC 输出（待 Rust 集成）
+
+vtable[0x1c] RGB→scalar 实为 **Hasselblad Gray.icc kTRC**。MVP 可用简单的 BT.601 luma 近似；完美对齐需 lcms2 装载 GrayProfile 字段（默认 `.dfG:`）。
+
+### 48.5 关键地址
+
+| 地址 | 角色 | gate |
+|------|------|------|
+| **0x70266ac0** | CNegativeCurve 14-bit builder | `FilmType == 1` |
+| 0x70266ca0 | 8-bit 变体 | 同上 |
+| 0x702664e0 | CGammaNegCurve 14-bit builder | `FilmType != 0`（color + BW 都用）|
+| **0x702d90b0** | 主 16-bit pipeline loop + Mode gate | `Mode == 2 \|\| Mode == 5` |
+| 0x702dc370 | 8-bit CMYK tile loop + Mode gate | 同上 |
+| 0x7026a460 | Mode=3 lineart threshold | `Mode == 3` |
+
+---
+
+## 49. T22 · ApplyCC 6×6 ColorCorr Matrix 完整机制（2026-04-19 完成）
+
+agent `af96a792dc6e99e57` 产出。**重大发现：不是 6 通道矩阵应用，而是 3 通道 opponent-excess 色彩减法**。
+
+### 49.1 真实算法
+
+**步骤 1（setup 期）**：`FUN_702d57b0` 编译 **6×6 → 3×6**
+
+`this+0x4b4..0x4fb` 的 36 个 int16 + Saturation (`this+0x4fc`) → `this+0x976..0x999` 的 **18 个 int16 编译矩阵**。每个编译单元 = 3 个源单元之和，Saturation 烘焙进特定单元。
+
+**步骤 2（每像素 apply 期）**：`FUN_702d4b50` 
+
+```python
+def apply_color_correction(rgb: [u16; 3], M3x6: [[i16; 6]; 3]) -> [u16; 3]:
+    r, g, b = rgb
+    # 从 RGB 计算 6 个 opponent-excess 色彩项
+    c = [
+        max(0, b - max(r, g)),        # pure blue excess
+        max(0, g - max(r, b)),        # pure green excess
+        max(0, min(r, g) - b),        # yellow content
+        max(0, min(r, b) - g),        # magenta content
+        max(0, min(g, b) - r),        # cyan content
+        max(0, r - max(g, b)),        # pure red excess
+    ]
+    # 每通道：delta = -dot(M3x6[ch], c) / 100
+    out = []
+    for ch in [0, 1, 2]:
+        delta = round(sum(M3x6[ch][k] * c[k] for k in 0..6) / 100.0)
+        out.append(clamp14(rgb[ch] - delta))
+    return out
+```
+
+### 49.2 关键观察
+
+- **不是 `M × [RGB CMY]ᵀ` 6 通道**，是 **M × [chroma_excess_6 项]** → 3 通道 delta
+- **Saturation 烘焙进矩阵**（半数编译单元 +Sat，半数不变），fast-path: `all cells == -Sat`
+- **矩阵单元 = 百分比单位**（除以 100.0 from `_DAT_70733750`）
+- **减法式**（`out = in - delta`，不是线性变换）
+
+### 49.3 Apply 时机
+
+```text
+per-channel LUT apply (§37.1 flex::Pipeline)
+    ↓
+FUN_702d4b50 (ApplyCC)           ← 这一阶段
+    ↓
+FUN_702d4720 (Lightness/Shadow Depth)
+    ↓
+Flip + USM
+```
+
+即 **post-LUT，pre-Lightness**。
+
+### 49.4 Identity fast-path
+
+`FUN_702d4f30` 检查 `any(M6x6[i][j] != -Sat)`。默认矩阵全 0 + Sat=0 → 所有 cells == 0 == -0 → fast-path 触发（**跳过**整个 apply）。
+
+### 49.5 Rust 实现建议
+
+新建 `src/color/flex/color_correction.rs`：
+
+```rust
+pub struct ColorCorrParams {
+    pub matrix: [[i16; 6]; 6],    // ImageCorrection.color_corr parsed to 6×6
+    pub saturation: i16,           // ImageCorrection.saturation
+    pub apply_cc: bool,            // ImageCorrection.apply_cc
+}
+
+pub fn is_customized(p: &ColorCorrParams) -> bool {
+    p.matrix.iter().flatten().any(|&c| c != -p.saturation)
+}
+
+/// Compile 6×6 + Sat → 3×6 (镜像 FUN_702d57b0)
+pub fn compile_3x6(p: &ColorCorrParams) -> [[i16; 6]; 3] { ... }
+
+/// Apply per-pixel (镜像 FUN_702d4b50)，14-bit domain
+pub fn apply(pixels: &mut [u16], m3x6: &[[i16; 6]; 3]) { ... }
+```
+
+在 `Pipeline::apply_16bit_rgb` 里，**LUT 应用后**调 ColorCorrection.apply（前提 ApplyCC && is_customized）。
+
+### 49.6 待确认点
+
+**推测部分**（需 round-trip pixel test 确认）：
+- 6 个 opponent-excess 项的确切计算顺序与编译矩阵列的对应关系
+- Sat 添加到哪些具体的 3×6 cells（pattern 已知，但第几行第几列待验）
+
+### 49.7 关键地址
+
+| 地址 | 角色 |
+|------|------|
+| **0x702d4b50** | ★ Per-pixel apply |
+| **0x702d57b0** | ★ 6×6 → 3×6 编译器 |
+| 0x702d4f30 | Identity check (`any != -Sat`) |
+| 0x702d6630 | InitDefaults 零矩阵 |
+| 0x70733750 | const 100.0 divisor |
+| this+0x4b4 | 6×6 源矩阵（36 × int16）|
+| this+0x4fc | Saturation (int16) |
+| this+0x976 | 3×6 编译矩阵（18 × int16）|
+| this+0x88 | ApplyCC (byte) |
+
+---
+
+## 50. T24 · Lightness CPointCurve@+0x84 精确公式（2026-04-19 完成）
+
+agent `a8173627d4a5bf273` 产出。**无 preset 表，硬编码 4 点 + Lightness 驱动 Point[1].Y**。
+
+### 50.1 CPointCurve@+0x84 的真实初始化
+
+**两阶段追加**（T20 早期报告不完整）：
+
+1. `FUN_70269600` (CPointCurve::Init): 插入 (0, 0) 和 (255, 255)
+2. `FUN_702d5a20` (CImageCorrection setup): 追加 (2, 2) 和 (100, 100)
+
+最终 **4 点曲线**（sorted by X）：
+```
+[(0, 0), (2, 2), (100, 100), (255, 255)]
+```
+
+### 50.2 Lightness 注入公式（FUN_702d6ce0）
+
+```c
+void apply_lightness_to_curve(CImageCorrection* self) {
+    int Lightness = (short)self->[0x96c];
+    int mid_y = floor(Lightness * 2.5) + 2;    // = floor(Lightness * 250 / 100) + 2
+    
+    CPointCurve* cpc = self->[0x84];
+    if (cpc->nPoints > 1) {
+        cpc->points[1].X = 2;          // 保持 X=2
+        cpc->points[1].Y = (u8)mid_y;  // ★ Lightness 改写的唯一 Y 值
+    }
+    if (cpc->nPoints > 2) {
+        cpc->points[2].X = 50;         // (或 DAT_707b6b60 非零时用它)
+        cpc->points[2].Y = 50;         // 固定 shadow anchor
+    }
+    // 触发 LUT rebuild (vtable[13])
+}
+```
+
+**Lightness → Point[1].Y 表**：
+| Lightness | Point[1] = (2, Y) | 意义 |
+|-----------|-------------------|------|
+| 0 | (2, 2) | identity（默认）|
+| 20 | (2, 52) | 暗部 lift 25% |
+| 50 | (2, 127) | 暗部 lift 50%（"中等"）|
+| 100 | (2, 252) | 暗部 lift 全量（饱和前）|
+
+### 50.3 pipeline apply（FUN_702d4720）
+
+gate: `ApplySliders && Lightness > 0 && CPointCurve@+0x84 != NULL`
+
+```c
+for each pixel {
+    ushort raw_curve_input = ... // 某通道或 luma
+    ushort y = CPointCurve_lookup(cpc, raw_curve_input);
+    short delta = y - raw_curve_input;
+    // RGB 三通道同加 delta
+    out[0] = clamp14(out[0] + delta);
+    out[1] = clamp14(out[1] + delta);
+    out[2] = clamp14(out[2] + delta);
+}
+```
+
+**关键**：Lightness=0 严格跳过（> 0 strict gate）。
+
+### 50.4 "Shadow Depth" 形态
+
+因为 Point[1].X=2（byte 空间，14-bit ≈ 128），所以 Lightness 只 **lift 极暗像素（14-bit 0..128）**。中间/高光（>= 50 byte = 3200 14-bit）走 (50,50)→(255,255) 近 identity。这完全匹配 "Shadow Depth" UI 名称。
+
+### 50.5 Rust 实现建议
+
+```rust
+// 在 Pipeline 或单独模块
+pub struct LightnessCurve {
+    pub lightness: i16,       // ImageCorrection.lightness
+    pub apply_sliders: bool,  // ImageCorrection.apply_sliders
+    lut: [u16; 16384],        // 预计算 (byte domain 0..255 ↔ 14-bit 0..16383)
+}
+
+impl LightnessCurve {
+    pub fn new(lightness: i16, apply_sliders: bool) -> Self {
+        // 构造 4 点曲线：(0,0), (2, Y1), (50, 50), (255, 255)
+        // Y1 = min(Lightness * 2.5 + 2, 255)
+        // 线性分段插值填 16384 entries
+        ...
+    }
+    
+    pub fn apply(&self, rgb: &mut [u16]) {
+        if !self.apply_sliders || self.lightness <= 0 { return; }
+        for chunk in rgb.chunks_exact_mut(3) {
+            // raw_curve_input: 某通道或 luma（待确认）
+            let luma = (chunk[0] as u32 + chunk[1] as u32 + chunk[2] as u32) / 3;
+            let delta = self.lut[luma.min(16383) as usize] as i32 - luma as i32;
+            chunk[0] = (chunk[0] as i32 + delta).clamp(0, 16383) as u16;
+            chunk[1] = (chunk[1] as i32 + delta).clamp(0, 16383) as u16;
+            chunk[2] = (chunk[2] as i32 + delta).clamp(0, 16383) as u16;
+        }
+    }
+}
+```
+
+在 Pipeline apply 里 **ColorCorrection 之后、USM 之前** 调用。
+
+### 50.6 关键地址
+
+| 地址 | 角色 |
+|------|------|
+| **0x702d6ce0** | Lightness inject (改写 Point[1]) |
+| **0x702d4720** | Apply per-row (读 CPointCurve，加 delta 到 RGB) |
+| 0x702d5a20 | curve setup（追加 2 点）|
+| 0x70269600 | CPointCurve::Init（初始 2 点）|
+| 0x702693f0 | CPointCurve::AddPoint (sorted insert) |
+| 0x70268fc0 | BuildLUT14 (vtable[8]) |
+| 0x702661f0 | LUT query (vtable[12]) |
+| this+0x96c | Lightness (int16) |
+| this+0x1218 | ApplySliders (byte) |
+| this+0x84 | CPointCurve* ptr |
+
+---
