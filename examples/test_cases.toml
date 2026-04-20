@@ -39,21 +39,21 @@ name = "emb_rgb_saturated"
 fff    = "test1_raw.fff"
 ref    = "test1_raw_rgb_saturated_16bit.tif"
 source = "embedded_name"
-preset = "test1_raw_rgb_saturated"
+preset = "test1_raw_rgb_saturated_16bit"
 
 [[case]]
 name = "emb_rgb_dark"
 fff    = "test1_raw.fff"
 ref    = "test1_raw_rgb_dark_16bit.tif"
 source = "embedded_name"
-preset = "test1_raw_rgb_dark"
+preset = "test1_raw_rgb_dark_16bit"
 
 [[case]]
 name = "emb_rgb_dark_saturated"
 fff    = "test1_raw.fff"
 ref    = "test1_raw_rgb_dark_saturated_16bit.tif"
 source = "embedded_name"
-preset = "test1_raw_rgb_dark_saturated"
+preset = "test1_raw_rgb_dark_saturated_16bit"
 
 [[case]]
 name = "emb_cmyk_standard"
