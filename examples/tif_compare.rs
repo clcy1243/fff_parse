@@ -932,10 +932,11 @@ fn load_gray_as_srgb16(path: &Path) -> Option<image::ImageBuffer<image::Rgb<u16>
     match bps {
         8 => {
             let src: Vec<u8> = raw[..n_px].to_vec();
-            let transform = Transform::new(
+            let transform = Transform::new_flags(
                 &input_profile, PixelFormat::GRAY_8,
                 &output_profile, PixelFormat::RGB_16,
-                Intent::Perceptual,
+                Intent::RelativeColorimetric,
+                lcms2::Flags::BLACKPOINT_COMPENSATION,
             ).ok()?;
             let mut dst = vec![[0u16; 3]; n_px];
             transform.transform_pixels(&src, &mut dst);
@@ -955,10 +956,11 @@ fn load_gray_as_srgb16(path: &Path) -> Option<image::ImageBuffer<image::Rgb<u16>
                 // PhotometricInterpretation 0 = WhiteIs0 (反相)
                 if meta.photometric == 0 { src[i] = 65535 - src[i]; }
             }
-            let transform = Transform::new(
+            let transform = Transform::new_flags(
                 &input_profile, PixelFormat::GRAY_16,
                 &output_profile, PixelFormat::RGB_16,
-                Intent::Perceptual,
+                Intent::RelativeColorimetric,
+                lcms2::Flags::BLACKPOINT_COMPENSATION,
             ).ok()?;
             let mut dst = vec![[0u16; 3]; n_px];
             transform.transform_pixels(&src, &mut dst);
