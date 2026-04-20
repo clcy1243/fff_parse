@@ -1,178 +1,293 @@
 # gen_variant_ffcs 生成的内嵌 XML 变体 FFF 测试用例
-# 用法：在 FlexColor 打开每个 variants/*.fff，直接导出 TIF
-#      到同名 variants/*.tif，然后 tif_compare --manifest.
+# 每个文件：原始扫描像素 = test1_raw.fff，仅嵌入 XML 改为单 Setting
+# 前缀 v_pos/v_neg/v_bw 标识胶片类型
+# 用法：FlexColor 打开 variants/*.fff，直接 Export TIF 到同名 .tif
 
 [[case]]
-name = "v_contrast_-100"
-fff    = "variants/v_contrast_-100.fff"
-ref    = "variants/v_contrast_-100.tif"
+name = "v_pos_contrast_-50"
+fff    = "variants/v_pos_contrast_-50.fff"
+ref    = "variants/v_pos_contrast_-50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_contrast_-50"
-fff    = "variants/v_contrast_-50.fff"
-ref    = "variants/v_contrast_-50.tif"
+name = "v_pos_contrast_-20"
+fff    = "variants/v_pos_contrast_-20.fff"
+ref    = "variants/v_pos_contrast_-20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_contrast_-20"
-fff    = "variants/v_contrast_-20.fff"
-ref    = "variants/v_contrast_-20.tif"
+name = "v_pos_contrast_+20"
+fff    = "variants/v_pos_contrast_+20.fff"
+ref    = "variants/v_pos_contrast_+20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_contrast_+00"
-fff    = "variants/v_contrast_+00.fff"
-ref    = "variants/v_contrast_+00.tif"
+name = "v_pos_contrast_+50"
+fff    = "variants/v_pos_contrast_+50.fff"
+ref    = "variants/v_pos_contrast_+50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_contrast_+20"
-fff    = "variants/v_contrast_+20.fff"
-ref    = "variants/v_contrast_+20.tif"
+name = "v_pos_brightness_-50"
+fff    = "variants/v_pos_brightness_-50.fff"
+ref    = "variants/v_pos_brightness_-50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_contrast_+50"
-fff    = "variants/v_contrast_+50.fff"
-ref    = "variants/v_contrast_+50.tif"
+name = "v_pos_brightness_-20"
+fff    = "variants/v_pos_brightness_-20.fff"
+ref    = "variants/v_pos_brightness_-20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_contrast_+100"
-fff    = "variants/v_contrast_+100.fff"
-ref    = "variants/v_contrast_+100.tif"
+name = "v_pos_brightness_+20"
+fff    = "variants/v_pos_brightness_+20.fff"
+ref    = "variants/v_pos_brightness_+20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_brightness_-100"
-fff    = "variants/v_brightness_-100.fff"
-ref    = "variants/v_brightness_-100.tif"
+name = "v_pos_brightness_+50"
+fff    = "variants/v_pos_brightness_+50.fff"
+ref    = "variants/v_pos_brightness_+50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_brightness_-50"
-fff    = "variants/v_brightness_-50.fff"
-ref    = "variants/v_brightness_-50.tif"
+name = "v_pos_lightness_020"
+fff    = "variants/v_pos_lightness_020.fff"
+ref    = "variants/v_pos_lightness_020.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_brightness_-20"
-fff    = "variants/v_brightness_-20.fff"
-ref    = "variants/v_brightness_-20.tif"
+name = "v_pos_lightness_050"
+fff    = "variants/v_pos_lightness_050.fff"
+ref    = "variants/v_pos_lightness_050.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_brightness_+00"
-fff    = "variants/v_brightness_+00.fff"
-ref    = "variants/v_brightness_+00.tif"
+name = "v_pos_lightness_100"
+fff    = "variants/v_pos_lightness_100.fff"
+ref    = "variants/v_pos_lightness_100.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_brightness_+20"
-fff    = "variants/v_brightness_+20.fff"
-ref    = "variants/v_brightness_+20.tif"
+name = "v_pos_saturation_-20"
+fff    = "variants/v_pos_saturation_-20.fff"
+ref    = "variants/v_pos_saturation_-20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_brightness_+50"
-fff    = "variants/v_brightness_+50.fff"
-ref    = "variants/v_brightness_+50.tif"
+name = "v_pos_saturation_+20"
+fff    = "variants/v_pos_saturation_+20.fff"
+ref    = "variants/v_pos_saturation_+20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_brightness_+100"
-fff    = "variants/v_brightness_+100.fff"
-ref    = "variants/v_brightness_+100.tif"
+name = "v_pos_gamma_150"
+fff    = "variants/v_pos_gamma_150.fff"
+ref    = "variants/v_pos_gamma_150.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_lightness_000"
-fff    = "variants/v_lightness_000.fff"
-ref    = "variants/v_lightness_000.tif"
+name = "v_pos_gamma_225"
+fff    = "variants/v_pos_gamma_225.fff"
+ref    = "variants/v_pos_gamma_225.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_lightness_020"
-fff    = "variants/v_lightness_020.fff"
-ref    = "variants/v_lightness_020.tif"
+name = "v_pos_gamma_250"
+fff    = "variants/v_pos_gamma_250.fff"
+ref    = "variants/v_pos_gamma_250.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_lightness_050"
-fff    = "variants/v_lightness_050.fff"
-ref    = "variants/v_lightness_050.tif"
+name = "v_neg_contrast_-50"
+fff    = "variants/v_neg_contrast_-50.fff"
+ref    = "variants/v_neg_contrast_-50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_lightness_075"
-fff    = "variants/v_lightness_075.fff"
-ref    = "variants/v_lightness_075.tif"
+name = "v_neg_contrast_-20"
+fff    = "variants/v_neg_contrast_-20.fff"
+ref    = "variants/v_neg_contrast_-20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_lightness_100"
-fff    = "variants/v_lightness_100.fff"
-ref    = "variants/v_lightness_100.tif"
+name = "v_neg_contrast_+20"
+fff    = "variants/v_neg_contrast_+20.fff"
+ref    = "variants/v_neg_contrast_+20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_saturation_-50"
-fff    = "variants/v_saturation_-50.fff"
-ref    = "variants/v_saturation_-50.tif"
+name = "v_neg_contrast_+50"
+fff    = "variants/v_neg_contrast_+50.fff"
+ref    = "variants/v_neg_contrast_+50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_saturation_-20"
-fff    = "variants/v_saturation_-20.fff"
-ref    = "variants/v_saturation_-20.tif"
+name = "v_neg_brightness_-50"
+fff    = "variants/v_neg_brightness_-50.fff"
+ref    = "variants/v_neg_brightness_-50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_saturation_+00"
-fff    = "variants/v_saturation_+00.fff"
-ref    = "variants/v_saturation_+00.tif"
+name = "v_neg_brightness_-20"
+fff    = "variants/v_neg_brightness_-20.fff"
+ref    = "variants/v_neg_brightness_-20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_saturation_+20"
-fff    = "variants/v_saturation_+20.fff"
-ref    = "variants/v_saturation_+20.tif"
+name = "v_neg_brightness_+20"
+fff    = "variants/v_neg_brightness_+20.fff"
+ref    = "variants/v_neg_brightness_+20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_saturation_+50"
-fff    = "variants/v_saturation_+50.fff"
-ref    = "variants/v_saturation_+50.tif"
+name = "v_neg_brightness_+50"
+fff    = "variants/v_neg_brightness_+50.fff"
+ref    = "variants/v_neg_brightness_+50.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_gamma_150"
-fff    = "variants/v_gamma_150.fff"
-ref    = "variants/v_gamma_150.tif"
+name = "v_neg_lightness_020"
+fff    = "variants/v_neg_lightness_020.fff"
+ref    = "variants/v_neg_lightness_020.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_gamma_175"
-fff    = "variants/v_gamma_175.fff"
-ref    = "variants/v_gamma_175.tif"
+name = "v_neg_lightness_050"
+fff    = "variants/v_neg_lightness_050.fff"
+ref    = "variants/v_neg_lightness_050.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_gamma_200"
-fff    = "variants/v_gamma_200.fff"
-ref    = "variants/v_gamma_200.tif"
+name = "v_neg_lightness_100"
+fff    = "variants/v_neg_lightness_100.fff"
+ref    = "variants/v_neg_lightness_100.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_gamma_225"
-fff    = "variants/v_gamma_225.fff"
-ref    = "variants/v_gamma_225.tif"
+name = "v_neg_saturation_-20"
+fff    = "variants/v_neg_saturation_-20.fff"
+ref    = "variants/v_neg_saturation_-20.tif"
 source = "embedded_current"
 
 [[case]]
-name = "v_gamma_250"
-fff    = "variants/v_gamma_250.fff"
-ref    = "variants/v_gamma_250.tif"
+name = "v_neg_saturation_+20"
+fff    = "variants/v_neg_saturation_+20.fff"
+ref    = "variants/v_neg_saturation_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_neg_gamma_150"
+fff    = "variants/v_neg_gamma_150.fff"
+ref    = "variants/v_neg_gamma_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_neg_gamma_225"
+fff    = "variants/v_neg_gamma_225.fff"
+ref    = "variants/v_neg_gamma_225.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_neg_gamma_250"
+fff    = "variants/v_neg_gamma_250.fff"
+ref    = "variants/v_neg_gamma_250.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_contrast_-50"
+fff    = "variants/v_bw_contrast_-50.fff"
+ref    = "variants/v_bw_contrast_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_contrast_-20"
+fff    = "variants/v_bw_contrast_-20.fff"
+ref    = "variants/v_bw_contrast_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_contrast_+20"
+fff    = "variants/v_bw_contrast_+20.fff"
+ref    = "variants/v_bw_contrast_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_contrast_+50"
+fff    = "variants/v_bw_contrast_+50.fff"
+ref    = "variants/v_bw_contrast_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_brightness_-50"
+fff    = "variants/v_bw_brightness_-50.fff"
+ref    = "variants/v_bw_brightness_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_brightness_-20"
+fff    = "variants/v_bw_brightness_-20.fff"
+ref    = "variants/v_bw_brightness_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_brightness_+20"
+fff    = "variants/v_bw_brightness_+20.fff"
+ref    = "variants/v_bw_brightness_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_brightness_+50"
+fff    = "variants/v_bw_brightness_+50.fff"
+ref    = "variants/v_bw_brightness_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_lightness_020"
+fff    = "variants/v_bw_lightness_020.fff"
+ref    = "variants/v_bw_lightness_020.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_lightness_050"
+fff    = "variants/v_bw_lightness_050.fff"
+ref    = "variants/v_bw_lightness_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_lightness_100"
+fff    = "variants/v_bw_lightness_100.fff"
+ref    = "variants/v_bw_lightness_100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_saturation_-20"
+fff    = "variants/v_bw_saturation_-20.fff"
+ref    = "variants/v_bw_saturation_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_saturation_+20"
+fff    = "variants/v_bw_saturation_+20.fff"
+ref    = "variants/v_bw_saturation_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_gamma_150"
+fff    = "variants/v_bw_gamma_150.fff"
+ref    = "variants/v_bw_gamma_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_gamma_225"
+fff    = "variants/v_bw_gamma_225.fff"
+ref    = "variants/v_bw_gamma_225.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_gamma_250"
+fff    = "variants/v_bw_gamma_250.fff"
+ref    = "variants/v_bw_gamma_250.tif"
 source = "embedded_current"
 

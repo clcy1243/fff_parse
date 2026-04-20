@@ -28,8 +28,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-const TEMPLATE_PATH: &str =
-    "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard/RGB standard.xml";
+/// 3 个基础胶片类型模板
+const TEMPLATES: &[(&str, &str)] = &[
+    ("pos", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard/RGB standard.xml"),
+    ("neg", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/Negative RGB standard.xml"),
+    ("bw",  "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/B&W negative standard.xml"),
+];
 const BASE_FFF: &str = "/Users/will/vmwareShare/test_image/test1_raw.fff";
 const OUT_DIR: &str = "/Users/will/vmwareShare/test_image/variants";
 const CASES_OUT: &str = "examples/variants_cases.toml";
@@ -67,41 +71,42 @@ struct Variant {
     patches: Vec<(String, String)>,
 }
 
-fn build_variants() -> Vec<Variant> {
+/// 针对某个胶片类型 (pos/neg/bw) 的变体列表
+fn build_variants_for(prefix: &str) -> Vec<Variant> {
     let mut v = Vec::new();
-    for c in [-100, -50, -20, 0, 20, 50, 100] {
+
+    // 命名：v_{prefix}_{slider}_{val}
+    let name = |slider: &str, v: &str| format!("v_{}_{}_{}", prefix, slider, v);
+
+    // 稀疏档位：每个 slider 4 档，足够拟合公式（避免 102MB × 87 文件超盘）
+    for c in [-50, -20, 20, 50] {
         v.push(Variant {
-            name: format!("v_contrast_{:+03}", c),
+            name: name("contrast", &format!("{:+03}", c)),
             patches: vec![("Contrast".to_string(), c.to_string())],
         });
     }
-    for b in [-100, -50, -20, 0, 20, 50, 100] {
+    for b in [-50, -20, 20, 50] {
         v.push(Variant {
-            name: format!("v_brightness_{:+03}", b),
+            name: name("brightness", &format!("{:+03}", b)),
             patches: vec![("Brightness".to_string(), b.to_string())],
         });
     }
-    for l in [0, 20, 50, 75, 100] {
+    for l in [20, 50, 100] {
         v.push(Variant {
-            name: format!("v_lightness_{:03}", l),
+            name: name("lightness", &format!("{:03}", l)),
             patches: vec![("Lightness".to_string(), l.to_string())],
         });
     }
-    for s in [-50, -20, 0, 20, 50] {
+    // BW 模式下 Saturation 影响 ColorCorr 进链（最终 desaturate 成 gray）
+    for s in [-20, 20] {
         v.push(Variant {
-            name: format!("v_saturation_{:+03}", s),
+            name: name("saturation", &format!("{:+03}", s)),
             patches: vec![("Saturation".to_string(), s.to_string())],
         });
     }
-    for (tag, g) in &[
-        ("150", "1.5"),
-        ("175", "1.75"),
-        ("200", "2.0"),
-        ("225", "2.25"),
-        ("250", "2.5"),
-    ] {
+    for (tag, g) in &[("150", "1.5"), ("225", "2.25"), ("250", "2.5")] {
         v.push(Variant {
-            name: format!("v_gamma_{}", tag),
+            name: name("gamma", tag),
             patches: vec![("Gamma".to_string(), g.to_string())],
         });
     }
@@ -180,8 +185,6 @@ fn locate_xml_region(data: &[u8]) -> (usize, usize, usize) {
 }
 
 fn main() {
-    let template = fs::read_to_string(TEMPLATE_PATH)
-        .expect("读取模板失败");
     let base_data = fs::read(BASE_FFF).expect("读取基础 FFF 失败");
 
     let out_dir = PathBuf::from(OUT_DIR);
@@ -193,60 +196,60 @@ fn main() {
 
     let mut cases_toml = String::from(
         "# gen_variant_ffcs 生成的内嵌 XML 变体 FFF 测试用例\n\
-         # 用法：在 FlexColor 打开每个 variants/*.fff，直接导出 TIF\n\
-         #      到同名 variants/*.tif，然后 tif_compare --manifest.\n\n",
+         # 每个文件：原始扫描像素 = test1_raw.fff，仅嵌入 XML 改为单 Setting\n\
+         # 前缀 v_pos/v_neg/v_bw 标识胶片类型\n\
+         # 用法：FlexColor 打开 variants/*.fff，直接 Export TIF 到同名 .tif\n\n",
     );
 
-    let variants = build_variants();
-    for var in &variants {
-        // 1. 生成 patched preset XML
-        let mut patched = template.clone();
-        for (k, v) in &var.patches {
-            patched = patch_scalar(&patched, k, v);
+    let mut total = 0usize;
+
+    for (prefix, tmpl_path) in TEMPLATES {
+        let template = fs::read_to_string(tmpl_path)
+            .unwrap_or_else(|e| panic!("读取模板 {} 失败: {}", tmpl_path, e));
+        println!("\n== 模板 [{}] → {} ==", prefix, tmpl_path);
+
+        let variants = build_variants_for(prefix);
+        for var in &variants {
+            let mut patched = template.clone();
+            for (k, v) in &var.patches {
+                patched = patch_scalar(&patched, k, v);
+            }
+            let inner = extract_image_setting_dict(&patched);
+            let fff_xml = build_fff_xml(&inner);
+            let fff_xml_bytes = fff_xml.as_bytes();
+
+            if xml_start + fff_xml_bytes.len() > allocated_end {
+                eprintln!("[warn] {} XML 太长 ({} B)，跳过", var.name, fff_xml_bytes.len());
+                continue;
+            }
+
+            let mut new_data = base_data.clone();
+            let len_be = (fff_xml_bytes.len() as u32).to_be_bytes();
+            new_data[prefix_off..prefix_off + 4].copy_from_slice(&len_be);
+            new_data[xml_start..xml_start + fff_xml_bytes.len()].copy_from_slice(fff_xml_bytes);
+            for i in (xml_start + fff_xml_bytes.len())..allocated_end {
+                new_data[i] = 0;
+            }
+
+            let out_path = out_dir.join(format!("{}.fff", var.name));
+            fs::write(&out_path, &new_data).unwrap();
+            println!("✓ {} ({} B XML)", out_path.display(), fff_xml_bytes.len());
+
+            cases_toml.push_str(&format!(
+                "[[case]]\n\
+                 name = \"{name}\"\n\
+                 fff    = \"variants/{name}.fff\"\n\
+                 ref    = \"variants/{name}.tif\"\n\
+                 source = \"embedded_current\"\n\n",
+                name = var.name,
+            ));
+            total += 1;
         }
-        // 2. 抽 ImageSetting dict
-        let inner = extract_image_setting_dict(&patched);
-        // 3. 包装 FFF XML
-        let fff_xml = build_fff_xml(&inner);
-        let fff_xml_bytes = fff_xml.as_bytes();
-
-        // 4. 检查能否放入
-        if xml_start + fff_xml_bytes.len() > allocated_end {
-            eprintln!("[warn] {} XML 太长 ({} B)，跳过", var.name, fff_xml_bytes.len());
-            continue;
-        }
-
-        // 5. 构造新 FFF 数据
-        let mut new_data = base_data.clone();
-        // 更新长度前缀
-        let len_be = (fff_xml_bytes.len() as u32).to_be_bytes();
-        new_data[prefix_off..prefix_off + 4].copy_from_slice(&len_be);
-        // 写入 XML
-        new_data[xml_start..xml_start + fff_xml_bytes.len()].copy_from_slice(fff_xml_bytes);
-        // 零填充剩余到 allocated_end
-        for i in (xml_start + fff_xml_bytes.len())..allocated_end {
-            new_data[i] = 0;
-        }
-
-        // 6. 保存
-        let out_path = out_dir.join(format!("{}.fff", var.name));
-        fs::write(&out_path, &new_data).unwrap();
-        println!("✓ {} ({} B XML)", out_path.display(), fff_xml_bytes.len());
-
-        // 7. 追加 test case
-        cases_toml.push_str(&format!(
-            "[[case]]\n\
-             name = \"{name}\"\n\
-             fff    = \"variants/{name}.fff\"\n\
-             ref    = \"variants/{name}.tif\"\n\
-             source = \"embedded_current\"\n\n",
-            name = var.name,
-        ));
     }
 
     fs::write(CASES_OUT, cases_toml).unwrap();
     println!(
-        "\n生成 {} 个变体 FFF → {}\ntest_cases: {}\n\n下一步：\n  1. 在 FlexColor 打开任一 {}/v_*.fff 并导出同名 TIF\n  2. cargo run --release --example tif_compare -- --manifest {} --flex-pipeline",
-        variants.len(), out_dir.display(), CASES_OUT, OUT_DIR, CASES_OUT
+        "\n共 {} 个变体 FFF → {}\ntest_cases: {}\n\n下一步：\n  1. FlexColor 打开 {}/v_*.fff 并导出同名 TIF\n  2. cargo run --release --example tif_compare -- --manifest {} --flex-pipeline",
+        total, out_dir.display(), CASES_OUT, OUT_DIR, CASES_OUT
     );
 }
