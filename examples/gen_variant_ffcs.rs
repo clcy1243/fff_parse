@@ -217,8 +217,14 @@ fn main() {
     for (prefix, tmpl_path, mode) in TEMPLATES {
         let raw_template = fs::read_to_string(tmpl_path)
             .unwrap_or_else(|e| panic!("读取模板 {} 失败: {}", tmpl_path, e));
-        // 强制设置输出 Mode（所有变体共享，pos/neg=1=RGB16, bw=5=Gray16）
-        let template = patch_scalar(&raw_template, "Mode", mode);
+        // 强制设置输出 Mode（pos/neg=1=RGB16, bw=5=Gray16）
+        let mut template = patch_scalar(&raw_template, "Mode", mode);
+        // 清零 Crop（BW 模板带非零裁切导致 FlexColor 导出缩略图尺寸）
+        for k in ["CropBottom", "CropLeft", "CropRight", "CropTop"] {
+            template = patch_scalar(&template, k, "0.0");
+        }
+        // Frame=1 表示全图（BW 模板默认 40 是帧编号？保底设 1）
+        template = patch_scalar(&template, "Frame", "1");
         println!("\n== 模板 [{}] Mode={} → {} ==", prefix, mode, tmpl_path);
 
         let variants = build_variants_for(prefix);
