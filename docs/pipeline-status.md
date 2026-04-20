@@ -387,3 +387,52 @@ TOTAL: **7 STRICT / 4 PASS / 4 WARN / 130 FAIL** (145 tests / 29 cases)
 关键改善 v4 → v7：
 - 4 neg RGB 首次进入 PASS tier (T25 chroma permutation 修复)
 - 1 新 STRICT 升级 (ext_rgb_saturated)
+
+---
+
+## v10 阶段：BW/CMYK 路径大幅改进（2026-04-21）
+
+**累计从 v7 → v10：+2 STRICT / +0 PASS / +27 WARN / -29 FAIL**
+
+### 主要改动
+
+1. **T36** Hasselblad Gray.icc 替代 BT.601 luma（BW 去色）
+2. **T37** BW 跳过 sRGB 中间态（input_icc → Gray 直连）
+3. **T38** Lightness LUT 用 PointCurve B-spline（替代线性分段）
+4. **T39** test_cases.toml 修正 emb 预设（_16bit 后缀）
+5. **T40** CMYK ref 载入 Intent::RelativeColorimetric + BPC
+6. **T41** Gray ref 一并改 Rel+BPC（对称）
+
+### v10 基线
+
+**TOTAL: 8 STRICT / 4 PASS / 32 WARN / 101 FAIL** (145 tests / 29 cases)
+
+关键改善列表：
+| case | v7 | v10 |
+|------|:---:|:---:|
+| emb_bw_neg_standard | 3844 FAIL | **487 WARN** |
+| ext_bw_neg_standard | 3844 FAIL | **487 WARN** |
+| emb_rgb_dark / ext_rgb_dark | 1940 FAIL | **797 WARN** |
+| ext_rgb_dark_saturated | 2051 FAIL | **871 WARN** |
+| emb_rgb_saturated | 3323 FAIL | **95 STRICT** |
+| emb_cmyk_standard | 1864 FAIL | **746 WARN** |
+| emb_cmyk_dark | 1909 FAIL | **1093 WARN** |
+| emb_neg_cmyk_standard | 1896 FAIL | **1140 WARN** |
+| emb_neg_cmyk_saturated | 2047 FAIL | **1253 WARN** |
+| e2e_all_config | 7203 FAIL | 3890 FAIL (-46%) |
+
+### 剩余 FAIL 主要原因
+
+- **e2e_default** (2133, +452): test1.fff Setting #1 特殊组合残余
+- **e2e_all_config** (3890, -2114): slider piled up residual
+- **emb/ext CMYK saturated** (911): P99 超阈值 5303 vs 5000 边缘
+- **emb/ext CMYK dark_saturated** (1387): MAE 超 WARN 阈值 1280 少许
+- **ext_rgb_saturated 某个 T1-T4** ICC 路径变体依然 FAIL
+
+### 已验证 / 失败实验
+
+- ❌ BW 用 Relative+BPC（487→1215 更差）
+- ❌ 全局 default Rel+BPC（8 WARN→FAIL 回归）
+- ❌ CMYK Saturation intent（不支持，回到 Perceptual 质量）
+- ❌ 跳过 USM（4 STRICT→PASS/WARN）
+
