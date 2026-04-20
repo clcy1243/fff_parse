@@ -28,11 +28,20 @@
 use std::fs;
 use std::path::PathBuf;
 
-/// 3 个基础胶片类型模板
-const TEMPLATES: &[(&str, &str)] = &[
-    ("pos", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard/RGB standard.xml"),
-    ("neg", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/Negative RGB standard.xml"),
-    ("bw",  "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/B&W negative standard.xml"),
+/// 3 个基础胶片类型模板（带期望输出 Mode）
+///
+/// Mode 语义（FlexColor "模式"菜单）：
+/// - 0 = 8-bit RGB  ← 默认（用户已导出这批）
+/// - 1 = 16-bit RGB
+/// - 2 = 8-bit Gray ← 默认（BW 用户已导出这批）
+/// - 4 = 8-bit CMYK
+/// - 5 = 16-bit Gray
+///
+/// 统一强制 **16-bit 输出**（Mode=1 RGB16, Mode=5 Gray16）以获得最高拟合精度。
+const TEMPLATES: &[(&str, &str, &str)] = &[
+    ("pos", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard/RGB standard.xml", "1"),
+    ("neg", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/Negative RGB standard.xml", "1"),
+    ("bw",  "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/B&W negative standard.xml", "5"),
 ];
 const BASE_FFF: &str = "/Users/will/vmwareShare/test_image/test1_raw.fff";
 const OUT_DIR: &str = "/Users/will/vmwareShare/test_image/variants";
@@ -198,15 +207,19 @@ fn main() {
         "# gen_variant_ffcs 生成的内嵌 XML 变体 FFF 测试用例\n\
          # 每个文件：原始扫描像素 = test1_raw.fff，仅嵌入 XML 改为单 Setting\n\
          # 前缀 v_pos/v_neg/v_bw 标识胶片类型\n\
-         # 用法：FlexColor 打开 variants/*.fff，直接 Export TIF 到同名 .tif\n\n",
+         # 用法：FlexColor 打开 variants/*.fff，直接 Export TIF 到同名 .tif\n\n\
+         data_dir = \"/Users/will/vmwareShare/test_image\"\n\
+         preset_dir = \".\"\n\n",
     );
 
     let mut total = 0usize;
 
-    for (prefix, tmpl_path) in TEMPLATES {
-        let template = fs::read_to_string(tmpl_path)
+    for (prefix, tmpl_path, mode) in TEMPLATES {
+        let raw_template = fs::read_to_string(tmpl_path)
             .unwrap_or_else(|e| panic!("读取模板 {} 失败: {}", tmpl_path, e));
-        println!("\n== 模板 [{}] → {} ==", prefix, tmpl_path);
+        // 强制设置输出 Mode（所有变体共享，pos/neg=1=RGB16, bw=5=Gray16）
+        let template = patch_scalar(&raw_template, "Mode", mode);
+        println!("\n== 模板 [{}] Mode={} → {} ==", prefix, mode, tmpl_path);
 
         let variants = build_variants_for(prefix);
         for var in &variants {

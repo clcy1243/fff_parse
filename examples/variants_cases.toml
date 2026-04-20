@@ -3,6 +3,9 @@
 # 前缀 v_pos/v_neg/v_bw 标识胶片类型
 # 用法：FlexColor 打开 variants/*.fff，直接 Export TIF 到同名 .tif
 
+data_dir = "/Users/will/vmwareShare/test_image"
+preset_dir = "."
+
 [[case]]
 name = "v_pos_contrast_-50"
 fff    = "variants/v_pos_contrast_-50.fff"
