@@ -1,0 +1,207 @@
+# 自动生成（gen_variants）：单 slider 隔离的测试 case
+# 用法：在 FlexColor 打开 BASE_FFF，分别载入每个 variant XML，
+#      导出 TIF 到 REF_TIF_DIR；然后 tif_compare --manifest.
+
+[[case]]
+name = "v_contrast_-100"
+fff    = "test1_raw.fff"
+ref    = "variants/v_contrast_-100.tif"
+source = "external_xml"
+preset = "variants/v_contrast_-100.xml"
+
+[[case]]
+name = "v_contrast_-50"
+fff    = "test1_raw.fff"
+ref    = "variants/v_contrast_-50.tif"
+source = "external_xml"
+preset = "variants/v_contrast_-50.xml"
+
+[[case]]
+name = "v_contrast_-20"
+fff    = "test1_raw.fff"
+ref    = "variants/v_contrast_-20.tif"
+source = "external_xml"
+preset = "variants/v_contrast_-20.xml"
+
+[[case]]
+name = "v_contrast_+00"
+fff    = "test1_raw.fff"
+ref    = "variants/v_contrast_+00.tif"
+source = "external_xml"
+preset = "variants/v_contrast_+00.xml"
+
+[[case]]
+name = "v_contrast_+20"
+fff    = "test1_raw.fff"
+ref    = "variants/v_contrast_+20.tif"
+source = "external_xml"
+preset = "variants/v_contrast_+20.xml"
+
+[[case]]
+name = "v_contrast_+50"
+fff    = "test1_raw.fff"
+ref    = "variants/v_contrast_+50.tif"
+source = "external_xml"
+preset = "variants/v_contrast_+50.xml"
+
+[[case]]
+name = "v_contrast_+100"
+fff    = "test1_raw.fff"
+ref    = "variants/v_contrast_+100.tif"
+source = "external_xml"
+preset = "variants/v_contrast_+100.xml"
+
+[[case]]
+name = "v_brightness_-100"
+fff    = "test1_raw.fff"
+ref    = "variants/v_brightness_-100.tif"
+source = "external_xml"
+preset = "variants/v_brightness_-100.xml"
+
+[[case]]
+name = "v_brightness_-50"
+fff    = "test1_raw.fff"
+ref    = "variants/v_brightness_-50.tif"
+source = "external_xml"
+preset = "variants/v_brightness_-50.xml"
+
+[[case]]
+name = "v_brightness_-20"
+fff    = "test1_raw.fff"
+ref    = "variants/v_brightness_-20.tif"
+source = "external_xml"
+preset = "variants/v_brightness_-20.xml"
+
+[[case]]
+name = "v_brightness_+00"
+fff    = "test1_raw.fff"
+ref    = "variants/v_brightness_+00.tif"
+source = "external_xml"
+preset = "variants/v_brightness_+00.xml"
+
+[[case]]
+name = "v_brightness_+20"
+fff    = "test1_raw.fff"
+ref    = "variants/v_brightness_+20.tif"
+source = "external_xml"
+preset = "variants/v_brightness_+20.xml"
+
+[[case]]
+name = "v_brightness_+50"
+fff    = "test1_raw.fff"
+ref    = "variants/v_brightness_+50.tif"
+source = "external_xml"
+preset = "variants/v_brightness_+50.xml"
+
+[[case]]
+name = "v_brightness_+100"
+fff    = "test1_raw.fff"
+ref    = "variants/v_brightness_+100.tif"
+source = "external_xml"
+preset = "variants/v_brightness_+100.xml"
+
+[[case]]
+name = "v_lightness_000"
+fff    = "test1_raw.fff"
+ref    = "variants/v_lightness_000.tif"
+source = "external_xml"
+preset = "variants/v_lightness_000.xml"
+
+[[case]]
+name = "v_lightness_020"
+fff    = "test1_raw.fff"
+ref    = "variants/v_lightness_020.tif"
+source = "external_xml"
+preset = "variants/v_lightness_020.xml"
+
+[[case]]
+name = "v_lightness_050"
+fff    = "test1_raw.fff"
+ref    = "variants/v_lightness_050.tif"
+source = "external_xml"
+preset = "variants/v_lightness_050.xml"
+
+[[case]]
+name = "v_lightness_075"
+fff    = "test1_raw.fff"
+ref    = "variants/v_lightness_075.tif"
+source = "external_xml"
+preset = "variants/v_lightness_075.xml"
+
+[[case]]
+name = "v_lightness_100"
+fff    = "test1_raw.fff"
+ref    = "variants/v_lightness_100.tif"
+source = "external_xml"
+preset = "variants/v_lightness_100.xml"
+
+[[case]]
+name = "v_saturation_-50"
+fff    = "test1_raw.fff"
+ref    = "variants/v_saturation_-50.tif"
+source = "external_xml"
+preset = "variants/v_saturation_-50.xml"
+
+[[case]]
+name = "v_saturation_-20"
+fff    = "test1_raw.fff"
+ref    = "variants/v_saturation_-20.tif"
+source = "external_xml"
+preset = "variants/v_saturation_-20.xml"
+
+[[case]]
+name = "v_saturation_+00"
+fff    = "test1_raw.fff"
+ref    = "variants/v_saturation_+00.tif"
+source = "external_xml"
+preset = "variants/v_saturation_+00.xml"
+
+[[case]]
+name = "v_saturation_+20"
+fff    = "test1_raw.fff"
+ref    = "variants/v_saturation_+20.tif"
+source = "external_xml"
+preset = "variants/v_saturation_+20.xml"
+
+[[case]]
+name = "v_saturation_+50"
+fff    = "test1_raw.fff"
+ref    = "variants/v_saturation_+50.tif"
+source = "external_xml"
+preset = "variants/v_saturation_+50.xml"
+
+[[case]]
+name = "v_gamma_150"
+fff    = "test1_raw.fff"
+ref    = "variants/v_gamma_150.tif"
+source = "external_xml"
+preset = "variants/v_gamma_150.xml"
+
+[[case]]
+name = "v_gamma_175"
+fff    = "test1_raw.fff"
+ref    = "variants/v_gamma_175.tif"
+source = "external_xml"
+preset = "variants/v_gamma_175.xml"
+
+[[case]]
+name = "v_gamma_200"
+fff    = "test1_raw.fff"
+ref    = "variants/v_gamma_200.tif"
+source = "external_xml"
+preset = "variants/v_gamma_200.xml"
+
+[[case]]
+name = "v_gamma_225"
+fff    = "test1_raw.fff"
+ref    = "variants/v_gamma_225.tif"
+source = "external_xml"
+preset = "variants/v_gamma_225.xml"
+
+[[case]]
+name = "v_gamma_250"
+fff    = "test1_raw.fff"
+ref    = "variants/v_gamma_250.tif"
+source = "external_xml"
+preset = "variants/v_gamma_250.xml"
+
