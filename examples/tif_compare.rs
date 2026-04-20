@@ -854,10 +854,11 @@ fn load_cmyk_as_srgb16(path: &Path) -> Option<image::ImageBuffer<image::Rgb<u16>
                 let o = i * 4;
                 *s = [raw[o], raw[o+1], raw[o+2], raw[o+3]];
             }
-            let transform = Transform::new(
+            let transform = Transform::new_flags(
                 &input_profile, PixelFormat::CMYK_8,
                 &output_profile, PixelFormat::RGB_16,
-                Intent::Perceptual,
+                Intent::RelativeColorimetric,
+                lcms2::Flags::BLACKPOINT_COMPENSATION,
             ).ok()?;
             let mut dst = vec![[0u16; 3]; n_px];
             transform.transform_pixels(&src, &mut dst);
@@ -878,10 +879,11 @@ fn load_cmyk_as_srgb16(path: &Path) -> Option<image::ImageBuffer<image::Rgb<u16>
                 };
                 src[i] = [read(o), read(o+2), read(o+4), read(o+6)];
             }
-            let transform = Transform::new(
+            let transform = Transform::new_flags(
                 &input_profile, PixelFormat::CMYK_16,
                 &output_profile, PixelFormat::RGB_16,
-                Intent::Perceptual,
+                Intent::RelativeColorimetric,
+                lcms2::Flags::BLACKPOINT_COMPENSATION,
             ).ok()?;
             let mut dst = vec![[0u16; 3]; n_px];
             transform.transform_pixels(&src, &mut dst);
