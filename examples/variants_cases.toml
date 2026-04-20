@@ -1,207 +1,178 @@
-# 自动生成（gen_variants）：单 slider 隔离的测试 case
-# 用法：在 FlexColor 打开 BASE_FFF，分别载入每个 variant XML，
-#      导出 TIF 到 REF_TIF_DIR；然后 tif_compare --manifest.
+# gen_variant_ffcs 生成的内嵌 XML 变体 FFF 测试用例
+# 用法：在 FlexColor 打开每个 variants/*.fff，直接导出 TIF
+#      到同名 variants/*.tif，然后 tif_compare --manifest.
 
 [[case]]
 name = "v_contrast_-100"
-fff    = "test1_raw.fff"
+fff    = "variants/v_contrast_-100.fff"
 ref    = "variants/v_contrast_-100.tif"
-source = "external_xml"
-preset = "variants/v_contrast_-100.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_contrast_-50"
-fff    = "test1_raw.fff"
+fff    = "variants/v_contrast_-50.fff"
 ref    = "variants/v_contrast_-50.tif"
-source = "external_xml"
-preset = "variants/v_contrast_-50.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_contrast_-20"
-fff    = "test1_raw.fff"
+fff    = "variants/v_contrast_-20.fff"
 ref    = "variants/v_contrast_-20.tif"
-source = "external_xml"
-preset = "variants/v_contrast_-20.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_contrast_+00"
-fff    = "test1_raw.fff"
+fff    = "variants/v_contrast_+00.fff"
 ref    = "variants/v_contrast_+00.tif"
-source = "external_xml"
-preset = "variants/v_contrast_+00.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_contrast_+20"
-fff    = "test1_raw.fff"
+fff    = "variants/v_contrast_+20.fff"
 ref    = "variants/v_contrast_+20.tif"
-source = "external_xml"
-preset = "variants/v_contrast_+20.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_contrast_+50"
-fff    = "test1_raw.fff"
+fff    = "variants/v_contrast_+50.fff"
 ref    = "variants/v_contrast_+50.tif"
-source = "external_xml"
-preset = "variants/v_contrast_+50.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_contrast_+100"
-fff    = "test1_raw.fff"
+fff    = "variants/v_contrast_+100.fff"
 ref    = "variants/v_contrast_+100.tif"
-source = "external_xml"
-preset = "variants/v_contrast_+100.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_brightness_-100"
-fff    = "test1_raw.fff"
+fff    = "variants/v_brightness_-100.fff"
 ref    = "variants/v_brightness_-100.tif"
-source = "external_xml"
-preset = "variants/v_brightness_-100.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_brightness_-50"
-fff    = "test1_raw.fff"
+fff    = "variants/v_brightness_-50.fff"
 ref    = "variants/v_brightness_-50.tif"
-source = "external_xml"
-preset = "variants/v_brightness_-50.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_brightness_-20"
-fff    = "test1_raw.fff"
+fff    = "variants/v_brightness_-20.fff"
 ref    = "variants/v_brightness_-20.tif"
-source = "external_xml"
-preset = "variants/v_brightness_-20.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_brightness_+00"
-fff    = "test1_raw.fff"
+fff    = "variants/v_brightness_+00.fff"
 ref    = "variants/v_brightness_+00.tif"
-source = "external_xml"
-preset = "variants/v_brightness_+00.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_brightness_+20"
-fff    = "test1_raw.fff"
+fff    = "variants/v_brightness_+20.fff"
 ref    = "variants/v_brightness_+20.tif"
-source = "external_xml"
-preset = "variants/v_brightness_+20.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_brightness_+50"
-fff    = "test1_raw.fff"
+fff    = "variants/v_brightness_+50.fff"
 ref    = "variants/v_brightness_+50.tif"
-source = "external_xml"
-preset = "variants/v_brightness_+50.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_brightness_+100"
-fff    = "test1_raw.fff"
+fff    = "variants/v_brightness_+100.fff"
 ref    = "variants/v_brightness_+100.tif"
-source = "external_xml"
-preset = "variants/v_brightness_+100.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_lightness_000"
-fff    = "test1_raw.fff"
+fff    = "variants/v_lightness_000.fff"
 ref    = "variants/v_lightness_000.tif"
-source = "external_xml"
-preset = "variants/v_lightness_000.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_lightness_020"
-fff    = "test1_raw.fff"
+fff    = "variants/v_lightness_020.fff"
 ref    = "variants/v_lightness_020.tif"
-source = "external_xml"
-preset = "variants/v_lightness_020.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_lightness_050"
-fff    = "test1_raw.fff"
+fff    = "variants/v_lightness_050.fff"
 ref    = "variants/v_lightness_050.tif"
-source = "external_xml"
-preset = "variants/v_lightness_050.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_lightness_075"
-fff    = "test1_raw.fff"
+fff    = "variants/v_lightness_075.fff"
 ref    = "variants/v_lightness_075.tif"
-source = "external_xml"
-preset = "variants/v_lightness_075.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_lightness_100"
-fff    = "test1_raw.fff"
+fff    = "variants/v_lightness_100.fff"
 ref    = "variants/v_lightness_100.tif"
-source = "external_xml"
-preset = "variants/v_lightness_100.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_saturation_-50"
-fff    = "test1_raw.fff"
+fff    = "variants/v_saturation_-50.fff"
 ref    = "variants/v_saturation_-50.tif"
-source = "external_xml"
-preset = "variants/v_saturation_-50.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_saturation_-20"
-fff    = "test1_raw.fff"
+fff    = "variants/v_saturation_-20.fff"
 ref    = "variants/v_saturation_-20.tif"
-source = "external_xml"
-preset = "variants/v_saturation_-20.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_saturation_+00"
-fff    = "test1_raw.fff"
+fff    = "variants/v_saturation_+00.fff"
 ref    = "variants/v_saturation_+00.tif"
-source = "external_xml"
-preset = "variants/v_saturation_+00.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_saturation_+20"
-fff    = "test1_raw.fff"
+fff    = "variants/v_saturation_+20.fff"
 ref    = "variants/v_saturation_+20.tif"
-source = "external_xml"
-preset = "variants/v_saturation_+20.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_saturation_+50"
-fff    = "test1_raw.fff"
+fff    = "variants/v_saturation_+50.fff"
 ref    = "variants/v_saturation_+50.tif"
-source = "external_xml"
-preset = "variants/v_saturation_+50.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_gamma_150"
-fff    = "test1_raw.fff"
+fff    = "variants/v_gamma_150.fff"
 ref    = "variants/v_gamma_150.tif"
-source = "external_xml"
-preset = "variants/v_gamma_150.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_gamma_175"
-fff    = "test1_raw.fff"
+fff    = "variants/v_gamma_175.fff"
 ref    = "variants/v_gamma_175.tif"
-source = "external_xml"
-preset = "variants/v_gamma_175.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_gamma_200"
-fff    = "test1_raw.fff"
+fff    = "variants/v_gamma_200.fff"
 ref    = "variants/v_gamma_200.tif"
-source = "external_xml"
-preset = "variants/v_gamma_200.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_gamma_225"
-fff    = "test1_raw.fff"
+fff    = "variants/v_gamma_225.fff"
 ref    = "variants/v_gamma_225.tif"
-source = "external_xml"
-preset = "variants/v_gamma_225.xml"
+source = "embedded_current"
 
 [[case]]
 name = "v_gamma_250"
-fff    = "test1_raw.fff"
+fff    = "variants/v_gamma_250.fff"
 ref    = "variants/v_gamma_250.tif"
-source = "external_xml"
-preset = "variants/v_gamma_250.xml"
+source = "embedded_current"
 
