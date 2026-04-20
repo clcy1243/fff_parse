@@ -47,6 +47,49 @@ const BASE_FFF: &str = "/Users/will/vmwareShare/test_image/test1_raw.fff";
 const OUT_DIR: &str = "/Users/will/vmwareShare/test_image/variants";
 const CASES_OUT: &str = "examples/variants_cases.toml";
 
+/// 在 `<key>anchor</key>...<value>` 之后注入新的 key-value 对
+/// （用于模板里缺失的字段补充）。若 anchor 未找到则原样返回。
+fn insert_key_after(xml: &str, anchor: &str, new_xml: &str) -> String {
+    let needle = format!("<key>{}</key>", anchor);
+    let Some(pos) = xml.find(&needle) else { return xml.to_string() };
+    let after_key = pos + needle.len();
+    // 找下一个 <integer>/<real>/<true/>/<false/> 的闭合
+    let tail = &xml[after_key..];
+    // 逐个尝试四种 value 形态
+    let close_patterns: &[(&str, &str)] = &[
+        ("<integer>", "</integer>"),
+        ("<real>", "</real>"),
+        ("<true/>", ""),
+        ("<false/>", ""),
+        ("<string>", "</string>"),
+        ("<dict>", "</dict>"),
+        ("<array>", "</array>"),
+    ];
+    let mut end_off = None;
+    for (open, close) in close_patterns {
+        if let Some(o) = tail.find(open) {
+            if close.is_empty() {
+                // self-closing: end right after `<true/>` etc.
+                end_off = Some(o + open.len());
+            } else {
+                // paired: find close tag
+                if let Some(c) = tail[o..].find(close) {
+                    end_off = Some(o + c + close.len());
+                }
+            }
+            break;
+        }
+    }
+    let Some(end) = end_off else { return xml.to_string() };
+    let insert_at = after_key + end;
+    let mut out = String::with_capacity(xml.len() + new_xml.len() + 16);
+    out.push_str(&xml[..insert_at]);
+    out.push_str("\n\t\t\t");
+    out.push_str(new_xml);
+    out.push_str(&xml[insert_at..]);
+    out
+}
+
 /// 替换 plist XML 里某个 <key> 后紧邻的 <integer>/<real> 值（同 gen_variants.rs）
 fn patch_scalar(xml: &str, k_name: &str, new_val: &str) -> String {
     let needle = format!("<key>{}</key>", k_name);
@@ -225,6 +268,18 @@ fn main() {
         }
         // Frame=1 表示全图（BW 模板默认 40 是帧编号？保底设 1）
         template = patch_scalar(&template, "Frame", "1");
+
+        // 补充模板缺失但 FFF 默认需要的字段（否则 FlexColor 渲染偏亮）
+        //   FilmCurve=4 (Film Auto) — 胶片曲线 LUT 必须应用
+        //   ApplyCNFilter=true — 色彩噪声滤镜（默认开）
+        if !template.contains("<key>FilmCurve</key>") {
+            template = insert_key_after(&template, "ApplyCC",
+                "<key>FilmCurve</key>\n\t\t\t<integer>4</integer>");
+        }
+        if !template.contains("<key>ApplyCNFilter</key>") {
+            template = insert_key_after(&template, "ApplyCC",
+                "<key>ApplyCNFilter</key>\n\t\t\t<true/>");
+        }
         println!("\n== 模板 [{}] Mode={} → {} ==", prefix, mode, tmpl_path);
 
         let variants = build_variants_for(prefix);
