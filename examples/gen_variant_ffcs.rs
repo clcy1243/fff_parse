@@ -130,7 +130,11 @@ fn build_variants_for(prefix: &str) -> Vec<Variant> {
     // 命名：v_{prefix}_{slider}_{val}
     let name = |slider: &str, v: &str| format!("v_{}_{}_{}", prefix, slider, v);
 
-    // 稀疏档位：每个 slider 4 档，足够拟合公式（避免 102MB × 87 文件超盘）
+    // 稀疏档位：每个 slider 4 档，另加基线 contrast=0 用于诊断 pipeline 整体偏差
+    v.push(Variant {
+        name: name("baseline", "000"),
+        patches: vec![], // 全 default，用于确认 pipeline 本身是否对齐
+    });
     for c in [-50, -20, 20, 50] {
         v.push(Variant {
             name: name("contrast", &format!("{:+03}", c)),

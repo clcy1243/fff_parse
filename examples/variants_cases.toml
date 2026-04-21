@@ -7,6 +7,12 @@ data_dir = "/Users/will/vmwareShare/test_image"
 preset_dir = "."
 
 [[case]]
+name = "v_pos_baseline_000"
+fff    = "variants/v_pos_baseline_000.fff"
+ref    = "variants/v_pos_baseline_000.tif"
+source = "embedded_current"
+
+[[case]]
 name = "v_pos_contrast_-50"
 fff    = "variants/v_pos_contrast_-50.fff"
 ref    = "variants/v_pos_contrast_-50.tif"
@@ -103,6 +109,12 @@ ref    = "variants/v_pos_gamma_250.tif"
 source = "embedded_current"
 
 [[case]]
+name = "v_neg_baseline_000"
+fff    = "variants/v_neg_baseline_000.fff"
+ref    = "variants/v_neg_baseline_000.tif"
+source = "embedded_current"
+
+[[case]]
 name = "v_neg_contrast_-50"
 fff    = "variants/v_neg_contrast_-50.fff"
 ref    = "variants/v_neg_contrast_-50.tif"
@@ -196,6 +208,12 @@ source = "embedded_current"
 name = "v_neg_gamma_250"
 fff    = "variants/v_neg_gamma_250.fff"
 ref    = "variants/v_neg_gamma_250.tif"
+source = "embedded_current"
+
+[[case]]
+name = "v_bw_baseline_000"
+fff    = "variants/v_bw_baseline_000.fff"
+ref    = "variants/v_bw_baseline_000.tif"
 source = "embedded_current"
 
 [[case]]
