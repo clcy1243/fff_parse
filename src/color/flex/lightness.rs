@@ -91,6 +91,7 @@ fn build_lightness_lut(lightness: i16) -> Box<[u16; 16384]> {
 
     // 4 控制点（byte 空间 0..255），CPointCurve 内部 <<6 到 14-bit
     // T38：用 PointCurve B-spline 替代线性分段，与 FlexColor CPointCurve 一致
+    // T48 实验：linear 版本过度 lift（FAIL 17488），B-spline 更好
     let pts: Vec<(i64, i64, i64)> = vec![
         (0, 0, 1),
         (2, y1 as i64, 1),
