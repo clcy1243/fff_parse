@@ -273,6 +273,18 @@ fn main() {
         // Frame=1 表示全图（BW 模板默认 40 是帧编号？保底设 1）
         template = patch_scalar(&template, "Frame", "1");
 
+        // 模板里 ".dp:" 和 ".dfR:" 是 FlexColor 的 profile 占位符，会在渲染时解析为
+        // 用户当前默认 profile，这会导致导出 TIF 的像素值依赖全局配置。
+        // 用 Setting #24 实际的具体 profile 名字替换，保证渲染一致。
+        template = template.replace(
+            "<string>.dp:</string>",
+            "<string>Flextight X5 &amp; 949</string>",
+        );
+        template = template.replace(
+            "<string>.dfR:</string>",
+            "<string></string>",
+        );
+
         // 补充模板缺失但 FFF 默认需要的字段（Flextight X5 scanner 默认值）
         // 对比 test1_raw.fff Setting #24 确认 9 个 key 缺失
         let missing_defaults: &[(&str, &str)] = &[
