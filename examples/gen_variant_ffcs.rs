@@ -273,16 +273,30 @@ fn main() {
         // Frame=1 表示全图（BW 模板默认 40 是帧编号？保底设 1）
         template = patch_scalar(&template, "Frame", "1");
 
-        // 补充模板缺失但 FFF 默认需要的字段（否则 FlexColor 渲染偏亮）
-        //   FilmCurve=4 (Film Auto) — 胶片曲线 LUT 必须应用
-        //   ApplyCNFilter=true — 色彩噪声滤镜（默认开）
-        if !template.contains("<key>FilmCurve</key>") {
-            template = insert_key_after(&template, "ApplyCC",
-                "<key>FilmCurve</key>\n\t\t\t<integer>4</integer>");
+        // 补充模板缺失但 FFF 默认需要的字段（Flextight X5 scanner 默认值）
+        // 对比 test1_raw.fff Setting #24 确认 9 个 key 缺失
+        let missing_defaults: &[(&str, &str)] = &[
+            ("FilmCurve",         "<integer>4</integer>"),      // Film Auto
+            ("ApplyCNFilter",     "<true/>"),
+            ("LensCorrection",    "<integer>7</integer>"),       // Flextight X5 preset
+            ("VignetteAmount",    "<integer>100</integer>"),
+            ("ColorModel",        "<integer>0</integer>"),       // RGB
+            ("ColorTemperature",  "<integer>0</integer>"),
+            ("Tint",              "<integer>0</integer>"),
+            ("EV",                "<real>1.0</real>"),           // identity exposure
+            ("ColorNoiseRadius",  "<integer>0</integer>"),
+            ("NoiseFilterBias",   "<integer>0</integer>"),
+            // GradationSliders is an array — 模板基本应有它，若缺用 [0,0,0]
+        ];
+        for (key, value) in missing_defaults {
+            if !template.contains(&format!("<key>{}</key>", key)) {
+                let insert = format!("<key>{}</key>\n\t\t\t{}", key, value);
+                template = insert_key_after(&template, "ApplyCC", &insert);
+            }
         }
-        if !template.contains("<key>ApplyCNFilter</key>") {
+        if !template.contains("<key>GradationSliders</key>") {
             template = insert_key_after(&template, "ApplyCC",
-                "<key>ApplyCNFilter</key>\n\t\t\t<true/>");
+                "<key>GradationSliders</key>\n\t\t\t<array>\n\t\t\t\t<integer>0</integer>\n\t\t\t\t<integer>0</integer>\n\t\t\t\t<integer>0</integer>\n\t\t\t</array>");
         }
         println!("\n== 模板 [{}] Mode={} → {} ==", prefix, mode, tmpl_path);
 
