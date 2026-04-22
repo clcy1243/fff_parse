@@ -56,11 +56,12 @@ impl LightnessCurve {
         if !self.should_apply() {
             return;
         }
-        // 用 luma 查 LUT（§50.3 推测：vtbl[0x34] 预计算，当前用 BT.601 近似）
+        // T53: FlexColor FUN_702d4720 反编译确认 luma = (R+G+B)/3 算术均值，
+        // 不是 BT.601。权重常量 0.333f (×3) 在 0x70733f80。
         let r = chunk[0] as u32;
         let g = chunk[1] as u32;
         let b = chunk[2] as u32;
-        let luma = ((r * 299 + g * 587 + b * 114) / 1000).min(MAX_14BIT as u32) as usize;
+        let luma = ((r + g + b) / 3).min(MAX_14BIT as u32) as usize;
 
         let curve_val = self.lut[luma] as i32;
         let delta = curve_val - luma as i32;
