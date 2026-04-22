@@ -1,0 +1,179 @@
+//! 色卡分析：按 64 色 × 4 位置读取，计算每色的均值/方差，识别偏差大的色域。
+//!
+//! 输入：
+//!   1. 我们 flex pipeline 的输出（从 FFF 处理）
+//!   2. ref TIF（FlexColor 导出）
+//!
+//! 输出：按偏差排序的 64 色列表 + 位置相关性分析。
+
+use fff_viewer::{color, flexcolor, tiff::TiffFile};
+use image::GenericImageView;
+
+/// 64 色 palette（同 gen_chart_ffcs.rs）
+fn build_palette() -> [[u8; 3]; 64] {
+    let mut p = [[0u8; 3]; 64];
+    for i in 0..16 {
+        let v = (i as u32 * 255 / 15) as u8;
+        p[i] = [v, v, v];
+    }
+    let hues: [[u8; 3]; 6] = [
+        [255, 0, 0], [0, 255, 0], [0, 0, 255],
+        [255, 255, 0], [0, 255, 255], [255, 0, 255],
+    ];
+    let lums: [u8; 8] = [32, 64, 96, 128, 160, 192, 224, 255];
+    let mut idx = 16;
+    for hue in &hues {
+        for &lum in &lums {
+            p[idx] = [
+                (hue[0] as u32 * lum as u32 / 255) as u8,
+                (hue[1] as u32 * lum as u32 / 255) as u8,
+                (hue[2] as u32 * lum as u32 / 255) as u8,
+            ];
+            idx += 1;
+        }
+    }
+    p
+}
+
+fn color_label(i: usize) -> String {
+    if i < 16 {
+        format!("Gray {}/15", i)
+    } else {
+        let hue_names = ["R", "G", "B", "Y", "C", "M"];
+        let h = (i - 16) / 8;
+        let l = (i - 16) % 8;
+        format!("{}-lum{}", hue_names[h], l)
+    }
+}
+
+fn sample_tile_u16(img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, x: u32, y: u32, w: u32, h: u32) -> [f64; 3] {
+    // 取 tile 中心 50% × 50% 区域均值（避开 10px 边框 + 抗锯齿）
+    let mx = w / 4;
+    let my = h / 4;
+    let x0 = x + mx;
+    let y0 = y + my;
+    let x1 = (x + w - mx).min(img.width());
+    let y1 = (y + h - my).min(img.height());
+    let mut sr = 0.0f64; let mut sg = 0.0f64; let mut sb = 0.0f64; let mut n = 0.0;
+    for yy in y0..y1 {
+        for xx in x0..x1 {
+            let p = img.get_pixel(xx, yy);
+            sr += p[0] as f64; sg += p[1] as f64; sb += p[2] as f64; n += 1.0;
+        }
+    }
+    [sr / n, sg / n, sb / n]
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("usage: chart_analyze <c_xxx_baseline.fff>");
+        std::process::exit(1);
+    }
+    let fff_path = &args[1];
+    let ref_path = fff_path.replacen(".fff", ".tif", 1);
+
+    // 加载 FFF → flex pipeline 输出
+    let tiff = TiffFile::open(fff_path).unwrap();
+    let hist = flexcolor::EditHistory::parse_from_tiff(&tiff).unwrap();
+    let corr = &hist.settings[hist.current_index.min(hist.settings.len() - 1)].correction;
+    let raw = tiff.decode_uncompressed_rgb(&tiff.ifds[0]).unwrap();
+    let our = color::apply_flex_pipeline_no_icc(raw, corr);
+    // ICC → 输出空间（BW 用 Hasselblad Gray，其他用 in_icc → ref_icc）
+    let all_tags = tiff.all_tags();
+    let profiles_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("profiles");
+    let icc_data = color::extract_embedded_icc(tiff.raw_data(), &all_tags)
+        .or_else(|| std::fs::read(profiles_dir.join("Flextight X5 & 949.icc")).ok());
+    let our_final: image::DynamicImage = if corr.film_type == 2 {
+        let gray_icc = std::fs::read(profiles_dir.join("Hasselblad Gray.icc")).unwrap();
+        color::desaturate_bw_via_gray_icc(&our, icc_data.as_deref(), &gray_icc)
+    } else {
+        // 用 ref_icc 作 target（T6 等价路径）
+        let ref_data = std::fs::read(&ref_path).unwrap();
+        let ref_tiff = TiffFile::parse(&ref_data).unwrap();
+        let ref_icc = color::extract_embedded_icc(ref_tiff.raw_data(), &ref_tiff.all_tags());
+        if let (Some(in_icc), Some(out_icc)) = (&icc_data, &ref_icc) {
+            color::apply_icc_transform_profiles(&our, in_icc, out_icc, Default::default()).unwrap_or(our)
+        } else if let Some(in_icc) = &icc_data {
+            color::apply_icc_transform_ex(&our, in_icc, color::TargetColorSpace::SRGB, Default::default()).unwrap_or(our)
+        } else {
+            our
+        }
+    };
+    let our_rgb = our_final.into_rgb16();
+
+    // 加载 ref TIF
+    let ref_img = image::open(&ref_path).unwrap().into_rgb16();
+
+    println!("Our:  {}×{} {:?}", our_rgb.width(), our_rgb.height(), our_rgb.dimensions());
+    println!("Ref:  {}×{}", ref_img.width(), ref_img.height());
+
+    // 色卡布局（匹配 gen_chart_ffcs.rs）
+    let w = our_rgb.width() as u32;
+    let h = our_rgb.height() as u32;
+    let qw = w / 2;
+    let qh = h / 2;
+    let tw = qw / 8;
+    let th = qh / 8;
+
+    let palette = build_palette();
+    // 每色 4 个象限位置
+    let quad_permutes: &[(u32, u32, fn(usize) -> (usize, usize))] = &[
+        (0, 0, |i| (i / 8, i % 8)),
+        (qw as usize as u32, 0, |i| (i / 8, 7 - (i % 8))),
+        (0, qh as usize as u32, |i| (7 - (i / 8), i % 8)),
+        (qw, qh, |i| (7 - (i / 8), 7 - (i % 8))),
+    ];
+
+    let mut results: Vec<(usize, [u8; 3], [f64; 3], [f64; 3], f64, f64)> = Vec::with_capacity(64);
+    for i in 0..64 {
+        let mut ours_samples = [0.0f64; 3];
+        let mut ref_samples = [0.0f64; 3];
+        for (qx, qy, permute) in quad_permutes {
+            let (row, col) = permute(i);
+            let x = qx + (col as u32) * tw;
+            let y = qy + (row as u32) * th;
+            let our_avg = sample_tile_u16(&our_rgb, x, y, tw, th);
+            let ref_avg = sample_tile_u16(&ref_img, x, y, tw, th);
+            for c in 0..3 { ours_samples[c] += our_avg[c] / 4.0; ref_samples[c] += ref_avg[c] / 4.0; }
+        }
+        let delta: [f64; 3] = [
+            ours_samples[0] - ref_samples[0],
+            ours_samples[1] - ref_samples[1],
+            ours_samples[2] - ref_samples[2],
+        ];
+        let mag = ((delta[0].powi(2) + delta[1].powi(2) + delta[2].powi(2)) / 3.0).sqrt();
+        let signed = (delta[0] + delta[1] + delta[2]) / 3.0;
+        results.push((i, palette[i], ours_samples, ref_samples, mag, signed));
+    }
+    results.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
+
+    println!("\n=== 偏差最大的 20 色（按 RMS 排序）===");
+    println!("{:3} {:15} {:20} {:20} {:20} {:>8} {:>8}",
+        "idx", "label", "ref input (byte)", "ref out (byte)", "ours out (byte)", "rms_16", "signed");
+    for (i, rgb, ours, r, mag, sig) in results.iter().take(20) {
+        println!("{:3} {:15} R={:3} G={:3} B={:3}          R={:5.0} G={:5.0} B={:5.0}    R={:5.0} G={:5.0} B={:5.0}    {:8.1} {:+8.1}",
+            i, color_label(*i),
+            rgb[0], rgb[1], rgb[2],
+            r[0]/257.0, r[1]/257.0, r[2]/257.0,
+            ours[0]/257.0, ours[1]/257.0, ours[2]/257.0,
+            mag, sig
+        );
+    }
+
+    // 分组统计
+    let mut gray_mag = 0.0; let mut gray_n = 0;
+    let mut hue_mag = [0.0; 6]; let mut hue_n = [0; 6];
+    for (i, _, _, _, mag, _) in &results {
+        if *i < 16 { gray_mag += mag; gray_n += 1; }
+        else { let h = (i - 16) / 8; hue_mag[h] += mag; hue_n[h] += 1; }
+    }
+    println!("\n=== 分组 RMS ===");
+    println!("Gray:    avg={:.1} (n={})", gray_mag / gray_n as f64, gray_n);
+    for (h, name) in ["R","G","B","Y","C","M"].iter().enumerate() {
+        if hue_n[h] > 0 {
+            println!("{}:      avg={:.1} (n={})", name, hue_mag[h] / hue_n[h] as f64, hue_n[h]);
+        }
+    }
+}
+

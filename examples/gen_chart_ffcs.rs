@@ -57,7 +57,13 @@ fn build_palette() -> [[u8; 3]; 64] {
     p
 }
 
-/// 构造 3601×4489 RGB16 色卡像素（interleaved u16）
+/// 构造 RGB 8-bit 色卡像素（interleaved u8），供 IFD#1 thumb 使用
+fn build_chart_u8(width: u32, height: u32) -> Vec<u8> {
+    let u16_pixels = build_chart_pixels(width, height);
+    u16_pixels.iter().map(|&v| (v >> 8) as u8).collect()
+}
+
+/// 构造 RGB16 色卡像素（interleaved u16）
 fn build_chart_pixels(width: u32, height: u32) -> Vec<u16> {
     let palette = build_palette();
     let w = width as usize;
@@ -206,45 +212,50 @@ fn locate_xml_region(data: &[u8]) -> (usize, usize, usize) {
     (pfx, xs, alloc_end.min(data.len()))
 }
 
-/// 把色卡 RGB16 interleaved 数据写入 FFF 的 IFD#0 strip offsets（in-place）
-///
-/// 需要 fff_viewer::tiff::TiffFile 解析 IFD 获取 StripOffsets + StripByteCounts。
-/// 然后按字节序序列化 u16 → bytes，分段写入。
-fn write_chart_pixels(data: &mut Vec<u8>, pixels: &[u16]) {
-    use fff_viewer::tiff::TiffFile;
-    // 解析 FFF 获取 strip offsets
+/// 把色卡数据写入所有 3 个 IFD（FlexColor GUI 需要 IFD#1/2 显示预览）
+fn write_chart_all_ifds(data: &mut Vec<u8>) {
+    use fff_viewer::tiff::{TiffFile, ByteOrder};
     let tiff = TiffFile::parse(data).expect("parse FFF");
-    let ifd0 = &tiff.ifds[0];
-    let strip_offs = ifd0.get(0x0111).expect("no StripOffsets").as_u32_vec();
-    let strip_cnts = ifd0.get(0x0117).expect("no StripByteCounts").as_u32_vec();
-    let width = ifd0.get_u32(0x0100).unwrap() as usize;
-    let height = ifd0.get_u32(0x0101).unwrap() as usize;
-    let bps = ifd0.get(0x0102).and_then(|v| v.as_u32()).unwrap_or(16);
-    assert_eq!(bps, 16, "expected 16-bit IFD0");
-
     let byte_order = tiff.byte_order;
-    let total_pixels = width * height * 3;
-    assert_eq!(pixels.len(), total_pixels, "pixel count mismatch");
+    // 复制 ifds 数据出来，避免 borrow 冲突
+    let ifds: Vec<_> = tiff.ifds.iter().map(|ifd| {
+        (
+            ifd.get_u32(0x0100).unwrap() as u32,
+            ifd.get_u32(0x0101).unwrap() as u32,
+            ifd.get(0x0102).and_then(|v| v.as_u32()).unwrap_or(8) as u32,
+            ifd.get(0x0111).unwrap().as_u32_vec(),
+            ifd.get(0x0117).unwrap().as_u32_vec(),
+        )
+    }).collect();
 
-    // 序列化 u16 → bytes（按 byte_order）
-    let mut pixel_bytes = Vec::with_capacity(total_pixels * 2);
-    for &p in pixels {
-        let bytes = match byte_order {
-            fff_viewer::tiff::ByteOrder::BigEndian => p.to_be_bytes(),
-            fff_viewer::tiff::ByteOrder::LittleEndian => p.to_le_bytes(),
+    for (i, (w, h, bps, offs, cnts)) in ifds.iter().enumerate() {
+        println!("  IFD#{}: {}×{} bps={}", i, w, h, bps);
+        let pixel_bytes: Vec<u8> = if *bps == 16 {
+            let p = build_chart_pixels(*w, *h);
+            let mut buf = Vec::with_capacity(p.len() * 2);
+            for &v in &p {
+                let bytes = match byte_order {
+                    ByteOrder::BigEndian => v.to_be_bytes(),
+                    ByteOrder::LittleEndian => v.to_le_bytes(),
+                };
+                buf.extend_from_slice(&bytes);
+            }
+            buf
+        } else {
+            // bps=8
+            build_chart_u8(*w, *h)
         };
-        pixel_bytes.extend_from_slice(&bytes);
-    }
 
-    // 分段写入 strips
-    let mut src_pos = 0;
-    for (off, cnt) in strip_offs.iter().zip(strip_cnts.iter()) {
-        let start = *off as usize;
-        let end = start + *cnt as usize;
-        let chunk_size = (end - start).min(pixel_bytes.len() - src_pos);
-        if end <= data.len() {
-            data[start..start + chunk_size].copy_from_slice(&pixel_bytes[src_pos..src_pos + chunk_size]);
-            src_pos += chunk_size;
+        // 分段写入
+        let mut src_pos = 0;
+        for (off, cnt) in offs.iter().zip(cnts.iter()) {
+            let start = *off as usize;
+            let end = start + *cnt as usize;
+            let chunk = (end - start).min(pixel_bytes.len() - src_pos);
+            if end <= data.len() && chunk > 0 {
+                data[start..start + chunk].copy_from_slice(&pixel_bytes[src_pos..src_pos + chunk]);
+                src_pos += chunk;
+            }
         }
     }
 }
@@ -263,9 +274,7 @@ fn main() {
     let h = tiff.ifds[0].get_u32(0x0101).unwrap();
     println!("Base FFF dimensions: {}×{}", w, h);
 
-    let chart_pixels = build_chart_pixels(w, h);
-    println!("Chart pixels built: {} u16 values ({} MB)",
-        chart_pixels.len(), chart_pixels.len() * 2 / 1024 / 1024);
+    let _ = w; let _ = h; // 现在由 write_chart_all_ifds 按各 IFD 维度生成
 
     let mut cases_toml = String::from(
         "# gen_chart_ffcs 色卡变体：IFD#0 像素替换为合成色卡\n\
@@ -323,8 +332,8 @@ fn main() {
         for i in (xs + fff_xml_bytes.len())..alloc_end {
             new_data[i] = 0;
         }
-        // 写色卡像素
-        write_chart_pixels(&mut new_data, &chart_pixels);
+        // 写色卡像素到所有 3 个 IFD（GUI 显示 IFD#1/2，export 用 IFD#0）
+        write_chart_all_ifds(&mut new_data);
 
         let name = format!("c_{}_baseline_000", prefix);
         let out_path = out_dir.join(format!("{}.fff", name));
