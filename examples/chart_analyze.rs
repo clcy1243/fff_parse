@@ -64,6 +64,53 @@ fn sample_tile_u16(img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, x: u32, 
     [sr / n, sg / n, sb / n]
 }
 
+/// 手动 BW 去色：每通道 gamma-2.2 linearize → 简单平均 → gamma-2.2 re-encode。
+/// 不使用 ICC primaries 矩阵 —— 假设 FlexColor 对 BW 的 collapse 忽略 primaries。
+fn manual_bw_g22(img: &image::DynamicImage) -> image::DynamicImage {
+    let rgb16 = img.clone().into_rgb16();
+    let (w, h) = (rgb16.width(), rgb16.height());
+    let mut raw: Vec<u16> = rgb16.into_raw();
+    let max = 65535.0_f64;
+    let g = 2.2_f64;
+    let inv_g = 1.0 / g;
+    for chunk in raw.chunks_exact_mut(3) {
+        let r = (chunk[0] as f64 / max).powf(g);
+        let g_ = (chunk[1] as f64 / max).powf(g);
+        let b = (chunk[2] as f64 / max).powf(g);
+        let y = (r + g_ + b) / 3.0;
+        let enc = y.powf(inv_g).clamp(0.0, 1.0) * max;
+        let v = enc.round() as u16;
+        chunk[0] = v; chunk[1] = v; chunk[2] = v;
+    }
+    image::DynamicImage::ImageRgb16(
+        image::ImageBuffer::from_raw(w, h, raw).unwrap())
+}
+
+/// FlexColor 的 BW RGB→Gray collapse (FUN_7025b1f0)：BT.601 整数 luma，
+/// 工作在 14-bit 空间。我们的 flex pipeline 输出是 u16 全程；先 >>2 到 14-bit，
+/// 应用 299/587/114/1000 整数权重，<<2 回 16-bit。
+fn bt601_luma(img: &image::DynamicImage, apply_gamma22: bool) -> image::DynamicImage {
+    let rgb16 = img.clone().into_rgb16();
+    let (w, h) = (rgb16.width(), rgb16.height());
+    let mut raw: Vec<u16> = rgb16.into_raw();
+    for chunk in raw.chunks_exact_mut(3) {
+        let r14 = (chunk[0] >> 2) as i32;
+        let g14 = (chunk[1] >> 2) as i32;
+        let b14 = (chunk[2] >> 2) as i32;
+        let y14 = (r14 * 299 + g14 * 587 + b14 * 114) / 1000;
+        let y14 = y14.clamp(0, 16383) as u16;
+        let y16 = if apply_gamma22 {
+            let y = y14 as f64 / 16383.0;
+            (y.powf(1.0 / 2.2) * 65535.0).round() as u16
+        } else {
+            y14 << 2
+        };
+        chunk[0] = y16; chunk[1] = y16; chunk[2] = y16;
+    }
+    image::DynamicImage::ImageRgb16(
+        image::ImageBuffer::from_raw(w, h, raw).unwrap())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -86,12 +133,34 @@ fn main() {
         .or_else(|| std::fs::read(profiles_dir.join("Flextight X5 & 949.icc")).ok());
     let skip_icc = args.iter().any(|a| a == "--no-icc");
     let skip_usm = args.iter().any(|a| a == "--no-usm");
+    // T47 诊断：BW 去色时是否传 scanner ICC 作为 input profile（默认 true = 旧行为）。
+    // 假设：flex pipeline 输出已在 sRGB-ish 空间，再次传 scanner ICC 会造成二次线性化。
+    let no_scanner_icc = args.iter().any(|a| a == "--no-scanner-icc");
+    let bw_manual_g22 = args.iter().any(|a| a == "--bw-manual-g22");
+    let bw_bt601 = args.iter().any(|a| a == "--bw-bt601");
+    let bw_bt601_g22 = args.iter().any(|a| a == "--bw-bt601-g22");
     let our_final: image::DynamicImage = if skip_icc {
         println!("[diag] 跳过 ICC transform");
         our.clone()
     } else if corr.film_type == 2 {
-        let gray_icc = std::fs::read(profiles_dir.join("Hasselblad Gray.icc")).unwrap();
-        color::desaturate_bw_via_gray_icc(&our, icc_data.as_deref(), &gray_icc)
+        // T47: BT.601 整数 luma（FUN_7025b1f0）为默认
+        let use_old_icc = args.iter().any(|a| a == "--bw-old-icc");
+        if use_old_icc {
+            let gray_icc = std::fs::read(profiles_dir.join("Hasselblad Gray.icc")).unwrap();
+            let input_icc = if no_scanner_icc { None } else { icc_data.as_deref() };
+            println!("[diag] BW 旧 ICC 路径（对比用）");
+            color::desaturate_bw_via_gray_icc(&our, input_icc, &gray_icc)
+        } else if bw_bt601_g22 {
+            println!("[diag] BW BT.601 + gamma-2.2 再编码");
+            bt601_luma(&our, true)
+        } else if bw_manual_g22 {
+            println!("[diag] BW 手动 gamma-2.2");
+            manual_bw_g22(&our)
+        } else {
+            // 默认：BT.601
+            let _ = bw_bt601;
+            bt601_luma(&our, false)
+        }
     } else {
         // 用 ref_icc 作 target（T6 等价路径）
         let ref_data = std::fs::read(&ref_path).unwrap();

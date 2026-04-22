@@ -1,24 +1,1068 @@
-# gen_chart_ffcs 色卡变体：IFD#0 像素替换为合成色卡
-# 64 色 × 4 镜像位置 = 256 tiles；每色在 4 个不同位置可做统计平均
+# gen_chart_ffcs 色卡变体：IFD#0/1/2 像素替换为合成色卡 + 完整 slider/曲线/色阶矩阵
+# 64 色 × 4 镜像位置 = 256 tiles；与 variants_cases.toml 一一对应（前缀 c_ vs v_）
 
 data_dir = "/Users/will/vmwareShare/test_image"
 preset_dir = "."
 
 [[case]]
 name = "c_pos_baseline_000"
-fff    = "variants/c_pos_baseline_000.fff"
-ref    = "variants/c_pos_baseline_000.tif"
+fff    = "variants/chart_pos/c_pos_baseline_000.fff"
+ref    = "variants/chart_pos/c_pos_baseline_000.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_-100"
+fff    = "variants/chart_pos/c_pos_contrast_-100.fff"
+ref    = "variants/chart_pos/c_pos_contrast_-100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_-75"
+fff    = "variants/chart_pos/c_pos_contrast_-75.fff"
+ref    = "variants/chart_pos/c_pos_contrast_-75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_-50"
+fff    = "variants/chart_pos/c_pos_contrast_-50.fff"
+ref    = "variants/chart_pos/c_pos_contrast_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_-20"
+fff    = "variants/chart_pos/c_pos_contrast_-20.fff"
+ref    = "variants/chart_pos/c_pos_contrast_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_+20"
+fff    = "variants/chart_pos/c_pos_contrast_+20.fff"
+ref    = "variants/chart_pos/c_pos_contrast_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_+50"
+fff    = "variants/chart_pos/c_pos_contrast_+50.fff"
+ref    = "variants/chart_pos/c_pos_contrast_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_+75"
+fff    = "variants/chart_pos/c_pos_contrast_+75.fff"
+ref    = "variants/chart_pos/c_pos_contrast_+75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_contrast_+100"
+fff    = "variants/chart_pos/c_pos_contrast_+100.fff"
+ref    = "variants/chart_pos/c_pos_contrast_+100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_-100"
+fff    = "variants/chart_pos/c_pos_brightness_-100.fff"
+ref    = "variants/chart_pos/c_pos_brightness_-100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_-75"
+fff    = "variants/chart_pos/c_pos_brightness_-75.fff"
+ref    = "variants/chart_pos/c_pos_brightness_-75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_-50"
+fff    = "variants/chart_pos/c_pos_brightness_-50.fff"
+ref    = "variants/chart_pos/c_pos_brightness_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_-20"
+fff    = "variants/chart_pos/c_pos_brightness_-20.fff"
+ref    = "variants/chart_pos/c_pos_brightness_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_+20"
+fff    = "variants/chart_pos/c_pos_brightness_+20.fff"
+ref    = "variants/chart_pos/c_pos_brightness_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_+50"
+fff    = "variants/chart_pos/c_pos_brightness_+50.fff"
+ref    = "variants/chart_pos/c_pos_brightness_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_+75"
+fff    = "variants/chart_pos/c_pos_brightness_+75.fff"
+ref    = "variants/chart_pos/c_pos_brightness_+75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_brightness_+100"
+fff    = "variants/chart_pos/c_pos_brightness_+100.fff"
+ref    = "variants/chart_pos/c_pos_brightness_+100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_lightness_005"
+fff    = "variants/chart_pos/c_pos_lightness_005.fff"
+ref    = "variants/chart_pos/c_pos_lightness_005.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_lightness_010"
+fff    = "variants/chart_pos/c_pos_lightness_010.fff"
+ref    = "variants/chart_pos/c_pos_lightness_010.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_lightness_020"
+fff    = "variants/chart_pos/c_pos_lightness_020.fff"
+ref    = "variants/chart_pos/c_pos_lightness_020.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_lightness_050"
+fff    = "variants/chart_pos/c_pos_lightness_050.fff"
+ref    = "variants/chart_pos/c_pos_lightness_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_lightness_075"
+fff    = "variants/chart_pos/c_pos_lightness_075.fff"
+ref    = "variants/chart_pos/c_pos_lightness_075.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_lightness_100"
+fff    = "variants/chart_pos/c_pos_lightness_100.fff"
+ref    = "variants/chart_pos/c_pos_lightness_100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_saturation_-50"
+fff    = "variants/chart_pos/c_pos_saturation_-50.fff"
+ref    = "variants/chart_pos/c_pos_saturation_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_saturation_-25"
+fff    = "variants/chart_pos/c_pos_saturation_-25.fff"
+ref    = "variants/chart_pos/c_pos_saturation_-25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_saturation_-20"
+fff    = "variants/chart_pos/c_pos_saturation_-20.fff"
+ref    = "variants/chart_pos/c_pos_saturation_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_saturation_+20"
+fff    = "variants/chart_pos/c_pos_saturation_+20.fff"
+ref    = "variants/chart_pos/c_pos_saturation_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_saturation_+25"
+fff    = "variants/chart_pos/c_pos_saturation_+25.fff"
+ref    = "variants/chart_pos/c_pos_saturation_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_saturation_+50"
+fff    = "variants/chart_pos/c_pos_saturation_+50.fff"
+ref    = "variants/chart_pos/c_pos_saturation_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_gamma_050"
+fff    = "variants/chart_pos/c_pos_gamma_050.fff"
+ref    = "variants/chart_pos/c_pos_gamma_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_gamma_100"
+fff    = "variants/chart_pos/c_pos_gamma_100.fff"
+ref    = "variants/chart_pos/c_pos_gamma_100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_gamma_150"
+fff    = "variants/chart_pos/c_pos_gamma_150.fff"
+ref    = "variants/chart_pos/c_pos_gamma_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_gamma_225"
+fff    = "variants/chart_pos/c_pos_gamma_225.fff"
+ref    = "variants/chart_pos/c_pos_gamma_225.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_gamma_250"
+fff    = "variants/chart_pos/c_pos_gamma_250.fff"
+ref    = "variants/chart_pos/c_pos_gamma_250.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_gamma_300"
+fff    = "variants/chart_pos/c_pos_gamma_300.fff"
+ref    = "variants/chart_pos/c_pos_gamma_300.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_ev_050"
+fff    = "variants/chart_pos/c_pos_ev_050.fff"
+ref    = "variants/chart_pos/c_pos_ev_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_ev_075"
+fff    = "variants/chart_pos/c_pos_ev_075.fff"
+ref    = "variants/chart_pos/c_pos_ev_075.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_ev_150"
+fff    = "variants/chart_pos/c_pos_ev_150.fff"
+ref    = "variants/chart_pos/c_pos_ev_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_ev_200"
+fff    = "variants/chart_pos/c_pos_ev_200.fff"
+ref    = "variants/chart_pos/c_pos_ev_200.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_temp_-50"
+fff    = "variants/chart_pos/c_pos_temp_-50.fff"
+ref    = "variants/chart_pos/c_pos_temp_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_temp_+25"
+fff    = "variants/chart_pos/c_pos_temp_+25.fff"
+ref    = "variants/chart_pos/c_pos_temp_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_temp_+50"
+fff    = "variants/chart_pos/c_pos_temp_+50.fff"
+ref    = "variants/chart_pos/c_pos_temp_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_tint_-50"
+fff    = "variants/chart_pos/c_pos_tint_-50.fff"
+ref    = "variants/chart_pos/c_pos_tint_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_tint_+25"
+fff    = "variants/chart_pos/c_pos_tint_+25.fff"
+ref    = "variants/chart_pos/c_pos_tint_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_tint_+50"
+fff    = "variants/chart_pos/c_pos_tint_+50.fff"
+ref    = "variants/chart_pos/c_pos_tint_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_curve_master_scurve"
+fff    = "variants/chart_pos/c_pos_curve_master_scurve.fff"
+ref    = "variants/chart_pos/c_pos_curve_master_scurve.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_curve_master_lift"
+fff    = "variants/chart_pos/c_pos_curve_master_lift.fff"
+ref    = "variants/chart_pos/c_pos_curve_master_lift.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_curve_master_darken"
+fff    = "variants/chart_pos/c_pos_curve_master_darken.fff"
+ref    = "variants/chart_pos/c_pos_curve_master_darken.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_curve_master_invert"
+fff    = "variants/chart_pos/c_pos_curve_master_invert.fff"
+ref    = "variants/chart_pos/c_pos_curve_master_invert.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_curve_r_warm"
+fff    = "variants/chart_pos/c_pos_curve_r_warm.fff"
+ref    = "variants/chart_pos/c_pos_curve_r_warm.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_curve_g_lift"
+fff    = "variants/chart_pos/c_pos_curve_g_lift.fff"
+ref    = "variants/chart_pos/c_pos_curve_g_lift.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_curve_b_cool"
+fff    = "variants/chart_pos/c_pos_curve_b_cool.fff"
+ref    = "variants/chart_pos/c_pos_curve_b_cool.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_histo_shadow_up"
+fff    = "variants/chart_pos/c_pos_histo_shadow_up.fff"
+ref    = "variants/chart_pos/c_pos_histo_shadow_up.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_histo_hl_down"
+fff    = "variants/chart_pos/c_pos_histo_hl_down.fff"
+ref    = "variants/chart_pos/c_pos_histo_hl_down.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_histo_gray_high"
+fff    = "variants/chart_pos/c_pos_histo_gray_high.fff"
+ref    = "variants/chart_pos/c_pos_histo_gray_high.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_histo_gray_low"
+fff    = "variants/chart_pos/c_pos_histo_gray_low.fff"
+ref    = "variants/chart_pos/c_pos_histo_gray_low.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_histo_grad_shadow"
+fff    = "variants/chart_pos/c_pos_histo_grad_shadow.fff"
+ref    = "variants/chart_pos/c_pos_histo_grad_shadow.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_histo_grad_mid"
+fff    = "variants/chart_pos/c_pos_histo_grad_mid.fff"
+ref    = "variants/chart_pos/c_pos_histo_grad_mid.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_pos_histo_grad_hl"
+fff    = "variants/chart_pos/c_pos_histo_grad_hl.fff"
+ref    = "variants/chart_pos/c_pos_histo_grad_hl.tif"
 source = "embedded_current"
 
 [[case]]
 name = "c_neg_baseline_000"
-fff    = "variants/c_neg_baseline_000.fff"
-ref    = "variants/c_neg_baseline_000.tif"
+fff    = "variants/chart_neg/c_neg_baseline_000.fff"
+ref    = "variants/chart_neg/c_neg_baseline_000.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_-100"
+fff    = "variants/chart_neg/c_neg_contrast_-100.fff"
+ref    = "variants/chart_neg/c_neg_contrast_-100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_-75"
+fff    = "variants/chart_neg/c_neg_contrast_-75.fff"
+ref    = "variants/chart_neg/c_neg_contrast_-75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_-50"
+fff    = "variants/chart_neg/c_neg_contrast_-50.fff"
+ref    = "variants/chart_neg/c_neg_contrast_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_-20"
+fff    = "variants/chart_neg/c_neg_contrast_-20.fff"
+ref    = "variants/chart_neg/c_neg_contrast_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_+20"
+fff    = "variants/chart_neg/c_neg_contrast_+20.fff"
+ref    = "variants/chart_neg/c_neg_contrast_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_+50"
+fff    = "variants/chart_neg/c_neg_contrast_+50.fff"
+ref    = "variants/chart_neg/c_neg_contrast_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_+75"
+fff    = "variants/chart_neg/c_neg_contrast_+75.fff"
+ref    = "variants/chart_neg/c_neg_contrast_+75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_contrast_+100"
+fff    = "variants/chart_neg/c_neg_contrast_+100.fff"
+ref    = "variants/chart_neg/c_neg_contrast_+100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_-100"
+fff    = "variants/chart_neg/c_neg_brightness_-100.fff"
+ref    = "variants/chart_neg/c_neg_brightness_-100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_-75"
+fff    = "variants/chart_neg/c_neg_brightness_-75.fff"
+ref    = "variants/chart_neg/c_neg_brightness_-75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_-50"
+fff    = "variants/chart_neg/c_neg_brightness_-50.fff"
+ref    = "variants/chart_neg/c_neg_brightness_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_-20"
+fff    = "variants/chart_neg/c_neg_brightness_-20.fff"
+ref    = "variants/chart_neg/c_neg_brightness_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_+20"
+fff    = "variants/chart_neg/c_neg_brightness_+20.fff"
+ref    = "variants/chart_neg/c_neg_brightness_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_+50"
+fff    = "variants/chart_neg/c_neg_brightness_+50.fff"
+ref    = "variants/chart_neg/c_neg_brightness_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_+75"
+fff    = "variants/chart_neg/c_neg_brightness_+75.fff"
+ref    = "variants/chart_neg/c_neg_brightness_+75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_brightness_+100"
+fff    = "variants/chart_neg/c_neg_brightness_+100.fff"
+ref    = "variants/chart_neg/c_neg_brightness_+100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_lightness_005"
+fff    = "variants/chart_neg/c_neg_lightness_005.fff"
+ref    = "variants/chart_neg/c_neg_lightness_005.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_lightness_010"
+fff    = "variants/chart_neg/c_neg_lightness_010.fff"
+ref    = "variants/chart_neg/c_neg_lightness_010.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_lightness_020"
+fff    = "variants/chart_neg/c_neg_lightness_020.fff"
+ref    = "variants/chart_neg/c_neg_lightness_020.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_lightness_050"
+fff    = "variants/chart_neg/c_neg_lightness_050.fff"
+ref    = "variants/chart_neg/c_neg_lightness_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_lightness_075"
+fff    = "variants/chart_neg/c_neg_lightness_075.fff"
+ref    = "variants/chart_neg/c_neg_lightness_075.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_lightness_100"
+fff    = "variants/chart_neg/c_neg_lightness_100.fff"
+ref    = "variants/chart_neg/c_neg_lightness_100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_saturation_-50"
+fff    = "variants/chart_neg/c_neg_saturation_-50.fff"
+ref    = "variants/chart_neg/c_neg_saturation_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_saturation_-25"
+fff    = "variants/chart_neg/c_neg_saturation_-25.fff"
+ref    = "variants/chart_neg/c_neg_saturation_-25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_saturation_-20"
+fff    = "variants/chart_neg/c_neg_saturation_-20.fff"
+ref    = "variants/chart_neg/c_neg_saturation_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_saturation_+20"
+fff    = "variants/chart_neg/c_neg_saturation_+20.fff"
+ref    = "variants/chart_neg/c_neg_saturation_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_saturation_+25"
+fff    = "variants/chart_neg/c_neg_saturation_+25.fff"
+ref    = "variants/chart_neg/c_neg_saturation_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_saturation_+50"
+fff    = "variants/chart_neg/c_neg_saturation_+50.fff"
+ref    = "variants/chart_neg/c_neg_saturation_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_gamma_050"
+fff    = "variants/chart_neg/c_neg_gamma_050.fff"
+ref    = "variants/chart_neg/c_neg_gamma_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_gamma_100"
+fff    = "variants/chart_neg/c_neg_gamma_100.fff"
+ref    = "variants/chart_neg/c_neg_gamma_100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_gamma_150"
+fff    = "variants/chart_neg/c_neg_gamma_150.fff"
+ref    = "variants/chart_neg/c_neg_gamma_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_gamma_225"
+fff    = "variants/chart_neg/c_neg_gamma_225.fff"
+ref    = "variants/chart_neg/c_neg_gamma_225.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_gamma_250"
+fff    = "variants/chart_neg/c_neg_gamma_250.fff"
+ref    = "variants/chart_neg/c_neg_gamma_250.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_gamma_300"
+fff    = "variants/chart_neg/c_neg_gamma_300.fff"
+ref    = "variants/chart_neg/c_neg_gamma_300.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_ev_050"
+fff    = "variants/chart_neg/c_neg_ev_050.fff"
+ref    = "variants/chart_neg/c_neg_ev_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_ev_075"
+fff    = "variants/chart_neg/c_neg_ev_075.fff"
+ref    = "variants/chart_neg/c_neg_ev_075.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_ev_150"
+fff    = "variants/chart_neg/c_neg_ev_150.fff"
+ref    = "variants/chart_neg/c_neg_ev_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_ev_200"
+fff    = "variants/chart_neg/c_neg_ev_200.fff"
+ref    = "variants/chart_neg/c_neg_ev_200.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_temp_-50"
+fff    = "variants/chart_neg/c_neg_temp_-50.fff"
+ref    = "variants/chart_neg/c_neg_temp_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_temp_+25"
+fff    = "variants/chart_neg/c_neg_temp_+25.fff"
+ref    = "variants/chart_neg/c_neg_temp_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_temp_+50"
+fff    = "variants/chart_neg/c_neg_temp_+50.fff"
+ref    = "variants/chart_neg/c_neg_temp_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_tint_-50"
+fff    = "variants/chart_neg/c_neg_tint_-50.fff"
+ref    = "variants/chart_neg/c_neg_tint_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_tint_+25"
+fff    = "variants/chart_neg/c_neg_tint_+25.fff"
+ref    = "variants/chart_neg/c_neg_tint_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_tint_+50"
+fff    = "variants/chart_neg/c_neg_tint_+50.fff"
+ref    = "variants/chart_neg/c_neg_tint_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_curve_master_scurve"
+fff    = "variants/chart_neg/c_neg_curve_master_scurve.fff"
+ref    = "variants/chart_neg/c_neg_curve_master_scurve.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_curve_master_lift"
+fff    = "variants/chart_neg/c_neg_curve_master_lift.fff"
+ref    = "variants/chart_neg/c_neg_curve_master_lift.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_curve_master_darken"
+fff    = "variants/chart_neg/c_neg_curve_master_darken.fff"
+ref    = "variants/chart_neg/c_neg_curve_master_darken.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_curve_master_invert"
+fff    = "variants/chart_neg/c_neg_curve_master_invert.fff"
+ref    = "variants/chart_neg/c_neg_curve_master_invert.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_curve_r_warm"
+fff    = "variants/chart_neg/c_neg_curve_r_warm.fff"
+ref    = "variants/chart_neg/c_neg_curve_r_warm.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_curve_g_lift"
+fff    = "variants/chart_neg/c_neg_curve_g_lift.fff"
+ref    = "variants/chart_neg/c_neg_curve_g_lift.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_curve_b_cool"
+fff    = "variants/chart_neg/c_neg_curve_b_cool.fff"
+ref    = "variants/chart_neg/c_neg_curve_b_cool.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_histo_shadow_up"
+fff    = "variants/chart_neg/c_neg_histo_shadow_up.fff"
+ref    = "variants/chart_neg/c_neg_histo_shadow_up.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_histo_hl_down"
+fff    = "variants/chart_neg/c_neg_histo_hl_down.fff"
+ref    = "variants/chart_neg/c_neg_histo_hl_down.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_histo_gray_high"
+fff    = "variants/chart_neg/c_neg_histo_gray_high.fff"
+ref    = "variants/chart_neg/c_neg_histo_gray_high.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_histo_gray_low"
+fff    = "variants/chart_neg/c_neg_histo_gray_low.fff"
+ref    = "variants/chart_neg/c_neg_histo_gray_low.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_histo_grad_shadow"
+fff    = "variants/chart_neg/c_neg_histo_grad_shadow.fff"
+ref    = "variants/chart_neg/c_neg_histo_grad_shadow.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_histo_grad_mid"
+fff    = "variants/chart_neg/c_neg_histo_grad_mid.fff"
+ref    = "variants/chart_neg/c_neg_histo_grad_mid.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_histo_grad_hl"
+fff    = "variants/chart_neg/c_neg_histo_grad_hl.fff"
+ref    = "variants/chart_neg/c_neg_histo_grad_hl.tif"
 source = "embedded_current"
 
 [[case]]
 name = "c_bw_baseline_000"
-fff    = "variants/c_bw_baseline_000.fff"
-ref    = "variants/c_bw_baseline_000.tif"
+fff    = "variants/chart_bw/c_bw_baseline_000.fff"
+ref    = "variants/chart_bw/c_bw_baseline_000.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_-100"
+fff    = "variants/chart_bw/c_bw_contrast_-100.fff"
+ref    = "variants/chart_bw/c_bw_contrast_-100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_-75"
+fff    = "variants/chart_bw/c_bw_contrast_-75.fff"
+ref    = "variants/chart_bw/c_bw_contrast_-75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_-50"
+fff    = "variants/chart_bw/c_bw_contrast_-50.fff"
+ref    = "variants/chart_bw/c_bw_contrast_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_-20"
+fff    = "variants/chart_bw/c_bw_contrast_-20.fff"
+ref    = "variants/chart_bw/c_bw_contrast_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_+20"
+fff    = "variants/chart_bw/c_bw_contrast_+20.fff"
+ref    = "variants/chart_bw/c_bw_contrast_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_+50"
+fff    = "variants/chart_bw/c_bw_contrast_+50.fff"
+ref    = "variants/chart_bw/c_bw_contrast_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_+75"
+fff    = "variants/chart_bw/c_bw_contrast_+75.fff"
+ref    = "variants/chart_bw/c_bw_contrast_+75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_contrast_+100"
+fff    = "variants/chart_bw/c_bw_contrast_+100.fff"
+ref    = "variants/chart_bw/c_bw_contrast_+100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_-100"
+fff    = "variants/chart_bw/c_bw_brightness_-100.fff"
+ref    = "variants/chart_bw/c_bw_brightness_-100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_-75"
+fff    = "variants/chart_bw/c_bw_brightness_-75.fff"
+ref    = "variants/chart_bw/c_bw_brightness_-75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_-50"
+fff    = "variants/chart_bw/c_bw_brightness_-50.fff"
+ref    = "variants/chart_bw/c_bw_brightness_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_-20"
+fff    = "variants/chart_bw/c_bw_brightness_-20.fff"
+ref    = "variants/chart_bw/c_bw_brightness_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_+20"
+fff    = "variants/chart_bw/c_bw_brightness_+20.fff"
+ref    = "variants/chart_bw/c_bw_brightness_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_+50"
+fff    = "variants/chart_bw/c_bw_brightness_+50.fff"
+ref    = "variants/chart_bw/c_bw_brightness_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_+75"
+fff    = "variants/chart_bw/c_bw_brightness_+75.fff"
+ref    = "variants/chart_bw/c_bw_brightness_+75.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_brightness_+100"
+fff    = "variants/chart_bw/c_bw_brightness_+100.fff"
+ref    = "variants/chart_bw/c_bw_brightness_+100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_lightness_005"
+fff    = "variants/chart_bw/c_bw_lightness_005.fff"
+ref    = "variants/chart_bw/c_bw_lightness_005.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_lightness_010"
+fff    = "variants/chart_bw/c_bw_lightness_010.fff"
+ref    = "variants/chart_bw/c_bw_lightness_010.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_lightness_020"
+fff    = "variants/chart_bw/c_bw_lightness_020.fff"
+ref    = "variants/chart_bw/c_bw_lightness_020.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_lightness_050"
+fff    = "variants/chart_bw/c_bw_lightness_050.fff"
+ref    = "variants/chart_bw/c_bw_lightness_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_lightness_075"
+fff    = "variants/chart_bw/c_bw_lightness_075.fff"
+ref    = "variants/chart_bw/c_bw_lightness_075.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_lightness_100"
+fff    = "variants/chart_bw/c_bw_lightness_100.fff"
+ref    = "variants/chart_bw/c_bw_lightness_100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_saturation_-50"
+fff    = "variants/chart_bw/c_bw_saturation_-50.fff"
+ref    = "variants/chart_bw/c_bw_saturation_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_saturation_-25"
+fff    = "variants/chart_bw/c_bw_saturation_-25.fff"
+ref    = "variants/chart_bw/c_bw_saturation_-25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_saturation_-20"
+fff    = "variants/chart_bw/c_bw_saturation_-20.fff"
+ref    = "variants/chart_bw/c_bw_saturation_-20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_saturation_+20"
+fff    = "variants/chart_bw/c_bw_saturation_+20.fff"
+ref    = "variants/chart_bw/c_bw_saturation_+20.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_saturation_+25"
+fff    = "variants/chart_bw/c_bw_saturation_+25.fff"
+ref    = "variants/chart_bw/c_bw_saturation_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_saturation_+50"
+fff    = "variants/chart_bw/c_bw_saturation_+50.fff"
+ref    = "variants/chart_bw/c_bw_saturation_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_gamma_050"
+fff    = "variants/chart_bw/c_bw_gamma_050.fff"
+ref    = "variants/chart_bw/c_bw_gamma_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_gamma_100"
+fff    = "variants/chart_bw/c_bw_gamma_100.fff"
+ref    = "variants/chart_bw/c_bw_gamma_100.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_gamma_150"
+fff    = "variants/chart_bw/c_bw_gamma_150.fff"
+ref    = "variants/chart_bw/c_bw_gamma_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_gamma_225"
+fff    = "variants/chart_bw/c_bw_gamma_225.fff"
+ref    = "variants/chart_bw/c_bw_gamma_225.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_gamma_250"
+fff    = "variants/chart_bw/c_bw_gamma_250.fff"
+ref    = "variants/chart_bw/c_bw_gamma_250.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_gamma_300"
+fff    = "variants/chart_bw/c_bw_gamma_300.fff"
+ref    = "variants/chart_bw/c_bw_gamma_300.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_ev_050"
+fff    = "variants/chart_bw/c_bw_ev_050.fff"
+ref    = "variants/chart_bw/c_bw_ev_050.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_ev_075"
+fff    = "variants/chart_bw/c_bw_ev_075.fff"
+ref    = "variants/chart_bw/c_bw_ev_075.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_ev_150"
+fff    = "variants/chart_bw/c_bw_ev_150.fff"
+ref    = "variants/chart_bw/c_bw_ev_150.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_ev_200"
+fff    = "variants/chart_bw/c_bw_ev_200.fff"
+ref    = "variants/chart_bw/c_bw_ev_200.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_temp_-50"
+fff    = "variants/chart_bw/c_bw_temp_-50.fff"
+ref    = "variants/chart_bw/c_bw_temp_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_temp_+25"
+fff    = "variants/chart_bw/c_bw_temp_+25.fff"
+ref    = "variants/chart_bw/c_bw_temp_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_temp_+50"
+fff    = "variants/chart_bw/c_bw_temp_+50.fff"
+ref    = "variants/chart_bw/c_bw_temp_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_tint_-50"
+fff    = "variants/chart_bw/c_bw_tint_-50.fff"
+ref    = "variants/chart_bw/c_bw_tint_-50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_tint_+25"
+fff    = "variants/chart_bw/c_bw_tint_+25.fff"
+ref    = "variants/chart_bw/c_bw_tint_+25.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_tint_+50"
+fff    = "variants/chart_bw/c_bw_tint_+50.fff"
+ref    = "variants/chart_bw/c_bw_tint_+50.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_curve_master_scurve"
+fff    = "variants/chart_bw/c_bw_curve_master_scurve.fff"
+ref    = "variants/chart_bw/c_bw_curve_master_scurve.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_curve_master_lift"
+fff    = "variants/chart_bw/c_bw_curve_master_lift.fff"
+ref    = "variants/chart_bw/c_bw_curve_master_lift.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_curve_master_darken"
+fff    = "variants/chart_bw/c_bw_curve_master_darken.fff"
+ref    = "variants/chart_bw/c_bw_curve_master_darken.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_curve_master_invert"
+fff    = "variants/chart_bw/c_bw_curve_master_invert.fff"
+ref    = "variants/chart_bw/c_bw_curve_master_invert.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_curve_r_warm"
+fff    = "variants/chart_bw/c_bw_curve_r_warm.fff"
+ref    = "variants/chart_bw/c_bw_curve_r_warm.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_curve_g_lift"
+fff    = "variants/chart_bw/c_bw_curve_g_lift.fff"
+ref    = "variants/chart_bw/c_bw_curve_g_lift.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_curve_b_cool"
+fff    = "variants/chart_bw/c_bw_curve_b_cool.fff"
+ref    = "variants/chart_bw/c_bw_curve_b_cool.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_histo_shadow_up"
+fff    = "variants/chart_bw/c_bw_histo_shadow_up.fff"
+ref    = "variants/chart_bw/c_bw_histo_shadow_up.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_histo_hl_down"
+fff    = "variants/chart_bw/c_bw_histo_hl_down.fff"
+ref    = "variants/chart_bw/c_bw_histo_hl_down.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_histo_gray_high"
+fff    = "variants/chart_bw/c_bw_histo_gray_high.fff"
+ref    = "variants/chart_bw/c_bw_histo_gray_high.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_histo_gray_low"
+fff    = "variants/chart_bw/c_bw_histo_gray_low.fff"
+ref    = "variants/chart_bw/c_bw_histo_gray_low.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_histo_grad_shadow"
+fff    = "variants/chart_bw/c_bw_histo_grad_shadow.fff"
+ref    = "variants/chart_bw/c_bw_histo_grad_shadow.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_histo_grad_mid"
+fff    = "variants/chart_bw/c_bw_histo_grad_mid.fff"
+ref    = "variants/chart_bw/c_bw_histo_grad_mid.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_histo_grad_hl"
+fff    = "variants/chart_bw/c_bw_histo_grad_hl.fff"
+ref    = "variants/chart_bw/c_bw_histo_grad_hl.tif"
 source = "embedded_current"
 
