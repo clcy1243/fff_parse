@@ -1,0 +1,24 @@
+# gen_chart_ffcs 色卡变体：IFD#0 像素替换为合成色卡
+# 64 色 × 4 镜像位置 = 256 tiles；每色在 4 个不同位置可做统计平均
+
+data_dir = "/Users/will/vmwareShare/test_image"
+preset_dir = "."
+
+[[case]]
+name = "c_pos_baseline_000"
+fff    = "variants/c_pos_baseline_000.fff"
+ref    = "variants/c_pos_baseline_000.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_neg_baseline_000"
+fff    = "variants/c_neg_baseline_000.fff"
+ref    = "variants/c_neg_baseline_000.tif"
+source = "embedded_current"
+
+[[case]]
+name = "c_bw_baseline_000"
+fff    = "variants/c_bw_baseline_000.fff"
+ref    = "variants/c_bw_baseline_000.tif"
+source = "embedded_current"
+

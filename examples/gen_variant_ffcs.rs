@@ -121,6 +121,74 @@ fn patch_scalar(xml: &str, k_name: &str, new_val: &str) -> String {
 struct Variant {
     name: String,
     patches: Vec<(String, String)>,
+    /// 可选 Gradations 自定义（7 条曲线：Master / R-A / G-A / B-A / R-B / G-B / B-B）
+    /// 空 Vec = 不替换（用模板默认 identity）
+    gradations: Vec<Vec<(u8, u8, u8)>>, // 每条曲线 = Vec<(x, y, dy)> byte 空间
+}
+
+fn default_identity_gradation() -> Vec<(u8, u8, u8)> {
+    vec![(0, 0, 1), (255, 255, 1)]
+}
+
+/// 构造 7 条 gradations，其中第 `which` 条替换为 custom curve，其余为 identity
+fn build_gradations(which: usize, custom: Vec<(u8, u8, u8)>) -> Vec<Vec<(u8, u8, u8)>> {
+    let mut g = vec![default_identity_gradation(); 7];
+    g[which] = custom;
+    g
+}
+
+/// 把 7 条 gradations 序列化为 plist XML 片段
+fn serialize_gradations(grads: &[Vec<(u8, u8, u8)>]) -> String {
+    let mut out = String::from("<array>\n");
+    for curve in grads {
+        out.push_str("\t\t\t\t<array>\n");
+        for (x, y, dy) in curve {
+            out.push_str(&format!(
+                "\t\t\t\t\t<dict>\n\t\t\t\t\t\t<key>X</key>\n\t\t\t\t\t\t<integer>{}</integer>\n\
+                 \t\t\t\t\t\t<key>Y</key>\n\t\t\t\t\t\t<integer>{}</integer>\n\
+                 \t\t\t\t\t\t<key>DY</key>\n\t\t\t\t\t\t<integer>{}</integer>\n\t\t\t\t\t</dict>\n",
+                x, y, dy
+            ));
+        }
+        out.push_str("\t\t\t\t</array>\n");
+    }
+    out.push_str("\t\t\t</array>");
+    out
+}
+
+/// 替换 XML 里 `<key>Gradations</key>` 后的 `<array>...</array>`（处理嵌套）
+fn replace_gradations(xml: &str, new_array_xml: &str) -> String {
+    let key = "<key>Gradations</key>";
+    let Some(key_pos) = xml.find(key) else { return xml.to_string() };
+    let after_key = key_pos + key.len();
+    let tail = &xml[after_key..];
+    // 找紧随的 <array>
+    let Some(arr_rel) = tail.find("<array>") else { return xml.to_string() };
+    let arr_start = after_key + arr_rel;
+    // 配对嵌套 array
+    let mut depth = 0i32;
+    let mut i = arr_start;
+    let bytes = xml.as_bytes();
+    while i < bytes.len() {
+        if xml[i..].starts_with("<array>") {
+            depth += 1;
+            i += 7;
+        } else if xml[i..].starts_with("</array>") {
+            depth -= 1;
+            if depth == 0 {
+                let end = i + 8;
+                let mut out = String::with_capacity(xml.len() + new_array_xml.len());
+                out.push_str(&xml[..arr_start]);
+                out.push_str(new_array_xml);
+                out.push_str(&xml[end..]);
+                return out;
+            }
+            i += 8;
+        } else {
+            i += 1;
+        }
+    }
+    xml.to_string()
 }
 
 /// 针对某个胶片类型 (pos/neg/bw) 的变体列表
@@ -133,40 +201,159 @@ fn build_variants_for(prefix: &str) -> Vec<Variant> {
     // 稀疏档位：每个 slider 4 档，另加基线 contrast=0 用于诊断 pipeline 整体偏差
     v.push(Variant {
         name: name("baseline", "000"),
-        patches: vec![], // 全 default，用于确认 pipeline 本身是否对齐
+        patches: vec![],
+        gradations: vec![],
     });
-    for c in [-50, -20, 20, 50] {
+    // Contrast 8 档（超集包含 old ±50/±20）
+    for c in [-100, -75, -50, -20, 20, 50, 75, 100] {
         v.push(Variant {
             name: name("contrast", &format!("{:+03}", c)),
             patches: vec![("Contrast".to_string(), c.to_string())],
+            gradations: vec![],
         });
     }
-    for b in [-50, -20, 20, 50] {
+    // Brightness 8 档
+    for b in [-100, -75, -50, -20, 20, 50, 75, 100] {
         v.push(Variant {
             name: name("brightness", &format!("{:+03}", b)),
             patches: vec![("Brightness".to_string(), b.to_string())],
+            gradations: vec![],
         });
     }
-    for l in [20, 50, 100] {
+    // Lightness 6 档（包含 old 20/50/100）
+    for l in [5, 10, 20, 50, 75, 100] {
         v.push(Variant {
             name: name("lightness", &format!("{:03}", l)),
             patches: vec![("Lightness".to_string(), l.to_string())],
+            gradations: vec![],
         });
     }
-    // BW 模式下 Saturation 影响 ColorCorr 进链（最终 desaturate 成 gray）
-    for s in [-20, 20] {
+    // Saturation 6 档（包含 old ±20）
+    for s in [-50, -25, -20, 20, 25, 50] {
         v.push(Variant {
             name: name("saturation", &format!("{:+03}", s)),
             patches: vec![("Saturation".to_string(), s.to_string())],
+            gradations: vec![],
         });
     }
-    for (tag, g) in &[("150", "1.5"), ("225", "2.25"), ("250", "2.5")] {
+    // Gamma 6 档（包含 old 1.5/2.25/2.5）
+    for (tag, g) in &[
+        ("050", "0.5"), ("100", "1.0"), ("150", "1.5"),
+        ("225", "2.25"), ("250", "2.5"), ("300", "3.0"),
+    ] {
         v.push(Variant {
             name: name("gamma", tag),
             patches: vec![("Gamma".to_string(), g.to_string())],
+            gradations: vec![],
         });
     }
+    // EV (exposure slider) 4 档（identity=1.0 已在 baseline 覆盖）
+    for (tag, ev) in &[("050", "0.5"), ("075", "0.75"), ("150", "1.5"), ("200", "2.0")] {
+        v.push(Variant {
+            name: name("ev", tag),
+            patches: vec![("EV".to_string(), ev.to_string())],
+            gradations: vec![],
+        });
+    }
+    // ColorTemperature 3 档
+    for t in [-50, 25, 50] {
+        v.push(Variant {
+            name: name("temp", &format!("{:+03}", t)),
+            patches: vec![("ColorTemperature".to_string(), t.to_string())],
+            gradations: vec![],
+        });
+    }
+    // Tint 3 档
+    for t in [-50, 25, 50] {
+        v.push(Variant {
+            name: name("tint", &format!("{:+03}", t)),
+            patches: vec![("Tint".to_string(), t.to_string())],
+            gradations: vec![],
+        });
+    }
+
+    // ── Gradations 曲线变体（CPointCurve 测试）────────────────────────
+    // 索引: 0=Master, 1=R-A, 2=G-A, 3=B-A, 4=R-B, 5=G-B, 6=B-B
+    let curve_cases: &[(&str, usize, Vec<(u8, u8, u8)>)] = &[
+        // Master S-curve（增对比）
+        ("curve_master_scurve", 0, vec![(0,0,1),(64,32,1),(192,224,1),(255,255,1)]),
+        // Master 抬暗部（lift shadows）
+        ("curve_master_lift", 0, vec![(0,32,1),(128,160,1),(255,255,1)]),
+        // Master 压亮部（darken highlights）
+        ("curve_master_darken", 0, vec![(0,0,1),(128,96,1),(255,224,1)]),
+        // Master 反转（逆向）
+        ("curve_master_invert", 0, vec![(0,255,1),(255,0,1)]),
+        // R-A 通道 lift（偏暖）
+        ("curve_r_warm", 1, vec![(0,0,1),(128,160,1),(255,255,1)]),
+        // B-A 通道 lift（偏冷）
+        ("curve_b_cool", 3, vec![(0,0,1),(128,160,1),(255,255,1)]),
+        // G-A 通道 lift（偏绿）
+        ("curve_g_lift", 2, vec![(0,0,1),(128,160,1),(255,255,1)]),
+    ];
+    for (cname, which, pts) in curve_cases {
+        v.push(Variant {
+            name: format!("v_{}_{}", prefix, cname),
+            patches: vec![],
+            gradations: build_gradations(*which, pts.clone()),
+        });
+    }
+
+    // ── Histogram (Shadow / Gray / Highlight) 色阶 & 中间调变体 ──────
+    // Shadow: ushort[4] 14-bit，模板默认 960/960/960/960（1/16 of 16384）
+    // Highlight: 14400/14400/14400/14400 (7/8 of 16384)
+    // Gray: byte[4] 0..255，128=identity
+    // GradationSliders: [shadow, midtone, highlight] int
+    //
+    // 1. 抬 shadow boundary（压缩暗部）
+    v.push(Variant { name: name("histo", "shadow_up"), patches: vec![
+        ("Shadow".to_string(), "__ARRAY_SHADOW_UP__".to_string()),  // sentinel — 实际 patch 见 apply_array
+    ], gradations: vec![] });
+    // 2. 压 highlight boundary（压缩亮部）
+    v.push(Variant { name: name("histo", "hl_down"), patches: vec![
+        ("Highlight".to_string(), "__ARRAY_HL_DOWN__".to_string()),
+    ], gradations: vec![] });
+    // 3. 抬 gray midtone（暗化中间）
+    v.push(Variant { name: name("histo", "gray_high"), patches: vec![
+        ("Gray".to_string(), "__ARRAY_GRAY_HIGH__".to_string()),
+    ], gradations: vec![] });
+    // 4. 压 gray midtone（亮化中间）
+    v.push(Variant { name: name("histo", "gray_low"), patches: vec![
+        ("Gray".to_string(), "__ARRAY_GRAY_LOW__".to_string()),
+    ], gradations: vec![] });
+    // 5/6/7. GradationSliders 快捷调整（shadow/midtone/highlight ±N）
+    v.push(Variant { name: name("histo", "grad_shadow"), patches: vec![
+        ("GradationSliders".to_string(), "__ARRAY_GS_SHADOW__".to_string()),
+    ], gradations: vec![] });
+    v.push(Variant { name: name("histo", "grad_mid"), patches: vec![
+        ("GradationSliders".to_string(), "__ARRAY_GS_MID__".to_string()),
+    ], gradations: vec![] });
+    v.push(Variant { name: name("histo", "grad_hl"), patches: vec![
+        ("GradationSliders".to_string(), "__ARRAY_GS_HL__".to_string()),
+    ], gradations: vec![] });
+
     v
+}
+
+/// 针对整数数组类 key 替换 `<array>...</array>` 内容
+fn replace_int_array(xml: &str, key: &str, values: &[i32]) -> String {
+    let needle = format!("<key>{}</key>", key);
+    let Some(pos) = xml.find(&needle) else { return xml.to_string() };
+    let after_key = pos + needle.len();
+    let tail = &xml[after_key..];
+    let Some(arr_rel) = tail.find("<array>") else { return xml.to_string() };
+    let arr_start = after_key + arr_rel + 7;  // after <array>
+    let Some(end_rel) = xml[arr_start..].find("</array>") else { return xml.to_string() };
+    let end = arr_start + end_rel;
+    let mut body = String::from("\n");
+    for v in values {
+        body.push_str(&format!("\t\t\t\t<integer>{}</integer>\n", v));
+    }
+    body.push_str("\t\t\t");
+    let mut out = String::with_capacity(xml.len() + body.len());
+    out.push_str(&xml[..arr_start]);
+    out.push_str(&body);
+    out.push_str(&xml[end..]);
+    out
 }
 
 /// 从 preset XML (ImageSetting 单体) 抽取 `<dict>...</dict>` 内容
@@ -316,7 +503,40 @@ fn main() {
         for var in &variants {
             let mut patched = template.clone();
             for (k, v) in &var.patches {
-                patched = patch_scalar(&patched, k, v);
+                // sentinel 识别数组类 patch
+                if v.starts_with("__ARRAY_") {
+                    patched = match v.as_str() {
+                        // Shadow 抬到 2048（1/8，压暗）
+                        "__ARRAY_SHADOW_UP__" =>
+                            replace_int_array(&patched, "Shadow", &[2048, 2048, 2048, 2048]),
+                        // Highlight 降到 12000（压亮）
+                        "__ARRAY_HL_DOWN__" =>
+                            replace_int_array(&patched, "Highlight", &[12000, 12000, 12000, 12000]),
+                        // Gray 抬到 160（暗化中间）
+                        "__ARRAY_GRAY_HIGH__" =>
+                            replace_int_array(&patched, "Gray", &[160, 160, 160, 160]),
+                        // Gray 降到 96（亮化中间）
+                        "__ARRAY_GRAY_LOW__" =>
+                            replace_int_array(&patched, "Gray", &[96, 96, 96, 96]),
+                        // GradationSliders shadow 拉（S-curve 左移）
+                        "__ARRAY_GS_SHADOW__" =>
+                            replace_int_array(&patched, "GradationSliders", &[-30, 0, 0]),
+                        // GradationSliders mid 拉
+                        "__ARRAY_GS_MID__" =>
+                            replace_int_array(&patched, "GradationSliders", &[0, -30, 0]),
+                        // GradationSliders hi 拉
+                        "__ARRAY_GS_HL__" =>
+                            replace_int_array(&patched, "GradationSliders", &[0, 0, -30]),
+                        _ => patched,
+                    };
+                } else {
+                    patched = patch_scalar(&patched, k, v);
+                }
+            }
+            // Gradations 曲线替换（若定义）
+            if !var.gradations.is_empty() {
+                let grad_xml = serialize_gradations(&var.gradations);
+                patched = replace_gradations(&patched, &grad_xml);
             }
             let inner = extract_image_setting_dict(&patched);
             let fff_xml = build_fff_xml(&inner);
