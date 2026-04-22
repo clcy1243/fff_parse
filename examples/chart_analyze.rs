@@ -84,7 +84,12 @@ fn main() {
     let profiles_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("profiles");
     let icc_data = color::extract_embedded_icc(tiff.raw_data(), &all_tags)
         .or_else(|| std::fs::read(profiles_dir.join("Flextight X5 & 949.icc")).ok());
-    let our_final: image::DynamicImage = if corr.film_type == 2 {
+    let skip_icc = args.iter().any(|a| a == "--no-icc");
+    let skip_usm = args.iter().any(|a| a == "--no-usm");
+    let our_final: image::DynamicImage = if skip_icc {
+        println!("[diag] 跳过 ICC transform");
+        our.clone()
+    } else if corr.film_type == 2 {
         let gray_icc = std::fs::read(profiles_dir.join("Hasselblad Gray.icc")).unwrap();
         color::desaturate_bw_via_gray_icc(&our, icc_data.as_deref(), &gray_icc)
     } else {
@@ -100,7 +105,21 @@ fn main() {
             our
         }
     };
-    let our_rgb = our_final.into_rgb16();
+    // 可选跳过 USM
+    let our_final2 = if skip_usm {
+        println!("[diag] 跳过 USM");
+        our_final
+    } else {
+        use fff_viewer::color::ManualAdjust;
+        let mut adj = ManualAdjust::default();
+        adj.apply_usm = corr.apply_usm;
+        adj.usm_amount = corr.usm_amount;
+        adj.usm_radius = corr.usm_radius;
+        adj.usm_dark_limit = corr.usm_dark_limit;
+        adj.usm_noise_limit = corr.usm_noise_limit;
+        color::apply_usm(&our_final, &adj)
+    };
+    let our_rgb = our_final2.into_rgb16();
 
     // 加载 ref TIF
     let ref_img = image::open(&ref_path).unwrap().into_rgb16();
