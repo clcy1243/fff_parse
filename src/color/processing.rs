@@ -1137,15 +1137,40 @@ pub fn apply_color_pipeline_ex(
     super::adjust::apply_display_adjust(&img, adjust)
 }
 
-/// B&W 去色：通过 Hasselblad Gray.icc kTRC 把 sRGB → Gray → 复制到三通道。
+/// B&W 去色：FlexColor 的 RGB→Gray collapse — BT.601 整数 luma。
 ///
-/// T36：FlexColor BW 路径（§48.1）用 Hasselblad Gray.icc (gamma 2.2) 做 RGB→Gray，
-/// 而非 BT.601 luma。如果 profile 加载失败，回退到 BT.601。
+/// T47 反编译确认（`FUN_7025b1f0` @ 0x7025b1f0）：
+/// ```text
+/// Y = (R*299 + G*587 + B*114) / 1000   // truncate-toward-zero
+/// ```
+/// 在 14-bit 域（post-Lightness，pre-output-gamma）执行。Hasselblad Gray.icc 的
+/// `kTRC` gamma 2.2 由下游 `vtbl[0x48]` 写入端应用，不在 collapse 内部。
+///
+/// 历史（T36）用 lcms2 `sRGB→Gray.icc` 变换，对 chromatic 输入偏差最大 ~20%
+/// （T47 色卡分析）；BT.601 把色调偏差压到 ~50%。
 pub fn desaturate_bw_via_hasselblad(
     img: &image::DynamicImage,
-    gray_icc: &[u8],
+    _gray_icc: &[u8],
 ) -> image::DynamicImage {
-    desaturate_bw_via_gray_icc(img, None, gray_icc)
+    desaturate_bw_bt601(img)
+}
+
+/// BT.601 整数 luma：`Y = (R*299 + G*587 + B*114) / 1000`，14-bit 域。
+/// 输入 u16 先 >>2 到 14-bit，计算，结果 <<2 回 16-bit 并复制到三通道。
+pub fn desaturate_bw_bt601(img: &image::DynamicImage) -> image::DynamicImage {
+    let rgb16 = img.clone().into_rgb16();
+    let (w, h) = (rgb16.width(), rgb16.height());
+    let mut raw: Vec<u16> = rgb16.into_raw();
+    for chunk in raw.chunks_exact_mut(3) {
+        let r14 = (chunk[0] >> 2) as i32;
+        let g14 = (chunk[1] >> 2) as i32;
+        let b14 = (chunk[2] >> 2) as i32;
+        let y14 = ((r14 * 299 + g14 * 587 + b14 * 114) / 1000).clamp(0, 16383) as u16;
+        let y16 = y14 << 2;
+        chunk[0] = y16; chunk[1] = y16; chunk[2] = y16;
+    }
+    image::DynamicImage::ImageRgb16(
+        image::ImageBuffer::from_raw(w, h, raw).unwrap())
 }
 
 /// 通用 RGB → Gray 转换：若提供 input_icc 则 input→Gray，否则 sRGB→Gray。

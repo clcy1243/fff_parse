@@ -1452,15 +1452,9 @@ fn run_tests(
         // 剩余步骤：ICC（若 input != ref）+ BW desat（若 film_type=2）+ USM
         let step1 = color::apply_flex_pipeline_no_icc(ctx.raw_16.clone(), corr);
 
-        // BW (film_type=2): T37 直接 input_icc → Hasselblad Gray，跳过 sRGB 中间态
+        // BW (film_type=2): T47 反编译确认用 BT.601 整数 luma（FUN_7025b1f0）
         let step2b = if adj.film_type == 2 {
-            let gray_icc_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("profiles").join("Hasselblad Gray.icc");
-            if let Ok(gray_data) = std::fs::read(&gray_icc_path) {
-                color::desaturate_bw_via_gray_icc(&step1, icc, &gray_data)
-            } else {
-                desaturate_bw_local(&step1)
-            }
+            color::desaturate_bw_bt601(&step1)
         } else {
             // 非 BW：标准 ICC step
             if let (Some(in_icc), Some(out_icc)) = (icc, ref_icc) {

@@ -1285,19 +1285,11 @@ impl FffViewerApp {
             let (r1, g1, b1) = mean_8bit(&step1);
             log::debug!("[viewer] step1 (flex pipeline out) means: R={:.1} G={:.1} B={:.1}", r1, g1, b1);
 
-            // T37: BW (film_type=2) 跳过 sRGB 中间态，直接 input_icc → Hasselblad Gray。
-            // 实测 MAE 787 → 487 (-38%)，逼近 PASS tier。非 BW 走标准 sRGB ICC。
-            const HASSELBLAD_GRAY_ICC: &[u8] = include_bytes!(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/Hasselblad Gray.icc")
-            );
+            // T47: BW (film_type=2) 用 BT.601 整数 luma collapse（FlexColor FUN_7025b1f0）。
             let step2b = if corr.film_type == 2 {
-                let d = color::desaturate_bw_via_gray_icc(
-                    &step1,
-                    self.active_icc_data.as_deref(),
-                    HASSELBLAD_GRAY_ICC,
-                );
+                let d = color::desaturate_bw_bt601(&step1);
                 let (dr, dg, db) = mean_8bit(&d);
-                log::debug!("[viewer] step2b (direct BW gray) means: R={:.1} G={:.1} B={:.1}", dr, dg, db);
+                log::debug!("[viewer] step2b (BT.601 BW) means: R={:.1} G={:.1} B={:.1}", dr, dg, db);
                 d
             } else if let Some(icc) = self.active_icc_data.as_deref() {
                 log::debug!("[viewer] step2: applying in_icc ({} bytes) → {:?}", icc.len(), self.target_color_space);

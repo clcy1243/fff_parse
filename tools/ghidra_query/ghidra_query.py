@@ -33,6 +33,8 @@ from scripts import find_str_xrefs
 from scripts import dump_xml_registry
 from scripts import list_rtti_classes
 from scripts import find_offset_refs
+from scripts import find_luma
+from scripts import scan_ptr
 
 COMMANDS = {
     "list-classes":  list_classes,
@@ -53,6 +55,8 @@ COMMANDS = {
     "dump-xml-registry": dump_xml_registry,
     "list-rtti-classes": list_rtti_classes,
     "find-offset-refs": find_offset_refs,
+    "find-luma":     find_luma,
+    "scan-ptr":      scan_ptr,
 }
 
 

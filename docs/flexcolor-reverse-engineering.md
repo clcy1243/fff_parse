@@ -4779,3 +4779,95 @@ tif_compare T6 + viewer 均改用此函数（profile 字节 `include_bytes!` 编
 - ICC intent（Perceptual）与 FlexColor 内部变换不完全一致
 - sRGB → Gray 前的 RGB 已有小偏差（被 gamma 2.2 放大）
 - Hasselblad 的 Gray 生成在 FlexColor 里可能**绕过 sRGB 中间态**（直接 scanner→gray）
+
+
+---
+
+## 65. T47 · BW RGB→Gray collapse = BT.601 整数 luma（2026-04-22）
+
+### 65.1 色卡诊断
+
+色卡变体（16 灰阶 + 6 主色 × 8 luminance 的 64 色 × 4 镜像位置）揭示：
+- Gray 输入（R=G=B）：我们的 BW 输出匹配 FlexColor 参考 TIF（RMS ~700）
+- 非灰输入：偏差 3000–12000 RMS，随 brightness slider 放大（-50 场景 C-lum7 ref=62 ours=113）
+
+结论：T47 的表征"v_bw_brightness FAIL" 根因不在 brightness，而在 **BW RGB→Gray collapse**
+对非灰输入的处理差异。
+
+### 65.2 反编译确认 — `FUN_7025b1f0` @ 0x7025b1f0
+
+FlexColor 16-bit pipeline `FUN_702d90b0` 在 Mode==2||5 分支调用
+`(*outputProfile->vtbl[0x1c])(rgb14, gray14, n)`。对 Gray 输出该 slot 指向
+`FUN_7025b1f0`：
+
+```c
+// 读 DAT_706e2864 [float×3] = {0.299, 0.587, 0.114}
+wR_i = lround(0.299 * 1000);   // 299
+wG_i = lround(0.587 * 1000);   // 587
+wB_i = lround(0.114 * 1000);   // 114
+
+for each pixel:
+    v = R * 299 + G * 587 + B * 114;  // int32
+    gray[i] = v / 1000;                // truncate-toward-zero
+```
+
+**关键属性**：
+- **BT.601** 整数权重（非 BT.709 / 非 sRGB Y / 非 1/3 均值）
+- 工作在 **14-bit 线性域**（post-Lightness，pre-output-gamma）
+- 不访问 Hasselblad Gray.icc 的 `kTRC` —— `kTRC` gamma 2.2 由下游 `vtbl[0x48]`
+  写入端应用，不在 collapse 内部
+- Hasselblad Gray.icc 在此路径中实际上是**空壳标识符**（只决定"输出是 Gray 通道"）
+
+**地址常量表**：
+
+| 地址 | 用途 |
+|---|---|
+| `0x7025b1f0` | **RGB→Gray collapse 主体**（BT.601 整数 luma） |
+| `0x7025b2f0` | 默认权重读取（返回 `&DAT_706e2864`） |
+| `0x706e2864` | `float[3] = {0.299, 0.587, 0.114}` |
+| `0x706d4454` | 同值副本（histogram/thumbnail 用） |
+| `0x70733920` | `double 1000.0` 缩放因子 |
+
+### 65.3 Rust 实现
+
+`color::desaturate_bw_bt601`（`src/color/processing.rs`）：
+
+```rust
+pub fn desaturate_bw_bt601(img: &image::DynamicImage) -> image::DynamicImage {
+    let rgb16 = img.clone().into_rgb16();
+    let mut raw: Vec<u16> = rgb16.into_raw();
+    for chunk in raw.chunks_exact_mut(3) {
+        let r14 = (chunk[0] >> 2) as i32;
+        let g14 = (chunk[1] >> 2) as i32;
+        let b14 = (chunk[2] >> 2) as i32;
+        let y14 = ((r14 * 299 + g14 * 587 + b14 * 114) / 1000).clamp(0, 16383) as u16;
+        let y16 = y14 << 2;
+        chunk[0] = y16; chunk[1] = y16; chunk[2] = y16;
+    }
+    // ...
+}
+```
+
+取代 `desaturate_bw_via_gray_icc(scanner_icc → Hasselblad Gray.icc)` 的 lcms2 路径。
+调用点：`viewer/panels.rs`, `examples/tif_compare.rs`。
+
+### 65.4 实测效果（色卡 c_bw_* 变体）
+
+| 场景 | 指标 | 旧 ICC | BT.601 | Δ |
+|---|---|---|---|---|
+| baseline | Gray RMS | 699 | 850 | +22% |
+| baseline | Chroma 6 色均值 | 4238 | 3342 | **-21%** |
+| brightness +50 | Chroma 均值 | 3537 | 2683 | **-24%** |
+| brightness -50 | Chroma 均值 | 6171 | 4114 | **-33%** |
+
+Chroma 显著改善，Gray 细微退化（<1% 精度，在 16-bit u16 65535 范围内约 150 LSB）。
+T21/§48/T37 的 lcms2 路径正式被 BT.601 取代。
+
+### 65.5 遗留残差
+
+BT.601 之后仍有 2000–6000 RMS chroma 残差，候选根源：
+- T29 per-channel output Gray TRC（gamma 2.2）未完全烘焙进 LUT
+- 我们的 flex pipeline 输出色空间与 FlexColor "post-Lightness 14-bit" 语义略有差别
+- 色卡合成像素不经 scanner 模拟，经 FlexColor 时行为与真实扫描有 interpretation 差异
+
+真实扫描的影响需要重新导出 v_bw_* TIF 才能测。
