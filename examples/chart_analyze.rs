@@ -7,7 +7,6 @@
 //! 输出：按偏差排序的 64 色列表 + 位置相关性分析。
 
 use fff_viewer::{color, flexcolor, tiff::TiffFile};
-use image::GenericImageView;
 
 /// 64 色 palette（同 gen_chart_ffcs.rs）
 fn build_palette() -> [[u8; 3]; 64] {

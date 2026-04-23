@@ -66,14 +66,14 @@ impl GammaCurve {
         let g = self.gamma as f64;
         if g >= 2.0 {
             1.0 / (g - 1.0)
-        } else {
-            // G < 2：平滑路径，`_DAT_70734070 = 0.8`
+        } else if g >= 0.76 {
+            // G ∈ [0.76, 2)：§13 smooth path
             let denom = 1.0 - (2.0 - g) * 0.8;
-            if denom <= 0.0 {
-                // G <= 0.75 奇点保护
-                return 100.0;
-            }
             1.0 / denom
+        } else {
+            // G < 0.76：原公式奇点（FlexColor UI 不允许），fallback 用标准 gamma
+            // 定义 `exp = 1/G`（经典 gamma 反向），避免 LUT 全零。非 bit-accurate。
+            1.0 / g.max(0.01)
         }
     }
 }
