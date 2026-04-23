@@ -817,19 +817,23 @@ fn apply_adjust_8(rgb8: &image::RgbImage, adj: &ManualAdjust, film_lut: Option<&
 ///
 /// 验证数据是否为有效的 ICC 配置文件（偏移 36 处应为 "acsp" 签名）。
 pub fn extract_embedded_icc(tiff_data: &[u8], tags: &[(String, String, String, String)]) -> Option<Vec<u8>> {
-    // Look for tag 0xC51A (ImaconProfileData)
+    // 先找标准 ICC tag 0x8773 (34675, TIFF 官方 ICC Profile)
+    if let Some(data) = extract_tag_data(tiff_data, 0x8773) {
+        if data.len() > 40 && &data[36..40] == b"acsp" {
+            log::info!("ICC via tag 0x8773: {} bytes", data.len());
+            return Some(data);
+        }
+    }
+    // 回退：Imacon FFF 用 0xC51A 存 ICC（proprietary）
     for (_, tag_hex, _, _value) in tags {
         if tag_hex == "0xC51A" {
-            // Extract raw tag data
             let data = extract_tag_data(tiff_data, 0xC51A)?;
-
-            // Validate: a real ICC profile has "acsp" signature at offset 36
             if data.len() > 40 && &data[36..40] == b"acsp" {
-                log::info!("Embedded ICC profile found: {} bytes, valid ICC", data.len());
+                log::info!("ICC via tag 0xC51A: {} bytes", data.len());
                 return Some(data);
             } else {
                 log::info!(
-                    "Tag 0xC51A contains Imacon proprietary data ({} bytes), not a standard ICC profile",
+                    "Tag 0xC51A 含 Imacon 专有数据（{} bytes），非标准 ICC",
                     data.len()
                 );
                 return None;

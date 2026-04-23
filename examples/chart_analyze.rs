@@ -129,7 +129,19 @@ fn main() {
     // ICC → 输出空间（BW 用 Hasselblad Gray，其他用 in_icc → ref_icc）
     let all_tags = tiff.all_tags();
     let profiles_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("profiles");
+    // FFF 通常无 embedded ICC；优先读 ref TIF 的 embedded profile（= FlexColor 本次
+    // 导出实际用的 scanner ICC），再回退到 bundled Flextight X5 & 949。这样
+    // in_icc 与 out_icc 字节一致 → `apply_icc_transform_profiles` 走 identity 短路。
+    let ref_embedded_icc = {
+        let ref_data = std::fs::read(&ref_path).ok();
+        ref_data.and_then(|d| {
+            TiffFile::parse(&d).ok().and_then(|rt| {
+                color::extract_embedded_icc(rt.raw_data(), &rt.all_tags())
+            })
+        })
+    };
     let icc_data = color::extract_embedded_icc(tiff.raw_data(), &all_tags)
+        .or_else(|| ref_embedded_icc.clone())
         .or_else(|| std::fs::read(profiles_dir.join("Flextight X5 & 949.icc")).ok());
     let skip_icc = args.iter().any(|a| a == "--no-icc");
     let skip_usm = args.iter().any(|a| a == "--no-usm");
@@ -166,10 +178,22 @@ fn main() {
         let ref_data = std::fs::read(&ref_path).unwrap();
         let ref_tiff = TiffFile::parse(&ref_data).unwrap();
         let ref_icc = color::extract_embedded_icc(ref_tiff.raw_data(), &ref_tiff.all_tags());
+        // ICC intent / BPC 诊断 flag
+        let icc_settings = {
+            use color::{IccIntent, IccSettings};
+            let intent = if args.iter().any(|a| a == "--icc-rel") { IccIntent::RelativeColorimetric }
+                else if args.iter().any(|a| a == "--icc-sat") { IccIntent::Saturation }
+                else if args.iter().any(|a| a == "--icc-abs") { IccIntent::AbsoluteColorimetric }
+                else { IccIntent::Perceptual };
+            let bpc = args.iter().any(|a| a == "--icc-bpc");
+            let s = IccSettings { intent, black_point_compensation: bpc };
+            println!("[diag] ICC intent={:?} bpc={}", intent, bpc);
+            s
+        };
         if let (Some(in_icc), Some(out_icc)) = (&icc_data, &ref_icc) {
-            color::apply_icc_transform_profiles(&our, in_icc, out_icc, Default::default()).unwrap_or(our)
+            color::apply_icc_transform_profiles(&our, in_icc, out_icc, icc_settings).unwrap_or(our)
         } else if let Some(in_icc) = &icc_data {
-            color::apply_icc_transform_ex(&our, in_icc, color::TargetColorSpace::SRGB, Default::default()).unwrap_or(our)
+            color::apply_icc_transform_ex(&our, in_icc, color::TargetColorSpace::SRGB, icc_settings).unwrap_or(our)
         } else {
             our
         }
