@@ -168,9 +168,9 @@ fn main() {
             println!("[diag] BW 手动 gamma-2.2");
             manual_bw_g22(&our)
         } else {
-            // 默认：BT.601
+            // 默认：库函数 desaturate_bw_bt601（与 tif_compare / viewer 共用 BW 路径）
             let _ = bw_bt601;
-            bt601_luma(&our, false)
+            color::desaturate_bw_bt601(&our)
         }
     } else {
         // 用 ref_icc 作 target（T6 等价路径）
