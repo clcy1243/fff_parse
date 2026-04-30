@@ -15,6 +15,13 @@
 - **POS/NEG 基本解决（97% PASS+）**：3 个 FAIL 全是 gamma=0.5 边界值（FlexColor UI 不允许，XML 写入触发 `1/denom` 负指数奇点）+ 1 个 histo_gray_low（signed +13 接近零，P99 高）
 - **BW 仍全员 FAIL**：MAE 平均 3125（730–21440 范围），结构性 gamma 偏差（期望 0.231，我们 0.2），根因推测为 scanner 注册表/config 侧数据（DLL .rdata 内无 film_type 分支）
 
+### T57 (2026-05-01) 后 gamma_050 改进
+
+- `v_pos_gamma_050`: MAE 5659 → **2039** (-64%)
+- `v_neg_gamma_050`: MAE 11121 → **7889** (-29%)
+- Fallback `exp=1/G` → `exp=3`（经验校准：v_pos_gamma_050 (1800,2244) ref=588 反推 exp≈3.02）
+- Tier 仍 FAIL，但已显著接近 WARN 门槛
+
 ## 色卡对齐进度（177 case c_* 变体）
 
 | Tier | 数量 |
