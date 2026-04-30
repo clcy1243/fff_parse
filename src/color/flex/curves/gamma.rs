@@ -71,9 +71,10 @@ impl GammaCurve {
             let denom = 1.0 - (2.0 - g) * 0.8;
             1.0 / denom
         } else {
-            // G < 0.76：原公式奇点（FlexColor UI 不允许），fallback 用标准 gamma
-            // 定义 `exp = 1/G`（经典 gamma 反向），避免 LUT 全零。非 bit-accurate。
-            1.0 / g.max(0.01)
+            // G < 0.76：原公式奇点。实测 v_pos_gamma_050 (1800,2244) 输入 R≈13750，
+            // ref 输出 588 对应 exp=3.02。FlexColor UI 禁止 G<0.75，XML 强塞该域时
+            // 经验 ref behavior = exp 固定 ~3（可能是 denom clamp 到 0.333 的效果）。
+            3.0
         }
     }
 }
