@@ -191,6 +191,21 @@ fn replace_gradations(xml: &str, new_array_xml: &str) -> String {
     xml.to_string()
 }
 
+/// 按变体 name 归类到子目录（~20 个/目录）
+fn classify_variant(name: &str) -> &'static str {
+    // name 形如 v_pos_contrast_+50 / v_pos_curve_master_scurve / v_pos_histo_grad_mid
+    // 拆 segments
+    if name.contains("_curve_") || name.contains("_histo_") {
+        return "adv";
+    }
+    if name.contains("_contrast_") || name.contains("_brightness_")
+        || name.contains("_gamma_") || name.contains("_baseline_") {
+        return "tone";
+    }
+    // lightness / saturation / ev / temp / tint
+    "color"
+}
+
 /// 针对某个胶片类型 (pos/neg/bw) 的变体列表
 fn build_variants_for(prefix: &str) -> Vec<Variant> {
     let mut v = Vec::new();
@@ -555,17 +570,25 @@ fn main() {
                 new_data[i] = 0;
             }
 
-            let out_path = out_dir.join(format!("{}.fff", var.name));
+            // 分目录（每 ~20 个文件一组，避免 FlexColor 打开目录时崩溃）
+            // variants/v_{prefix}_tone/: baseline+contrast+brightness+gamma (23)
+            // variants/v_{prefix}_color/: lightness+saturation+ev+temp+tint (22)
+            // variants/v_{prefix}_adv/:  curve+histo (14)
+            let category = classify_variant(&var.name);
+            let subdir = format!("v_{}_{}", prefix, category);
+            let sub_path = out_dir.join(&subdir);
+            fs::create_dir_all(&sub_path).unwrap();
+            let out_path = sub_path.join(format!("{}.fff", var.name));
             fs::write(&out_path, &new_data).unwrap();
             println!("✓ {} ({} B XML)", out_path.display(), fff_xml_bytes.len());
 
             cases_toml.push_str(&format!(
                 "[[case]]\n\
                  name = \"{name}\"\n\
-                 fff    = \"variants/{name}.fff\"\n\
-                 ref    = \"variants/{name}.tif\"\n\
+                 fff    = \"variants/{sub}/{name}.fff\"\n\
+                 ref    = \"variants/{sub}/{name}.tif\"\n\
                  source = \"embedded_current\"\n\n",
-                name = var.name,
+                name = var.name, sub = subdir,
             ));
             total += 1;
         }
@@ -573,7 +596,9 @@ fn main() {
 
     fs::write(CASES_OUT, cases_toml).unwrap();
     println!(
-        "\n共 {} 个变体 FFF → {}\ntest_cases: {}\n\n下一步：\n  1. FlexColor 打开 {}/v_*.fff 并导出同名 TIF\n  2. cargo run --release --example tif_compare -- --manifest {} --flex-pipeline",
-        total, out_dir.display(), CASES_OUT, OUT_DIR, CASES_OUT
+        "\n共 {} 个变体 FFF → {}（9 子目录 × ~6-23 个，避免 FlexColor 崩溃）\n\
+         test_cases: {}\n\n\
+         下一步：\n  1. FlexColor 依次打开 v_*/*.fff 目录导出同名 TIF\n  2. cargo run --release --example tif_compare -- --manifest {} --flex-pipeline",
+        total, out_dir.display(), CASES_OUT, CASES_OUT
     );
 }

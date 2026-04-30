@@ -8,1063 +8,1063 @@ preset_dir = "."
 
 [[case]]
 name = "v_pos_baseline_000"
-fff    = "variants/v_pos_baseline_000.fff"
-ref    = "variants/v_pos_baseline_000.tif"
+fff    = "variants/v_pos_tone/v_pos_baseline_000.fff"
+ref    = "variants/v_pos_tone/v_pos_baseline_000.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_-100"
-fff    = "variants/v_pos_contrast_-100.fff"
-ref    = "variants/v_pos_contrast_-100.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_-100.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_-100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_-75"
-fff    = "variants/v_pos_contrast_-75.fff"
-ref    = "variants/v_pos_contrast_-75.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_-75.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_-75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_-50"
-fff    = "variants/v_pos_contrast_-50.fff"
-ref    = "variants/v_pos_contrast_-50.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_-50.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_-20"
-fff    = "variants/v_pos_contrast_-20.fff"
-ref    = "variants/v_pos_contrast_-20.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_-20.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_+20"
-fff    = "variants/v_pos_contrast_+20.fff"
-ref    = "variants/v_pos_contrast_+20.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_+20.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_+50"
-fff    = "variants/v_pos_contrast_+50.fff"
-ref    = "variants/v_pos_contrast_+50.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_+50.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_+75"
-fff    = "variants/v_pos_contrast_+75.fff"
-ref    = "variants/v_pos_contrast_+75.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_+75.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_+75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_contrast_+100"
-fff    = "variants/v_pos_contrast_+100.fff"
-ref    = "variants/v_pos_contrast_+100.tif"
+fff    = "variants/v_pos_tone/v_pos_contrast_+100.fff"
+ref    = "variants/v_pos_tone/v_pos_contrast_+100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_-100"
-fff    = "variants/v_pos_brightness_-100.fff"
-ref    = "variants/v_pos_brightness_-100.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_-100.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_-100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_-75"
-fff    = "variants/v_pos_brightness_-75.fff"
-ref    = "variants/v_pos_brightness_-75.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_-75.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_-75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_-50"
-fff    = "variants/v_pos_brightness_-50.fff"
-ref    = "variants/v_pos_brightness_-50.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_-50.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_-20"
-fff    = "variants/v_pos_brightness_-20.fff"
-ref    = "variants/v_pos_brightness_-20.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_-20.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_+20"
-fff    = "variants/v_pos_brightness_+20.fff"
-ref    = "variants/v_pos_brightness_+20.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_+20.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_+50"
-fff    = "variants/v_pos_brightness_+50.fff"
-ref    = "variants/v_pos_brightness_+50.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_+50.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_+75"
-fff    = "variants/v_pos_brightness_+75.fff"
-ref    = "variants/v_pos_brightness_+75.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_+75.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_+75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_brightness_+100"
-fff    = "variants/v_pos_brightness_+100.fff"
-ref    = "variants/v_pos_brightness_+100.tif"
+fff    = "variants/v_pos_tone/v_pos_brightness_+100.fff"
+ref    = "variants/v_pos_tone/v_pos_brightness_+100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_lightness_005"
-fff    = "variants/v_pos_lightness_005.fff"
-ref    = "variants/v_pos_lightness_005.tif"
+fff    = "variants/v_pos_color/v_pos_lightness_005.fff"
+ref    = "variants/v_pos_color/v_pos_lightness_005.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_lightness_010"
-fff    = "variants/v_pos_lightness_010.fff"
-ref    = "variants/v_pos_lightness_010.tif"
+fff    = "variants/v_pos_color/v_pos_lightness_010.fff"
+ref    = "variants/v_pos_color/v_pos_lightness_010.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_lightness_020"
-fff    = "variants/v_pos_lightness_020.fff"
-ref    = "variants/v_pos_lightness_020.tif"
+fff    = "variants/v_pos_color/v_pos_lightness_020.fff"
+ref    = "variants/v_pos_color/v_pos_lightness_020.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_lightness_050"
-fff    = "variants/v_pos_lightness_050.fff"
-ref    = "variants/v_pos_lightness_050.tif"
+fff    = "variants/v_pos_color/v_pos_lightness_050.fff"
+ref    = "variants/v_pos_color/v_pos_lightness_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_lightness_075"
-fff    = "variants/v_pos_lightness_075.fff"
-ref    = "variants/v_pos_lightness_075.tif"
+fff    = "variants/v_pos_color/v_pos_lightness_075.fff"
+ref    = "variants/v_pos_color/v_pos_lightness_075.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_lightness_100"
-fff    = "variants/v_pos_lightness_100.fff"
-ref    = "variants/v_pos_lightness_100.tif"
+fff    = "variants/v_pos_color/v_pos_lightness_100.fff"
+ref    = "variants/v_pos_color/v_pos_lightness_100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_saturation_-50"
-fff    = "variants/v_pos_saturation_-50.fff"
-ref    = "variants/v_pos_saturation_-50.tif"
+fff    = "variants/v_pos_color/v_pos_saturation_-50.fff"
+ref    = "variants/v_pos_color/v_pos_saturation_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_saturation_-25"
-fff    = "variants/v_pos_saturation_-25.fff"
-ref    = "variants/v_pos_saturation_-25.tif"
+fff    = "variants/v_pos_color/v_pos_saturation_-25.fff"
+ref    = "variants/v_pos_color/v_pos_saturation_-25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_saturation_-20"
-fff    = "variants/v_pos_saturation_-20.fff"
-ref    = "variants/v_pos_saturation_-20.tif"
+fff    = "variants/v_pos_color/v_pos_saturation_-20.fff"
+ref    = "variants/v_pos_color/v_pos_saturation_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_saturation_+20"
-fff    = "variants/v_pos_saturation_+20.fff"
-ref    = "variants/v_pos_saturation_+20.tif"
+fff    = "variants/v_pos_color/v_pos_saturation_+20.fff"
+ref    = "variants/v_pos_color/v_pos_saturation_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_saturation_+25"
-fff    = "variants/v_pos_saturation_+25.fff"
-ref    = "variants/v_pos_saturation_+25.tif"
+fff    = "variants/v_pos_color/v_pos_saturation_+25.fff"
+ref    = "variants/v_pos_color/v_pos_saturation_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_saturation_+50"
-fff    = "variants/v_pos_saturation_+50.fff"
-ref    = "variants/v_pos_saturation_+50.tif"
+fff    = "variants/v_pos_color/v_pos_saturation_+50.fff"
+ref    = "variants/v_pos_color/v_pos_saturation_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_gamma_050"
-fff    = "variants/v_pos_gamma_050.fff"
-ref    = "variants/v_pos_gamma_050.tif"
+fff    = "variants/v_pos_tone/v_pos_gamma_050.fff"
+ref    = "variants/v_pos_tone/v_pos_gamma_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_gamma_100"
-fff    = "variants/v_pos_gamma_100.fff"
-ref    = "variants/v_pos_gamma_100.tif"
+fff    = "variants/v_pos_tone/v_pos_gamma_100.fff"
+ref    = "variants/v_pos_tone/v_pos_gamma_100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_gamma_150"
-fff    = "variants/v_pos_gamma_150.fff"
-ref    = "variants/v_pos_gamma_150.tif"
+fff    = "variants/v_pos_tone/v_pos_gamma_150.fff"
+ref    = "variants/v_pos_tone/v_pos_gamma_150.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_gamma_225"
-fff    = "variants/v_pos_gamma_225.fff"
-ref    = "variants/v_pos_gamma_225.tif"
+fff    = "variants/v_pos_tone/v_pos_gamma_225.fff"
+ref    = "variants/v_pos_tone/v_pos_gamma_225.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_gamma_250"
-fff    = "variants/v_pos_gamma_250.fff"
-ref    = "variants/v_pos_gamma_250.tif"
+fff    = "variants/v_pos_tone/v_pos_gamma_250.fff"
+ref    = "variants/v_pos_tone/v_pos_gamma_250.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_gamma_300"
-fff    = "variants/v_pos_gamma_300.fff"
-ref    = "variants/v_pos_gamma_300.tif"
+fff    = "variants/v_pos_tone/v_pos_gamma_300.fff"
+ref    = "variants/v_pos_tone/v_pos_gamma_300.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_ev_050"
-fff    = "variants/v_pos_ev_050.fff"
-ref    = "variants/v_pos_ev_050.tif"
+fff    = "variants/v_pos_color/v_pos_ev_050.fff"
+ref    = "variants/v_pos_color/v_pos_ev_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_ev_075"
-fff    = "variants/v_pos_ev_075.fff"
-ref    = "variants/v_pos_ev_075.tif"
+fff    = "variants/v_pos_color/v_pos_ev_075.fff"
+ref    = "variants/v_pos_color/v_pos_ev_075.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_ev_150"
-fff    = "variants/v_pos_ev_150.fff"
-ref    = "variants/v_pos_ev_150.tif"
+fff    = "variants/v_pos_color/v_pos_ev_150.fff"
+ref    = "variants/v_pos_color/v_pos_ev_150.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_ev_200"
-fff    = "variants/v_pos_ev_200.fff"
-ref    = "variants/v_pos_ev_200.tif"
+fff    = "variants/v_pos_color/v_pos_ev_200.fff"
+ref    = "variants/v_pos_color/v_pos_ev_200.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_temp_-50"
-fff    = "variants/v_pos_temp_-50.fff"
-ref    = "variants/v_pos_temp_-50.tif"
+fff    = "variants/v_pos_color/v_pos_temp_-50.fff"
+ref    = "variants/v_pos_color/v_pos_temp_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_temp_+25"
-fff    = "variants/v_pos_temp_+25.fff"
-ref    = "variants/v_pos_temp_+25.tif"
+fff    = "variants/v_pos_color/v_pos_temp_+25.fff"
+ref    = "variants/v_pos_color/v_pos_temp_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_temp_+50"
-fff    = "variants/v_pos_temp_+50.fff"
-ref    = "variants/v_pos_temp_+50.tif"
+fff    = "variants/v_pos_color/v_pos_temp_+50.fff"
+ref    = "variants/v_pos_color/v_pos_temp_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_tint_-50"
-fff    = "variants/v_pos_tint_-50.fff"
-ref    = "variants/v_pos_tint_-50.tif"
+fff    = "variants/v_pos_color/v_pos_tint_-50.fff"
+ref    = "variants/v_pos_color/v_pos_tint_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_tint_+25"
-fff    = "variants/v_pos_tint_+25.fff"
-ref    = "variants/v_pos_tint_+25.tif"
+fff    = "variants/v_pos_color/v_pos_tint_+25.fff"
+ref    = "variants/v_pos_color/v_pos_tint_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_tint_+50"
-fff    = "variants/v_pos_tint_+50.fff"
-ref    = "variants/v_pos_tint_+50.tif"
+fff    = "variants/v_pos_color/v_pos_tint_+50.fff"
+ref    = "variants/v_pos_color/v_pos_tint_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_curve_master_scurve"
-fff    = "variants/v_pos_curve_master_scurve.fff"
-ref    = "variants/v_pos_curve_master_scurve.tif"
+fff    = "variants/v_pos_adv/v_pos_curve_master_scurve.fff"
+ref    = "variants/v_pos_adv/v_pos_curve_master_scurve.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_curve_master_lift"
-fff    = "variants/v_pos_curve_master_lift.fff"
-ref    = "variants/v_pos_curve_master_lift.tif"
+fff    = "variants/v_pos_adv/v_pos_curve_master_lift.fff"
+ref    = "variants/v_pos_adv/v_pos_curve_master_lift.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_curve_master_darken"
-fff    = "variants/v_pos_curve_master_darken.fff"
-ref    = "variants/v_pos_curve_master_darken.tif"
+fff    = "variants/v_pos_adv/v_pos_curve_master_darken.fff"
+ref    = "variants/v_pos_adv/v_pos_curve_master_darken.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_curve_master_invert"
-fff    = "variants/v_pos_curve_master_invert.fff"
-ref    = "variants/v_pos_curve_master_invert.tif"
+fff    = "variants/v_pos_adv/v_pos_curve_master_invert.fff"
+ref    = "variants/v_pos_adv/v_pos_curve_master_invert.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_curve_r_warm"
-fff    = "variants/v_pos_curve_r_warm.fff"
-ref    = "variants/v_pos_curve_r_warm.tif"
+fff    = "variants/v_pos_adv/v_pos_curve_r_warm.fff"
+ref    = "variants/v_pos_adv/v_pos_curve_r_warm.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_curve_b_cool"
-fff    = "variants/v_pos_curve_b_cool.fff"
-ref    = "variants/v_pos_curve_b_cool.tif"
+fff    = "variants/v_pos_adv/v_pos_curve_b_cool.fff"
+ref    = "variants/v_pos_adv/v_pos_curve_b_cool.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_curve_g_lift"
-fff    = "variants/v_pos_curve_g_lift.fff"
-ref    = "variants/v_pos_curve_g_lift.tif"
+fff    = "variants/v_pos_adv/v_pos_curve_g_lift.fff"
+ref    = "variants/v_pos_adv/v_pos_curve_g_lift.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_histo_shadow_up"
-fff    = "variants/v_pos_histo_shadow_up.fff"
-ref    = "variants/v_pos_histo_shadow_up.tif"
+fff    = "variants/v_pos_adv/v_pos_histo_shadow_up.fff"
+ref    = "variants/v_pos_adv/v_pos_histo_shadow_up.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_histo_hl_down"
-fff    = "variants/v_pos_histo_hl_down.fff"
-ref    = "variants/v_pos_histo_hl_down.tif"
+fff    = "variants/v_pos_adv/v_pos_histo_hl_down.fff"
+ref    = "variants/v_pos_adv/v_pos_histo_hl_down.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_histo_gray_high"
-fff    = "variants/v_pos_histo_gray_high.fff"
-ref    = "variants/v_pos_histo_gray_high.tif"
+fff    = "variants/v_pos_adv/v_pos_histo_gray_high.fff"
+ref    = "variants/v_pos_adv/v_pos_histo_gray_high.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_histo_gray_low"
-fff    = "variants/v_pos_histo_gray_low.fff"
-ref    = "variants/v_pos_histo_gray_low.tif"
+fff    = "variants/v_pos_adv/v_pos_histo_gray_low.fff"
+ref    = "variants/v_pos_adv/v_pos_histo_gray_low.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_histo_grad_shadow"
-fff    = "variants/v_pos_histo_grad_shadow.fff"
-ref    = "variants/v_pos_histo_grad_shadow.tif"
+fff    = "variants/v_pos_adv/v_pos_histo_grad_shadow.fff"
+ref    = "variants/v_pos_adv/v_pos_histo_grad_shadow.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_histo_grad_mid"
-fff    = "variants/v_pos_histo_grad_mid.fff"
-ref    = "variants/v_pos_histo_grad_mid.tif"
+fff    = "variants/v_pos_adv/v_pos_histo_grad_mid.fff"
+ref    = "variants/v_pos_adv/v_pos_histo_grad_mid.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_pos_histo_grad_hl"
-fff    = "variants/v_pos_histo_grad_hl.fff"
-ref    = "variants/v_pos_histo_grad_hl.tif"
+fff    = "variants/v_pos_adv/v_pos_histo_grad_hl.fff"
+ref    = "variants/v_pos_adv/v_pos_histo_grad_hl.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_baseline_000"
-fff    = "variants/v_neg_baseline_000.fff"
-ref    = "variants/v_neg_baseline_000.tif"
+fff    = "variants/v_neg_tone/v_neg_baseline_000.fff"
+ref    = "variants/v_neg_tone/v_neg_baseline_000.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_-100"
-fff    = "variants/v_neg_contrast_-100.fff"
-ref    = "variants/v_neg_contrast_-100.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_-100.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_-100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_-75"
-fff    = "variants/v_neg_contrast_-75.fff"
-ref    = "variants/v_neg_contrast_-75.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_-75.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_-75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_-50"
-fff    = "variants/v_neg_contrast_-50.fff"
-ref    = "variants/v_neg_contrast_-50.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_-50.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_-20"
-fff    = "variants/v_neg_contrast_-20.fff"
-ref    = "variants/v_neg_contrast_-20.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_-20.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_+20"
-fff    = "variants/v_neg_contrast_+20.fff"
-ref    = "variants/v_neg_contrast_+20.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_+20.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_+50"
-fff    = "variants/v_neg_contrast_+50.fff"
-ref    = "variants/v_neg_contrast_+50.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_+50.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_+75"
-fff    = "variants/v_neg_contrast_+75.fff"
-ref    = "variants/v_neg_contrast_+75.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_+75.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_+75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_contrast_+100"
-fff    = "variants/v_neg_contrast_+100.fff"
-ref    = "variants/v_neg_contrast_+100.tif"
+fff    = "variants/v_neg_tone/v_neg_contrast_+100.fff"
+ref    = "variants/v_neg_tone/v_neg_contrast_+100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_-100"
-fff    = "variants/v_neg_brightness_-100.fff"
-ref    = "variants/v_neg_brightness_-100.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_-100.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_-100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_-75"
-fff    = "variants/v_neg_brightness_-75.fff"
-ref    = "variants/v_neg_brightness_-75.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_-75.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_-75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_-50"
-fff    = "variants/v_neg_brightness_-50.fff"
-ref    = "variants/v_neg_brightness_-50.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_-50.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_-20"
-fff    = "variants/v_neg_brightness_-20.fff"
-ref    = "variants/v_neg_brightness_-20.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_-20.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_+20"
-fff    = "variants/v_neg_brightness_+20.fff"
-ref    = "variants/v_neg_brightness_+20.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_+20.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_+50"
-fff    = "variants/v_neg_brightness_+50.fff"
-ref    = "variants/v_neg_brightness_+50.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_+50.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_+75"
-fff    = "variants/v_neg_brightness_+75.fff"
-ref    = "variants/v_neg_brightness_+75.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_+75.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_+75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_brightness_+100"
-fff    = "variants/v_neg_brightness_+100.fff"
-ref    = "variants/v_neg_brightness_+100.tif"
+fff    = "variants/v_neg_tone/v_neg_brightness_+100.fff"
+ref    = "variants/v_neg_tone/v_neg_brightness_+100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_lightness_005"
-fff    = "variants/v_neg_lightness_005.fff"
-ref    = "variants/v_neg_lightness_005.tif"
+fff    = "variants/v_neg_color/v_neg_lightness_005.fff"
+ref    = "variants/v_neg_color/v_neg_lightness_005.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_lightness_010"
-fff    = "variants/v_neg_lightness_010.fff"
-ref    = "variants/v_neg_lightness_010.tif"
+fff    = "variants/v_neg_color/v_neg_lightness_010.fff"
+ref    = "variants/v_neg_color/v_neg_lightness_010.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_lightness_020"
-fff    = "variants/v_neg_lightness_020.fff"
-ref    = "variants/v_neg_lightness_020.tif"
+fff    = "variants/v_neg_color/v_neg_lightness_020.fff"
+ref    = "variants/v_neg_color/v_neg_lightness_020.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_lightness_050"
-fff    = "variants/v_neg_lightness_050.fff"
-ref    = "variants/v_neg_lightness_050.tif"
+fff    = "variants/v_neg_color/v_neg_lightness_050.fff"
+ref    = "variants/v_neg_color/v_neg_lightness_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_lightness_075"
-fff    = "variants/v_neg_lightness_075.fff"
-ref    = "variants/v_neg_lightness_075.tif"
+fff    = "variants/v_neg_color/v_neg_lightness_075.fff"
+ref    = "variants/v_neg_color/v_neg_lightness_075.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_lightness_100"
-fff    = "variants/v_neg_lightness_100.fff"
-ref    = "variants/v_neg_lightness_100.tif"
+fff    = "variants/v_neg_color/v_neg_lightness_100.fff"
+ref    = "variants/v_neg_color/v_neg_lightness_100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_saturation_-50"
-fff    = "variants/v_neg_saturation_-50.fff"
-ref    = "variants/v_neg_saturation_-50.tif"
+fff    = "variants/v_neg_color/v_neg_saturation_-50.fff"
+ref    = "variants/v_neg_color/v_neg_saturation_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_saturation_-25"
-fff    = "variants/v_neg_saturation_-25.fff"
-ref    = "variants/v_neg_saturation_-25.tif"
+fff    = "variants/v_neg_color/v_neg_saturation_-25.fff"
+ref    = "variants/v_neg_color/v_neg_saturation_-25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_saturation_-20"
-fff    = "variants/v_neg_saturation_-20.fff"
-ref    = "variants/v_neg_saturation_-20.tif"
+fff    = "variants/v_neg_color/v_neg_saturation_-20.fff"
+ref    = "variants/v_neg_color/v_neg_saturation_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_saturation_+20"
-fff    = "variants/v_neg_saturation_+20.fff"
-ref    = "variants/v_neg_saturation_+20.tif"
+fff    = "variants/v_neg_color/v_neg_saturation_+20.fff"
+ref    = "variants/v_neg_color/v_neg_saturation_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_saturation_+25"
-fff    = "variants/v_neg_saturation_+25.fff"
-ref    = "variants/v_neg_saturation_+25.tif"
+fff    = "variants/v_neg_color/v_neg_saturation_+25.fff"
+ref    = "variants/v_neg_color/v_neg_saturation_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_saturation_+50"
-fff    = "variants/v_neg_saturation_+50.fff"
-ref    = "variants/v_neg_saturation_+50.tif"
+fff    = "variants/v_neg_color/v_neg_saturation_+50.fff"
+ref    = "variants/v_neg_color/v_neg_saturation_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_gamma_050"
-fff    = "variants/v_neg_gamma_050.fff"
-ref    = "variants/v_neg_gamma_050.tif"
+fff    = "variants/v_neg_tone/v_neg_gamma_050.fff"
+ref    = "variants/v_neg_tone/v_neg_gamma_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_gamma_100"
-fff    = "variants/v_neg_gamma_100.fff"
-ref    = "variants/v_neg_gamma_100.tif"
+fff    = "variants/v_neg_tone/v_neg_gamma_100.fff"
+ref    = "variants/v_neg_tone/v_neg_gamma_100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_gamma_150"
-fff    = "variants/v_neg_gamma_150.fff"
-ref    = "variants/v_neg_gamma_150.tif"
+fff    = "variants/v_neg_tone/v_neg_gamma_150.fff"
+ref    = "variants/v_neg_tone/v_neg_gamma_150.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_gamma_225"
-fff    = "variants/v_neg_gamma_225.fff"
-ref    = "variants/v_neg_gamma_225.tif"
+fff    = "variants/v_neg_tone/v_neg_gamma_225.fff"
+ref    = "variants/v_neg_tone/v_neg_gamma_225.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_gamma_250"
-fff    = "variants/v_neg_gamma_250.fff"
-ref    = "variants/v_neg_gamma_250.tif"
+fff    = "variants/v_neg_tone/v_neg_gamma_250.fff"
+ref    = "variants/v_neg_tone/v_neg_gamma_250.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_gamma_300"
-fff    = "variants/v_neg_gamma_300.fff"
-ref    = "variants/v_neg_gamma_300.tif"
+fff    = "variants/v_neg_tone/v_neg_gamma_300.fff"
+ref    = "variants/v_neg_tone/v_neg_gamma_300.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_ev_050"
-fff    = "variants/v_neg_ev_050.fff"
-ref    = "variants/v_neg_ev_050.tif"
+fff    = "variants/v_neg_color/v_neg_ev_050.fff"
+ref    = "variants/v_neg_color/v_neg_ev_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_ev_075"
-fff    = "variants/v_neg_ev_075.fff"
-ref    = "variants/v_neg_ev_075.tif"
+fff    = "variants/v_neg_color/v_neg_ev_075.fff"
+ref    = "variants/v_neg_color/v_neg_ev_075.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_ev_150"
-fff    = "variants/v_neg_ev_150.fff"
-ref    = "variants/v_neg_ev_150.tif"
+fff    = "variants/v_neg_color/v_neg_ev_150.fff"
+ref    = "variants/v_neg_color/v_neg_ev_150.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_ev_200"
-fff    = "variants/v_neg_ev_200.fff"
-ref    = "variants/v_neg_ev_200.tif"
+fff    = "variants/v_neg_color/v_neg_ev_200.fff"
+ref    = "variants/v_neg_color/v_neg_ev_200.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_temp_-50"
-fff    = "variants/v_neg_temp_-50.fff"
-ref    = "variants/v_neg_temp_-50.tif"
+fff    = "variants/v_neg_color/v_neg_temp_-50.fff"
+ref    = "variants/v_neg_color/v_neg_temp_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_temp_+25"
-fff    = "variants/v_neg_temp_+25.fff"
-ref    = "variants/v_neg_temp_+25.tif"
+fff    = "variants/v_neg_color/v_neg_temp_+25.fff"
+ref    = "variants/v_neg_color/v_neg_temp_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_temp_+50"
-fff    = "variants/v_neg_temp_+50.fff"
-ref    = "variants/v_neg_temp_+50.tif"
+fff    = "variants/v_neg_color/v_neg_temp_+50.fff"
+ref    = "variants/v_neg_color/v_neg_temp_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_tint_-50"
-fff    = "variants/v_neg_tint_-50.fff"
-ref    = "variants/v_neg_tint_-50.tif"
+fff    = "variants/v_neg_color/v_neg_tint_-50.fff"
+ref    = "variants/v_neg_color/v_neg_tint_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_tint_+25"
-fff    = "variants/v_neg_tint_+25.fff"
-ref    = "variants/v_neg_tint_+25.tif"
+fff    = "variants/v_neg_color/v_neg_tint_+25.fff"
+ref    = "variants/v_neg_color/v_neg_tint_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_tint_+50"
-fff    = "variants/v_neg_tint_+50.fff"
-ref    = "variants/v_neg_tint_+50.tif"
+fff    = "variants/v_neg_color/v_neg_tint_+50.fff"
+ref    = "variants/v_neg_color/v_neg_tint_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_curve_master_scurve"
-fff    = "variants/v_neg_curve_master_scurve.fff"
-ref    = "variants/v_neg_curve_master_scurve.tif"
+fff    = "variants/v_neg_adv/v_neg_curve_master_scurve.fff"
+ref    = "variants/v_neg_adv/v_neg_curve_master_scurve.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_curve_master_lift"
-fff    = "variants/v_neg_curve_master_lift.fff"
-ref    = "variants/v_neg_curve_master_lift.tif"
+fff    = "variants/v_neg_adv/v_neg_curve_master_lift.fff"
+ref    = "variants/v_neg_adv/v_neg_curve_master_lift.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_curve_master_darken"
-fff    = "variants/v_neg_curve_master_darken.fff"
-ref    = "variants/v_neg_curve_master_darken.tif"
+fff    = "variants/v_neg_adv/v_neg_curve_master_darken.fff"
+ref    = "variants/v_neg_adv/v_neg_curve_master_darken.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_curve_master_invert"
-fff    = "variants/v_neg_curve_master_invert.fff"
-ref    = "variants/v_neg_curve_master_invert.tif"
+fff    = "variants/v_neg_adv/v_neg_curve_master_invert.fff"
+ref    = "variants/v_neg_adv/v_neg_curve_master_invert.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_curve_r_warm"
-fff    = "variants/v_neg_curve_r_warm.fff"
-ref    = "variants/v_neg_curve_r_warm.tif"
+fff    = "variants/v_neg_adv/v_neg_curve_r_warm.fff"
+ref    = "variants/v_neg_adv/v_neg_curve_r_warm.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_curve_b_cool"
-fff    = "variants/v_neg_curve_b_cool.fff"
-ref    = "variants/v_neg_curve_b_cool.tif"
+fff    = "variants/v_neg_adv/v_neg_curve_b_cool.fff"
+ref    = "variants/v_neg_adv/v_neg_curve_b_cool.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_curve_g_lift"
-fff    = "variants/v_neg_curve_g_lift.fff"
-ref    = "variants/v_neg_curve_g_lift.tif"
+fff    = "variants/v_neg_adv/v_neg_curve_g_lift.fff"
+ref    = "variants/v_neg_adv/v_neg_curve_g_lift.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_histo_shadow_up"
-fff    = "variants/v_neg_histo_shadow_up.fff"
-ref    = "variants/v_neg_histo_shadow_up.tif"
+fff    = "variants/v_neg_adv/v_neg_histo_shadow_up.fff"
+ref    = "variants/v_neg_adv/v_neg_histo_shadow_up.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_histo_hl_down"
-fff    = "variants/v_neg_histo_hl_down.fff"
-ref    = "variants/v_neg_histo_hl_down.tif"
+fff    = "variants/v_neg_adv/v_neg_histo_hl_down.fff"
+ref    = "variants/v_neg_adv/v_neg_histo_hl_down.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_histo_gray_high"
-fff    = "variants/v_neg_histo_gray_high.fff"
-ref    = "variants/v_neg_histo_gray_high.tif"
+fff    = "variants/v_neg_adv/v_neg_histo_gray_high.fff"
+ref    = "variants/v_neg_adv/v_neg_histo_gray_high.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_histo_gray_low"
-fff    = "variants/v_neg_histo_gray_low.fff"
-ref    = "variants/v_neg_histo_gray_low.tif"
+fff    = "variants/v_neg_adv/v_neg_histo_gray_low.fff"
+ref    = "variants/v_neg_adv/v_neg_histo_gray_low.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_histo_grad_shadow"
-fff    = "variants/v_neg_histo_grad_shadow.fff"
-ref    = "variants/v_neg_histo_grad_shadow.tif"
+fff    = "variants/v_neg_adv/v_neg_histo_grad_shadow.fff"
+ref    = "variants/v_neg_adv/v_neg_histo_grad_shadow.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_histo_grad_mid"
-fff    = "variants/v_neg_histo_grad_mid.fff"
-ref    = "variants/v_neg_histo_grad_mid.tif"
+fff    = "variants/v_neg_adv/v_neg_histo_grad_mid.fff"
+ref    = "variants/v_neg_adv/v_neg_histo_grad_mid.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_neg_histo_grad_hl"
-fff    = "variants/v_neg_histo_grad_hl.fff"
-ref    = "variants/v_neg_histo_grad_hl.tif"
+fff    = "variants/v_neg_adv/v_neg_histo_grad_hl.fff"
+ref    = "variants/v_neg_adv/v_neg_histo_grad_hl.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_baseline_000"
-fff    = "variants/v_bw_baseline_000.fff"
-ref    = "variants/v_bw_baseline_000.tif"
+fff    = "variants/v_bw_tone/v_bw_baseline_000.fff"
+ref    = "variants/v_bw_tone/v_bw_baseline_000.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_-100"
-fff    = "variants/v_bw_contrast_-100.fff"
-ref    = "variants/v_bw_contrast_-100.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_-100.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_-100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_-75"
-fff    = "variants/v_bw_contrast_-75.fff"
-ref    = "variants/v_bw_contrast_-75.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_-75.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_-75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_-50"
-fff    = "variants/v_bw_contrast_-50.fff"
-ref    = "variants/v_bw_contrast_-50.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_-50.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_-20"
-fff    = "variants/v_bw_contrast_-20.fff"
-ref    = "variants/v_bw_contrast_-20.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_-20.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_+20"
-fff    = "variants/v_bw_contrast_+20.fff"
-ref    = "variants/v_bw_contrast_+20.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_+20.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_+50"
-fff    = "variants/v_bw_contrast_+50.fff"
-ref    = "variants/v_bw_contrast_+50.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_+50.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_+75"
-fff    = "variants/v_bw_contrast_+75.fff"
-ref    = "variants/v_bw_contrast_+75.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_+75.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_+75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_contrast_+100"
-fff    = "variants/v_bw_contrast_+100.fff"
-ref    = "variants/v_bw_contrast_+100.tif"
+fff    = "variants/v_bw_tone/v_bw_contrast_+100.fff"
+ref    = "variants/v_bw_tone/v_bw_contrast_+100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_-100"
-fff    = "variants/v_bw_brightness_-100.fff"
-ref    = "variants/v_bw_brightness_-100.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_-100.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_-100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_-75"
-fff    = "variants/v_bw_brightness_-75.fff"
-ref    = "variants/v_bw_brightness_-75.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_-75.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_-75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_-50"
-fff    = "variants/v_bw_brightness_-50.fff"
-ref    = "variants/v_bw_brightness_-50.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_-50.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_-20"
-fff    = "variants/v_bw_brightness_-20.fff"
-ref    = "variants/v_bw_brightness_-20.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_-20.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_+20"
-fff    = "variants/v_bw_brightness_+20.fff"
-ref    = "variants/v_bw_brightness_+20.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_+20.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_+50"
-fff    = "variants/v_bw_brightness_+50.fff"
-ref    = "variants/v_bw_brightness_+50.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_+50.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_+75"
-fff    = "variants/v_bw_brightness_+75.fff"
-ref    = "variants/v_bw_brightness_+75.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_+75.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_+75.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_brightness_+100"
-fff    = "variants/v_bw_brightness_+100.fff"
-ref    = "variants/v_bw_brightness_+100.tif"
+fff    = "variants/v_bw_tone/v_bw_brightness_+100.fff"
+ref    = "variants/v_bw_tone/v_bw_brightness_+100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_lightness_005"
-fff    = "variants/v_bw_lightness_005.fff"
-ref    = "variants/v_bw_lightness_005.tif"
+fff    = "variants/v_bw_color/v_bw_lightness_005.fff"
+ref    = "variants/v_bw_color/v_bw_lightness_005.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_lightness_010"
-fff    = "variants/v_bw_lightness_010.fff"
-ref    = "variants/v_bw_lightness_010.tif"
+fff    = "variants/v_bw_color/v_bw_lightness_010.fff"
+ref    = "variants/v_bw_color/v_bw_lightness_010.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_lightness_020"
-fff    = "variants/v_bw_lightness_020.fff"
-ref    = "variants/v_bw_lightness_020.tif"
+fff    = "variants/v_bw_color/v_bw_lightness_020.fff"
+ref    = "variants/v_bw_color/v_bw_lightness_020.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_lightness_050"
-fff    = "variants/v_bw_lightness_050.fff"
-ref    = "variants/v_bw_lightness_050.tif"
+fff    = "variants/v_bw_color/v_bw_lightness_050.fff"
+ref    = "variants/v_bw_color/v_bw_lightness_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_lightness_075"
-fff    = "variants/v_bw_lightness_075.fff"
-ref    = "variants/v_bw_lightness_075.tif"
+fff    = "variants/v_bw_color/v_bw_lightness_075.fff"
+ref    = "variants/v_bw_color/v_bw_lightness_075.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_lightness_100"
-fff    = "variants/v_bw_lightness_100.fff"
-ref    = "variants/v_bw_lightness_100.tif"
+fff    = "variants/v_bw_color/v_bw_lightness_100.fff"
+ref    = "variants/v_bw_color/v_bw_lightness_100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_saturation_-50"
-fff    = "variants/v_bw_saturation_-50.fff"
-ref    = "variants/v_bw_saturation_-50.tif"
+fff    = "variants/v_bw_color/v_bw_saturation_-50.fff"
+ref    = "variants/v_bw_color/v_bw_saturation_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_saturation_-25"
-fff    = "variants/v_bw_saturation_-25.fff"
-ref    = "variants/v_bw_saturation_-25.tif"
+fff    = "variants/v_bw_color/v_bw_saturation_-25.fff"
+ref    = "variants/v_bw_color/v_bw_saturation_-25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_saturation_-20"
-fff    = "variants/v_bw_saturation_-20.fff"
-ref    = "variants/v_bw_saturation_-20.tif"
+fff    = "variants/v_bw_color/v_bw_saturation_-20.fff"
+ref    = "variants/v_bw_color/v_bw_saturation_-20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_saturation_+20"
-fff    = "variants/v_bw_saturation_+20.fff"
-ref    = "variants/v_bw_saturation_+20.tif"
+fff    = "variants/v_bw_color/v_bw_saturation_+20.fff"
+ref    = "variants/v_bw_color/v_bw_saturation_+20.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_saturation_+25"
-fff    = "variants/v_bw_saturation_+25.fff"
-ref    = "variants/v_bw_saturation_+25.tif"
+fff    = "variants/v_bw_color/v_bw_saturation_+25.fff"
+ref    = "variants/v_bw_color/v_bw_saturation_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_saturation_+50"
-fff    = "variants/v_bw_saturation_+50.fff"
-ref    = "variants/v_bw_saturation_+50.tif"
+fff    = "variants/v_bw_color/v_bw_saturation_+50.fff"
+ref    = "variants/v_bw_color/v_bw_saturation_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_gamma_050"
-fff    = "variants/v_bw_gamma_050.fff"
-ref    = "variants/v_bw_gamma_050.tif"
+fff    = "variants/v_bw_tone/v_bw_gamma_050.fff"
+ref    = "variants/v_bw_tone/v_bw_gamma_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_gamma_100"
-fff    = "variants/v_bw_gamma_100.fff"
-ref    = "variants/v_bw_gamma_100.tif"
+fff    = "variants/v_bw_tone/v_bw_gamma_100.fff"
+ref    = "variants/v_bw_tone/v_bw_gamma_100.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_gamma_150"
-fff    = "variants/v_bw_gamma_150.fff"
-ref    = "variants/v_bw_gamma_150.tif"
+fff    = "variants/v_bw_tone/v_bw_gamma_150.fff"
+ref    = "variants/v_bw_tone/v_bw_gamma_150.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_gamma_225"
-fff    = "variants/v_bw_gamma_225.fff"
-ref    = "variants/v_bw_gamma_225.tif"
+fff    = "variants/v_bw_tone/v_bw_gamma_225.fff"
+ref    = "variants/v_bw_tone/v_bw_gamma_225.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_gamma_250"
-fff    = "variants/v_bw_gamma_250.fff"
-ref    = "variants/v_bw_gamma_250.tif"
+fff    = "variants/v_bw_tone/v_bw_gamma_250.fff"
+ref    = "variants/v_bw_tone/v_bw_gamma_250.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_gamma_300"
-fff    = "variants/v_bw_gamma_300.fff"
-ref    = "variants/v_bw_gamma_300.tif"
+fff    = "variants/v_bw_tone/v_bw_gamma_300.fff"
+ref    = "variants/v_bw_tone/v_bw_gamma_300.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_ev_050"
-fff    = "variants/v_bw_ev_050.fff"
-ref    = "variants/v_bw_ev_050.tif"
+fff    = "variants/v_bw_color/v_bw_ev_050.fff"
+ref    = "variants/v_bw_color/v_bw_ev_050.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_ev_075"
-fff    = "variants/v_bw_ev_075.fff"
-ref    = "variants/v_bw_ev_075.tif"
+fff    = "variants/v_bw_color/v_bw_ev_075.fff"
+ref    = "variants/v_bw_color/v_bw_ev_075.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_ev_150"
-fff    = "variants/v_bw_ev_150.fff"
-ref    = "variants/v_bw_ev_150.tif"
+fff    = "variants/v_bw_color/v_bw_ev_150.fff"
+ref    = "variants/v_bw_color/v_bw_ev_150.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_ev_200"
-fff    = "variants/v_bw_ev_200.fff"
-ref    = "variants/v_bw_ev_200.tif"
+fff    = "variants/v_bw_color/v_bw_ev_200.fff"
+ref    = "variants/v_bw_color/v_bw_ev_200.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_temp_-50"
-fff    = "variants/v_bw_temp_-50.fff"
-ref    = "variants/v_bw_temp_-50.tif"
+fff    = "variants/v_bw_color/v_bw_temp_-50.fff"
+ref    = "variants/v_bw_color/v_bw_temp_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_temp_+25"
-fff    = "variants/v_bw_temp_+25.fff"
-ref    = "variants/v_bw_temp_+25.tif"
+fff    = "variants/v_bw_color/v_bw_temp_+25.fff"
+ref    = "variants/v_bw_color/v_bw_temp_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_temp_+50"
-fff    = "variants/v_bw_temp_+50.fff"
-ref    = "variants/v_bw_temp_+50.tif"
+fff    = "variants/v_bw_color/v_bw_temp_+50.fff"
+ref    = "variants/v_bw_color/v_bw_temp_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_tint_-50"
-fff    = "variants/v_bw_tint_-50.fff"
-ref    = "variants/v_bw_tint_-50.tif"
+fff    = "variants/v_bw_color/v_bw_tint_-50.fff"
+ref    = "variants/v_bw_color/v_bw_tint_-50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_tint_+25"
-fff    = "variants/v_bw_tint_+25.fff"
-ref    = "variants/v_bw_tint_+25.tif"
+fff    = "variants/v_bw_color/v_bw_tint_+25.fff"
+ref    = "variants/v_bw_color/v_bw_tint_+25.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_tint_+50"
-fff    = "variants/v_bw_tint_+50.fff"
-ref    = "variants/v_bw_tint_+50.tif"
+fff    = "variants/v_bw_color/v_bw_tint_+50.fff"
+ref    = "variants/v_bw_color/v_bw_tint_+50.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_curve_master_scurve"
-fff    = "variants/v_bw_curve_master_scurve.fff"
-ref    = "variants/v_bw_curve_master_scurve.tif"
+fff    = "variants/v_bw_adv/v_bw_curve_master_scurve.fff"
+ref    = "variants/v_bw_adv/v_bw_curve_master_scurve.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_curve_master_lift"
-fff    = "variants/v_bw_curve_master_lift.fff"
-ref    = "variants/v_bw_curve_master_lift.tif"
+fff    = "variants/v_bw_adv/v_bw_curve_master_lift.fff"
+ref    = "variants/v_bw_adv/v_bw_curve_master_lift.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_curve_master_darken"
-fff    = "variants/v_bw_curve_master_darken.fff"
-ref    = "variants/v_bw_curve_master_darken.tif"
+fff    = "variants/v_bw_adv/v_bw_curve_master_darken.fff"
+ref    = "variants/v_bw_adv/v_bw_curve_master_darken.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_curve_master_invert"
-fff    = "variants/v_bw_curve_master_invert.fff"
-ref    = "variants/v_bw_curve_master_invert.tif"
+fff    = "variants/v_bw_adv/v_bw_curve_master_invert.fff"
+ref    = "variants/v_bw_adv/v_bw_curve_master_invert.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_curve_r_warm"
-fff    = "variants/v_bw_curve_r_warm.fff"
-ref    = "variants/v_bw_curve_r_warm.tif"
+fff    = "variants/v_bw_adv/v_bw_curve_r_warm.fff"
+ref    = "variants/v_bw_adv/v_bw_curve_r_warm.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_curve_b_cool"
-fff    = "variants/v_bw_curve_b_cool.fff"
-ref    = "variants/v_bw_curve_b_cool.tif"
+fff    = "variants/v_bw_adv/v_bw_curve_b_cool.fff"
+ref    = "variants/v_bw_adv/v_bw_curve_b_cool.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_curve_g_lift"
-fff    = "variants/v_bw_curve_g_lift.fff"
-ref    = "variants/v_bw_curve_g_lift.tif"
+fff    = "variants/v_bw_adv/v_bw_curve_g_lift.fff"
+ref    = "variants/v_bw_adv/v_bw_curve_g_lift.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_histo_shadow_up"
-fff    = "variants/v_bw_histo_shadow_up.fff"
-ref    = "variants/v_bw_histo_shadow_up.tif"
+fff    = "variants/v_bw_adv/v_bw_histo_shadow_up.fff"
+ref    = "variants/v_bw_adv/v_bw_histo_shadow_up.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_histo_hl_down"
-fff    = "variants/v_bw_histo_hl_down.fff"
-ref    = "variants/v_bw_histo_hl_down.tif"
+fff    = "variants/v_bw_adv/v_bw_histo_hl_down.fff"
+ref    = "variants/v_bw_adv/v_bw_histo_hl_down.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_histo_gray_high"
-fff    = "variants/v_bw_histo_gray_high.fff"
-ref    = "variants/v_bw_histo_gray_high.tif"
+fff    = "variants/v_bw_adv/v_bw_histo_gray_high.fff"
+ref    = "variants/v_bw_adv/v_bw_histo_gray_high.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_histo_gray_low"
-fff    = "variants/v_bw_histo_gray_low.fff"
-ref    = "variants/v_bw_histo_gray_low.tif"
+fff    = "variants/v_bw_adv/v_bw_histo_gray_low.fff"
+ref    = "variants/v_bw_adv/v_bw_histo_gray_low.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_histo_grad_shadow"
-fff    = "variants/v_bw_histo_grad_shadow.fff"
-ref    = "variants/v_bw_histo_grad_shadow.tif"
+fff    = "variants/v_bw_adv/v_bw_histo_grad_shadow.fff"
+ref    = "variants/v_bw_adv/v_bw_histo_grad_shadow.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_histo_grad_mid"
-fff    = "variants/v_bw_histo_grad_mid.fff"
-ref    = "variants/v_bw_histo_grad_mid.tif"
+fff    = "variants/v_bw_adv/v_bw_histo_grad_mid.fff"
+ref    = "variants/v_bw_adv/v_bw_histo_grad_mid.tif"
 source = "embedded_current"
 
 [[case]]
 name = "v_bw_histo_grad_hl"
-fff    = "variants/v_bw_histo_grad_hl.fff"
-ref    = "variants/v_bw_histo_grad_hl.tif"
+fff    = "variants/v_bw_adv/v_bw_histo_grad_hl.fff"
+ref    = "variants/v_bw_adv/v_bw_histo_grad_hl.tif"
 source = "embedded_current"
 
