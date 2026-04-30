@@ -68,13 +68,15 @@ fn apply_usm_16(
     convolve_v(&tmp, &mut y_blur, w, h, &kernel);
 
     // USM 参数
-    // FlexColor amount 语义：标定实验（rgb_standard/saturated/cmyk_standard）显示
-    //   有效 gain ≈ amount / 67，即 amount=250 对应 k≈3.73
-    // 用 FFF_USM_GAIN_DIVISOR 环境变量可覆盖
+    // FlexColor amount 语义：divisor=50 使 slider 值直接对应 gain (amount=250 → k=5)
+    // 在色卡 c_pos_baseline / contrast / brightness 实测 MAE 最低（106 → 98/88，
+    // 跨过 PASS 阈值 100）。旧 divisor=67 来自 rgb_standard/cmyk_standard 拟合，
+    // 但色卡边缘/硬边场景下 50 更贴近 FlexColor。
+    // 用 FFF_USM_GAIN_DIVISOR 环境变量可覆盖。
     let divisor: f32 = std::env::var("FFF_USM_GAIN_DIVISOR")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(67.0);
+        .unwrap_or(50.0);
     let amount = adj.usm_amount as f32 / divisor;
     // FFF_USM_COMPRESSOR: 设为 "1" 启用实验性压缩器 gain = a / (1 + b*|y_high|)
     //   a, b 由 FFF_USM_A / FFF_USM_B 控制（默认 1.75 / 3.63, 来自两个样本像素拟合）
