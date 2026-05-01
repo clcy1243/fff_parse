@@ -69,9 +69,12 @@ impl FffViewerApp {
                 };
                 let (full_rect, response) = ui.allocate_exact_size(available, sense);
 
+                // Split 编辑模式：交互归区域拖拽用，图像不响应 pan/zoom
+                let split_mode = self.info_panel == InfoPanel::Split;
+
                 // 当 scale 超出 fit 时允许 pan（否则 pan 固定为 0）
                 let can_pan = display_size.x > full_rect.width() || display_size.y > full_rect.height();
-                if can_pan && response.dragged() {
+                if !split_mode && can_pan && response.dragged() {
                     let delta = response.drag_delta();
                     self.loupe_pan.0 += delta.x;
                     self.loupe_pan.1 += delta.y;
@@ -91,8 +94,8 @@ impl FffViewerApp {
                     egui::Align2::CENTER_CENTER.align_size_within_rect(display_size, full_rect);
                 image_rect = image_rect.translate(egui::vec2(self.loupe_pan.0, self.loupe_pan.1));
 
-                // 鼠标滚轮缩放
-                if response.hovered() {
+                // 鼠标滚轮缩放（Split 编辑模式下禁用，避免与区域操作冲突）
+                if !split_mode && response.hovered() {
                     let scroll_y = ctx.input(|i| i.smooth_scroll_delta.y);
                     if scroll_y.abs() > 0.1 {
                         let factor = (scroll_y * 0.003).exp(); // 平滑指数缩放
