@@ -566,6 +566,14 @@ pub struct FffViewerApp {
     pub(super) curve_points: Vec<Vec<(i64, i64, i64)>>,
     /// 当前正在拖拽的控制点索引
     pub(super) curve_dragging: Option<usize>,
+
+    // 缩放控制
+    /// 网格缩略图边长（px，典型 80–320）
+    pub(super) grid_thumb_size: f32,
+    /// 放大视图缩放倍率（相对 fit-to-window，1.0 = 适应窗口）
+    pub(super) loupe_zoom: f32,
+    /// 放大视图的平移（像素偏移，图像坐标系）
+    pub(super) loupe_pan: (f32, f32),
 }
 
 // ─── 字体加载 ───────────────────────────────────────────────────────────────

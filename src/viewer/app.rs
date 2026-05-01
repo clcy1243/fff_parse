@@ -108,6 +108,9 @@ impl FffViewerApp {
             curve_channel: 0,
             curve_points: Self::default_curve_points(),
             curve_dragging: None,
+            grid_thumb_size: 180.0,
+            loupe_zoom: 1.0,
+            loupe_pan: (0.0, 0.0),
         };
 
         if let Some(path) = initial_file {
@@ -228,6 +231,10 @@ impl FffViewerApp {
         self.embedded_correction_index = None;
         self.use_embedded_icc = false;
         self.color_status = None;
+
+        // 切文件也重置放大视图 zoom / pan（避免上一张的缩放延用）
+        self.loupe_zoom = 1.0;
+        self.loupe_pan = (0.0, 0.0);
 
         // 重置渲染状态，避免前一个文件的参数污染新文件
         self.manual_adjust = color::ManualAdjust::default();
@@ -486,6 +493,39 @@ impl eframe::App for FffViewerApp {
 
                 ui.selectable_value(&mut self.view_mode, ViewMode::Grid, s.grid);
                 ui.selectable_value(&mut self.view_mode, ViewMode::Loupe, s.loupe);
+
+                // Zoom / thumbnail size (context-aware by view mode)
+                ui.separator();
+                match self.view_mode {
+                    ViewMode::Grid => {
+                        ui.label(s.thumb_size);
+                        ui.add(
+                            egui::Slider::new(&mut self.grid_thumb_size, 80.0..=320.0)
+                                .step_by(10.0)
+                                .suffix("px")
+                                .show_value(true),
+                        );
+                    }
+                    ViewMode::Loupe => {
+                        ui.label(s.zoom);
+                        ui.add(
+                            egui::Slider::new(&mut self.loupe_zoom, 0.1..=8.0)
+                                .logarithmic(true)
+                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                                .show_value(true),
+                        );
+                        if ui.button(s.fit).clicked() {
+                            self.loupe_zoom = 1.0;
+                            self.loupe_pan = (0.0, 0.0);
+                        }
+                        if ui.button(s.zoom_100).clicked() {
+                            // "100%" = actual pixels; computed in loupe render by dividing fit scale
+                            // Here we set a sentinel via very large value, let loupe clamp
+                            self.loupe_zoom = -1.0; // sentinel: actual-pixel
+                            self.loupe_pan = (0.0, 0.0);
+                        }
+                    }
+                }
 
                 ui.separator();
 

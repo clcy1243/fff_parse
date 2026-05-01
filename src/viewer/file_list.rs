@@ -80,7 +80,7 @@ impl FffViewerApp {
 
     /// 渲染缩略图网格视图，支持选择和双击进入放大镜模式
     pub(super) fn render_grid_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let thumb_size = 180.0_f32;
+        let thumb_size = self.grid_thumb_size.clamp(60.0, 480.0);
         let spacing = 8.0_f32;
         let available_width = ui.available_width();
         let cols = ((available_width + spacing) / (thumb_size + spacing)).max(1.0) as usize;
