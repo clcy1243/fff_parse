@@ -496,11 +496,16 @@ impl eframe::App for FffViewerApp {
                     ui.selectable_value(&mut self.info_panel, InfoPanel::Metadata, s.metadata);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::EditHistory, s.history);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::AllTags, s.tags);
-                    ui.selectable_value(&mut self.info_panel, InfoPanel::ColorAdjust, s.color_adjust);
-                    ui.selectable_value(&mut self.info_panel, InfoPanel::ColorProfile, s.color_profile);
+                    // ✏️ 调整 / 🎨 色彩 面板暂时隐藏（功能未完善）
+                    // ui.selectable_value(&mut self.info_panel, InfoPanel::ColorAdjust, s.color_adjust);
+                    // ui.selectable_value(&mut self.info_panel, InfoPanel::ColorProfile, s.color_profile);
                     ui.selectable_value(&mut self.info_panel, InfoPanel::Split, s.split_export);
                     ui.separator();
                     ui.selectable_value(&mut self.info_panel, InfoPanel::Settings, s.settings);
+                    // 若恢复的旧状态是已隐藏面板，重定向到 Metadata 避免白屏
+                    if matches!(self.info_panel, InfoPanel::ColorAdjust | InfoPanel::ColorProfile) {
+                        self.info_panel = InfoPanel::Metadata;
+                    }
                 }
 
                 ui.separator();
