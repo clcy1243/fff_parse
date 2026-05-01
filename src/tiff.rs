@@ -1124,8 +1124,13 @@ impl TiffFile {
             }
         }
 
-        // Strategy 3: Scan for embedded JPEG by looking for JFIF/Exif markers
-        Self::find_embedded_jpeg(data)
+        // Strategy 3: byte-by-byte scan（已禁用 —— 对 97MB FFF 需 ~100ms 且
+        // 匹配到的 JPEG 多是非预览数据，decode 失败后仍走 RGB IFD 路径）。
+        // FFF_SCAN_EMBEDDED_JPEG=1 环境变量可临时启用（调试非标准 FFF 用）。
+        if std::env::var("FFF_SCAN_EMBEDDED_JPEG").is_ok() {
+            return Self::find_embedded_jpeg(data);
+        }
+        None
     }
 
     /// 扫描字节数据查找嵌入的 JPEG（SOI + APP0/APP1/DQT），返回最大的一个
