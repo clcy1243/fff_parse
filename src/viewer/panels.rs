@@ -13,7 +13,7 @@ use fff_viewer::color::{self, SettingsPreset, TargetColorSpace};
 use fff_viewer::config;
 use fff_viewer::flexcolor;
 use fff_viewer::i18n::{self, Language};
-use fff_viewer::sidecar::{self, SidecarConfig, SidecarRegion as SidecarRegionData};
+use fff_viewer::sidecar::{self, SidecarAdjustOverrides, SidecarConfig, SidecarRegion as SidecarRegionData};
 
 // ─── 空状态 ─────────────────────────────────────────────────────────────────
 
@@ -721,6 +721,13 @@ impl FffViewerApp {
     }
 
     /// 从 sidecar XML 恢复保存的配置到当前状态
+    ///
+    /// 流程：
+    /// 1. 应用 sidecar 的 color 选择（preset/profile/embedded）
+    /// 2. 调 `apply_color_profile` 以 preset 值重建 baseline
+    /// 3. 将 sidecar `adjust` 里 `Some(...)` 的字段叠加到 `manual_adjust`
+    /// 4. 若有曲线 override 也叠加
+    /// 5. 重建纹理
     pub(super) fn apply_sidecar(&mut self, config: &SidecarConfig, ctx: &egui::Context) {
         log::info!("Applying sidecar config");
         self.use_embedded_correction = config.use_embedded_correction;
@@ -748,19 +755,29 @@ impl FffViewerApp {
         self.split_state.selected = None;
         self.split_state.dragging = None;
 
-        // Re-apply color profile if any profile/preset was selected
-        self.manual_adjust = config.manual_adjust.clone();
-        self.histogram_needs_update = true;
-
-        if self.selected_input_profile.is_some() || self.selected_preset.is_some()
-            || self.use_embedded_icc || self.use_embedded_correction {
+        // 先 apply preset/embedded 建立 baseline（会把 preset 值写入 manual_adjust，
+        // 并在最后把 manual_adjust 快照为 baseline_adjust）
+        let has_profile_selection = self.selected_input_profile.is_some()
+            || self.selected_preset.is_some()
+            || self.use_embedded_icc
+            || self.use_embedded_correction;
+        if has_profile_selection {
             self.apply_color_profile(ctx);
-        } else {
-            self.rebuild_texture_from_base(ctx);
         }
+
+        // 叠加 sidecar 的 adjust overrides（仅 Some 字段）
+        config.adjust.apply_to(&mut self.manual_adjust);
+
+        // 叠加曲线 override
+        if let Some(ref curves) = config.curve_points_override {
+            self.curve_points = curves.clone();
+        }
+
+        self.histogram_needs_update = true;
+        self.rebuild_texture_from_base(ctx);
     }
 
-    /// 将当前状态保存为 sidecar XML 文件
+    /// 将当前状态保存为 sidecar XML 文件（仅写与 baseline 不同的字段）
     pub(super) fn save_sidecar(&self) {
         let path = match &self.detail {
             Some(d) => &d.path,
@@ -773,6 +790,19 @@ impl FffViewerApp {
         let preset_name = self.selected_preset
             .and_then(|i| self.available_presets.get(i))
             .map(|p| p.name.clone());
+
+        // Adjust 只保存 delta：vs preset/embedded 加载后的 baseline_adjust
+        let adjust = SidecarAdjustOverrides::from_diff(
+            &self.manual_adjust,
+            &self.baseline_adjust,
+        );
+
+        // 曲线：任一条 ≠ identity 默认则全量写 7 条（delta 语义）
+        let curve_points_override = if self.curve_points != self.baseline_curve_points {
+            Some(self.curve_points.clone())
+        } else {
+            None
+        };
 
         let config = SidecarConfig {
             use_embedded_correction: self.use_embedded_correction,
@@ -787,7 +817,8 @@ impl FffViewerApp {
             split_regions: self.split_state.regions.iter().map(|r| {
                 SidecarRegionData { cx: r.cx, cy: r.cy, w: r.w, h: r.h, angle: r.angle }
             }).collect(),
-            manual_adjust: self.manual_adjust.clone(),
+            adjust,
+            curve_points_override,
         };
 
         if let Err(e) = sidecar::save(path, &config) {
@@ -2049,12 +2080,20 @@ impl FffViewerApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(reset_adjust).clicked() {
                     // 重置到色彩方案加载后的基线状态（包括曲线控制点）
+                    // 并删除 sidecar 文件（"恢复为 preset 纯净态"）
                     self.manual_adjust = self.baseline_adjust.clone();
                     self.levels_processed = self.baseline_levels_processed.clone();
                     self.levels_raw = self.baseline_levels_raw.clone();
                     self.curve_points = self.baseline_curve_points.clone();
                     self.curve_channel = 0;
                     self.curve_dragging = None;
+                    if let Some(d) = self.detail.as_ref() {
+                        if let Err(e) = sidecar::delete(&d.path) {
+                            log::error!("Failed to delete sidecar: {}", e);
+                        } else {
+                            log::info!("Reset: deleted sidecar for {}", d.path.display());
+                        }
+                    }
                     rebuild = true;
                 }
             });
