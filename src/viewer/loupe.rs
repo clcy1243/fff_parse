@@ -45,10 +45,13 @@ impl FffViewerApp {
             return;
         }
 
-        if let Some(detail) = &self.detail {
-            if let Some(texture) = &detail.texture {
+        // 为避免后续 self 借用冲突，先取出 texture 的 id 和尺寸（只读信息）
+        let texture_info = self.detail.as_ref()
+            .and_then(|d| d.texture.as_ref())
+            .map(|t| (t.id(), t.size_vec2()));
+        if self.detail.is_some() {
+            if let Some((texture_id, tex_size)) = texture_info {
                 let available = ui.available_size();
-                let tex_size = texture.size_vec2();
                 let fit_scale = (available.x / tex_size.x)
                     .min(available.y / tex_size.y)
                     .min(1.0);
@@ -69,12 +72,25 @@ impl FffViewerApp {
                 };
                 let (full_rect, response) = ui.allocate_exact_size(available, sense);
 
-                // Split 编辑模式：交互归区域拖拽用，图像不响应 pan/zoom
                 let split_mode = self.info_panel == InfoPanel::Split;
+
+                // 先用当前（未更新）pan 算出 image_rect 供区域交互 hit-test
+                let mut image_rect =
+                    egui::Align2::CENTER_CENTER.align_size_within_rect(display_size, full_rect);
+                image_rect = image_rect.translate(egui::vec2(self.loupe_pan.0, self.loupe_pan.1));
+
+                // Split 模式：优先处理区域交互（可能在本帧 drag_started 时把 dragging 置为 Some）
+                if split_mode {
+                    self.handle_split_interactions(&response, image_rect, ctx);
+                }
+
+                // "是否正在操作切割框" —— 只有此刻为 true 时才阻止图像 pan/zoom；
+                // 光标在空白处时即便在 Split 标签下仍允许缩放/平移
+                let region_busy = split_mode && self.split_state.dragging.is_some();
 
                 // 当 scale 超出 fit 时允许 pan（否则 pan 固定为 0）
                 let can_pan = display_size.x > full_rect.width() || display_size.y > full_rect.height();
-                if !split_mode && can_pan && response.dragged() {
+                if !region_busy && can_pan && response.dragged() {
                     let delta = response.drag_delta();
                     self.loupe_pan.0 += delta.x;
                     self.loupe_pan.1 += delta.y;
@@ -83,24 +99,23 @@ impl FffViewerApp {
                     self.loupe_pan = (0.0, 0.0);
                 }
 
-                // Clamp pan to keep image touching viewport edges
+                // Clamp pan
                 let max_pan_x = ((display_size.x - full_rect.width()) / 2.0).max(0.0);
                 let max_pan_y = ((display_size.y - full_rect.height()) / 2.0).max(0.0);
                 self.loupe_pan.0 = self.loupe_pan.0.clamp(-max_pan_x, max_pan_x);
                 self.loupe_pan.1 = self.loupe_pan.1.clamp(-max_pan_y, max_pan_y);
 
-                // 居中绘制 + pan 偏移
-                let mut image_rect =
+                // 更新 image_rect（pan 可能刚被改写）
+                image_rect =
                     egui::Align2::CENTER_CENTER.align_size_within_rect(display_size, full_rect);
                 image_rect = image_rect.translate(egui::vec2(self.loupe_pan.0, self.loupe_pan.1));
 
-                // 鼠标滚轮缩放（Split 编辑模式下禁用，避免与区域操作冲突）
-                if !split_mode && response.hovered() {
+                // 鼠标滚轮缩放（正在操作区域时跳过）
+                if !region_busy && response.hovered() {
                     let scroll_y = ctx.input(|i| i.smooth_scroll_delta.y);
                     if scroll_y.abs() > 0.1 {
-                        let factor = (scroll_y * 0.003).exp(); // 平滑指数缩放
+                        let factor = (scroll_y * 0.003).exp();
                         let new_zoom = if self.loupe_zoom < 0.0 {
-                            // 从 sentinel 解析为当前实际缩放，再乘 factor
                             (1.0 / fit_scale) * factor
                         } else {
                             self.loupe_zoom * factor
@@ -109,18 +124,17 @@ impl FffViewerApp {
                     }
                 }
 
-                // Draw the image (clip 到 full_rect 避免溢出)
+                // Draw the image
                 let painter = ui.painter_at(full_rect);
                 painter.image(
-                    texture.id(),
+                    texture_id,
                     image_rect,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     egui::Color32::WHITE,
                 );
 
-                // Draw split overlays and handle interactions
-                if self.info_panel == InfoPanel::Split {
-                    self.handle_split_interactions(&response, image_rect, ctx);
+                // Draw split overlays（交互已在上面处理过）
+                if split_mode {
                     let painter = ui.painter_at(full_rect);
                     draw_split_overlays(
                         &painter,

@@ -30,7 +30,7 @@ use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::color::{self, ManualAdjust};
+use crate::color::ManualAdjust;
 use crate::config;
 
 /// 需要跨会话持久化的单文件配置。
@@ -840,9 +840,4 @@ mod tests {
         assert_eq!(parsed.curve_points_override, Some(curves));
     }
 
-    #[test]
-    fn avoid_unused_color_warning() {
-        // Ensures `use` of color module is referenced (for future-compat)
-        let _ = color::ManualAdjust::default();
-    }
 }
