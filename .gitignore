@@ -1,4 +1,5 @@
 /target
+/dist/
 copilot_chat.md
 .idea/
 .claude/settings.local.json

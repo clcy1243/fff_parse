@@ -55,3 +55,10 @@ PLIST
 plutil -lint "$CONTENTS/Info.plist"
 
 echo "App bundle: $APP_DIR"
+
+# 5. 打包可分发 .dmg（UDZO 压缩）
+DMG="$DIST/$APP_NAME-$VERSION.dmg"
+rm -f "$DMG"
+hdiutil create -volname "$APP_NAME" -srcfolder "$APP_DIR" -ov -format UDZO "$DMG"
+
+echo "DMG: $DMG"
