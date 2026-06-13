@@ -28,7 +28,7 @@ fff_parse 是 Rust + egui 桌面应用，通过 Ghidra 逆向复刻哈苏 Flexti
 
 | ID | 任务 | 验收标准 |
 |---|---|---|
-| **T59** | macOS 打包：`scripts/build-macos.sh`，产出带图标 + 版本号的 `.app` 与 `.dmg`（评估 `cargo-bundle` vs 自写脚本） | 双击 `.dmg` 装入 app，能启动并打开一张 `.fff` |
+| **T59** ✅ | macOS 打包：`scripts/build-macos.sh`，产出带图标 + 版本号的 `.app` 与 `.dmg`（自写脚本，零额外依赖） | 双击 `.dmg` 装入 app，能启动并打开一张 `.fff` |
 | **T60** | Windows installer：复用现有 `winresource` 图标，产出 `.exe` + NSIS/Inno installer | Windows 上能安装并打开 `.fff` |
 | **T61** | Linux 构建验证 + **版本号统一**（`Cargo.toml` 当前 `0.1.0`，与文档 v0.8/v0.9 不符，统一为单一真源并在 UI 关于页展示） | 三平台 `cargo build --release` 全过；三处版本号一致 |
 
