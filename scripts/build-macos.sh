@@ -30,6 +30,10 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RES_DIR"
 cp "target/release/$BIN_NAME" "$MACOS_DIR/$BIN_NAME"
 cp "icons/AppIcon.icns" "$RES_DIR/AppIcon.icns"
+# 运行期资源：app 通过 find_resource_dir 在 Contents/Resources/ 下查找 profiles/ 与 settings/
+# （见 src/viewer/helpers.rs）——必须随包，否则装出来的 app 找不到 ICC 配置与预设
+cp -R "profiles" "$RES_DIR/profiles"
+cp -R "settings" "$RES_DIR/settings"
 
 # 3. 生成 Info.plist（版本号来自 Cargo.toml 单一真源）
 cat > "$CONTENTS/Info.plist" <<PLIST
