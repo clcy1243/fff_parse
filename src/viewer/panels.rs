@@ -321,6 +321,7 @@ impl FffViewerApp {
         let s = self.s();
         ui.heading(s.color_profile);
         ui.separator();
+        let mut profile_changed = false;
 
         // ── Input Profile ──
         ui.strong(s.input_profile);
@@ -359,6 +360,7 @@ impl FffViewerApp {
                     self.selected_input_profile = None;
                     self.use_embedded_icc = false;
                     self.color_status = None;
+                    profile_changed = true;
                 }
                 // 📎 内嵌 ICC 选项（仅当文件有内嵌 ICC 时显示）
                 if has_embedded_icc {
@@ -369,6 +371,7 @@ impl FffViewerApp {
                         self.use_embedded_icc = true;
                         self.selected_input_profile = None;
                         self.color_status = None;
+                        profile_changed = true;
                     }
                 }
                 // 外部 ICC 配置文件
@@ -387,6 +390,7 @@ impl FffViewerApp {
                             self.selected_input_profile = Some(i);
                             self.use_embedded_icc = false;
                             self.color_status = None;
+                            profile_changed = true;
                         }
                     });
                 }
@@ -481,7 +485,7 @@ impl FffViewerApp {
                 }
             });
         if self.target_color_space != old_target {
-            self.save_sidecar();
+            profile_changed = true;
         }
 
         ui.add_space(12.0);
@@ -584,6 +588,7 @@ impl FffViewerApp {
                     self.use_embedded_correction = false;
                     self.embedded_correction_index = None;
                     self.color_status = None;
+                    profile_changed = true;
                 }
 
                 // 内嵌编辑历史条目
@@ -597,6 +602,7 @@ impl FffViewerApp {
                             self.embedded_correction_index = Some(*idx);
                             self.selected_preset = None;
                             self.color_status = None;
+                            profile_changed = true;
                         }
                     }
                     if !filtered_presets.is_empty() {
@@ -618,9 +624,15 @@ impl FffViewerApp {
                         self.use_embedded_correction = false;
                         self.embedded_correction_index = None;
                         self.color_status = None;
+                        profile_changed = true;
                     }
                 }
             });
+
+        if profile_changed {
+            self.apply_color_profile(ctx);
+            self.save_sidecar();
+        }
 
         ui.add_space(12.0);
         ui.separator();
@@ -1275,7 +1287,7 @@ impl FffViewerApp {
         // 在拿 &mut self.detail 之前先 clone 出需要的数据（避免借用冲突）
         // T33: flex pipeline 需要真正 raw scanner 数据（preview_raw），
         // 而 raw_rgb 是 apply_film_processing 输出（已反转），double-invert 会把 G/B 压到 0。
-        let (flex_base, legacy_base, active_correction) = {
+        let (flex_base, legacy_base, _active_correction) = {
             let Some(detail) = &self.detail else { return };
             let legacy = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
             let Some(legacy) = legacy else { return };
@@ -1308,52 +1320,14 @@ impl FffViewerApp {
         log::debug!("[viewer] flex_base (preview_raw) means: R={:.1} G={:.1} B={:.1}", fr, fg, fb);
         log::debug!("[viewer] legacy_base (raw_rgb)  means: R={:.1} G={:.1} B={:.1}", lr, lg, lb);
 
-        let adjusted = if let Some(corr) = active_correction {
-            log::debug!("[viewer] flex path | film_type={} gamma={} sat={} contrast={} brightness={} lightness={} | apply_cc={} apply_sliders={} apply_histogram={}",
-                corr.film_type, corr.gamma, corr.saturation, corr.contrast, corr.brightness, corr.lightness,
-                corr.apply_cc, corr.apply_sliders, corr.apply_histogram);
-            let step1 = color::apply_flex_pipeline_no_icc(flex_base_img.clone(), &corr);
-            let (r1, g1, b1) = mean_8bit(&step1);
-            log::debug!("[viewer] step1 (flex pipeline out) means: R={:.1} G={:.1} B={:.1}", r1, g1, b1);
-
-            // T47: BW (film_type=2) 用 BT.601 整数 luma collapse（FlexColor FUN_7025b1f0）。
-            let step2b = if corr.film_type == 2 {
-                let d = color::desaturate_bw_bt601(&step1);
-                let (dr, dg, db) = mean_8bit(&d);
-                log::debug!("[viewer] step2b (BT.601 BW) means: R={:.1} G={:.1} B={:.1}", dr, dg, db);
-                d
-            } else if let Some(icc) = self.active_icc_data.as_deref() {
-                log::debug!("[viewer] step2: applying in_icc ({} bytes) → {:?}", icc.len(), self.target_color_space);
-                let icc_bytes = icc.to_vec();
-                let result = color::apply_icc_transform_ex(
-                    &step1,
-                    &icc_bytes,
-                    self.target_color_space,
-                    Default::default(),
-                ).unwrap_or(step1);
-                let (r2, g2, b2) = mean_8bit(&result);
-                log::debug!("[viewer] step2 (post-ICC) means: R={:.1} G={:.1} B={:.1}", r2, g2, b2);
-                result
-            } else {
-                log::debug!("[viewer] step2: no active ICC data, skipping");
-                step1
-            };
-            let out = color::apply_usm(&step2b, &self.manual_adjust);
-            let (ro, go, bo) = mean_8bit(&out);
-            log::debug!("[viewer] USM amount={} radius={} | final means: R={:.1} G={:.1} B={:.1}",
-                self.manual_adjust.usm_amount, self.manual_adjust.usm_radius, ro, go, bo);
-            out
-        } else {
-            log::debug!("[viewer] legacy path (no correction)");
-            color::apply_color_pipeline(
-                legacy_base_img,
-                &self.manual_adjust,
-                &self.curve_points,
-                self.extracted_film_lut.as_ref(),
-                self.active_icc_data.as_deref(),
-                self.target_color_space,
-            )
-        };
+        let adjusted = color::apply_color_pipeline(
+            legacy_base_img,
+            &self.manual_adjust,
+            &self.curve_points,
+            self.extracted_film_lut.as_ref(),
+            self.active_icc_data.as_deref(),
+            self.target_color_space,
+        );
         let rgb16 = to_rgb16(&adjusted);
 
         // 从最终渲染结果计算处理后直方图
