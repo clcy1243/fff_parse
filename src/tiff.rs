@@ -1824,6 +1824,26 @@ impl TiffFile {
     }
 
     /// 解码全分辨率图像用于 TIFF 导出，保留 16 位数据不降级为 8 位
+    /// 返回导出主图（最大未压缩 RGB IFD）的全分辨率像素尺寸 (宽, 高)，不解码像素。
+    /// 选择逻辑与 `decode_for_export` 一致，保证显示值与导出结果相符。
+    pub fn export_dimensions(&self) -> Option<(u32, u32)> {
+        let mut best: Option<(u32, u32, u64)> = None;
+        for ifd in &self.ifds {
+            let width = ifd.get_u32(0x0100).unwrap_or(0);
+            let height = ifd.get_u32(0x0101).unwrap_or(0);
+            let compression = ifd.get_u32(0x0103).unwrap_or(1);
+            let photometric = ifd.get_u32(0x0106).unwrap_or(0);
+            let spp = ifd.get_u32(0x0115).unwrap_or(1);
+            if compression == 1 && photometric == 2 && spp >= 3 && width > 0 && height > 0 {
+                let pixels = width as u64 * height as u64;
+                if best.is_none() || pixels > best.unwrap().2 {
+                    best = Some((width, height, pixels));
+                }
+            }
+        }
+        best.map(|(w, h, _)| (w, h))
+    }
+
     pub fn decode_for_export(&self) -> Option<image::DynamicImage> {
         // Find the largest uncompressed RGB IFD (the main raw image)
         let mut best: Option<(usize, u64)> = None;

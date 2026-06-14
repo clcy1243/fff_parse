@@ -266,7 +266,11 @@ impl FffViewerApp {
                     .color(ui.visuals().weak_text_color()),
             );
         } else {
+            // 全分辨率像素尺寸（用于将归一化 w/h 换算成像素显示/编辑）
+            let full_dims = self.detail.as_ref().and_then(|d| d.tiff.export_dimensions());
             let mut remove_idx = None;
+            let mut copy_idx = None;
+            let mut commit = false;
             let n_regions = self.split_state.regions.len();
             for i in 0..n_regions {
                 let color = REGION_COLORS[i % REGION_COLORS.len()];
@@ -287,25 +291,89 @@ impl FffViewerApp {
                         self.split_state.selected = Some(i);
                     }
 
-                    // Show dimensions and angle
-                    let r = &self.split_state.regions[i];
-                    let angle_deg = r.angle.to_degrees();
-                    let info = if angle_deg.abs() > 0.1 {
-                        format!("{:.0}%×{:.0}% ∠{:.1}°", r.w * 100.0, r.h * 100.0, angle_deg)
-                    } else {
-                        format!("{:.0}%×{:.0}%", r.w * 100.0, r.h * 100.0)
-                    };
-                    ui.label(
-                        egui::RichText::new(info)
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
+                    if let Some((fw, fh)) = full_dims {
+                        // 可编辑：像素宽 × 高 + 旋转角度（拖动或键入）
+                        let r = &self.split_state.regions[i];
+                        let mut w_px = (r.w * fw as f32).round();
+                        let mut h_px = (r.h * fh as f32).round();
+                        let mut ang = r.angle.to_degrees();
+                        let mut live = false;
 
+                        let rw = ui.add(
+                            egui::DragValue::new(&mut w_px)
+                                .speed(2.0)
+                                .range(1.0..=fw as f32)
+                                .fixed_decimals(0),
+                        );
+                        live |= rw.changed();
+                        commit |= rw.drag_stopped() || rw.lost_focus();
+                        ui.label("×");
+                        let rh = ui.add(
+                            egui::DragValue::new(&mut h_px)
+                                .speed(2.0)
+                                .range(1.0..=fh as f32)
+                                .fixed_decimals(0),
+                        );
+                        live |= rh.changed();
+                        commit |= rh.drag_stopped() || rh.lost_focus();
+                        let ra = ui.add(
+                            egui::DragValue::new(&mut ang)
+                                .speed(0.2)
+                                .range(-180.0..=180.0)
+                                .fixed_decimals(1)
+                                .suffix("°"),
+                        );
+                        live |= ra.changed();
+                        commit |= ra.drag_stopped() || ra.lost_focus();
+
+                        if live {
+                            let region = &mut self.split_state.regions[i];
+                            region.w = (w_px / fw as f32).clamp(0.001, 1.0);
+                            region.h = (h_px / fh as f32).clamp(0.001, 1.0);
+                            region.angle = ang.to_radians();
+                            region.clamp_to_image();
+                        }
+                    } else {
+                        // 无全分辨率信息：回退显示百分比
+                        let r = &self.split_state.regions[i];
+                        let angle_deg = r.angle.to_degrees();
+                        let info = if angle_deg.abs() > 0.1 {
+                            format!("{:.0}%×{:.0}% ∠{:.1}°", r.w * 100.0, r.h * 100.0, angle_deg)
+                        } else {
+                            format!("{:.0}%×{:.0}%", r.w * 100.0, r.h * 100.0)
+                        };
+                        ui.label(
+                            egui::RichText::new(info)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+
+                    if ui.small_button("📋").on_hover_text(s.copy_region).clicked() {
+                        copy_idx = Some(i);
+                    }
                     if ui.small_button("🗑").clicked() {
                         remove_idx = Some(i);
                     }
                 });
             }
+
+            // 编辑提交（拖动结束/失焦）才写 sidecar，避免拖动过程中频繁写盘
+            if commit {
+                self.save_sidecar();
+            }
+
+            // 复制区域：克隆并轻微偏移，选中新区域
+            if let Some(idx) = copy_idx {
+                let mut clone = self.split_state.regions[idx].clone();
+                clone.cx = (clone.cx + 0.02).min(0.99);
+                clone.cy = (clone.cy + 0.02).min(0.99);
+                clone.clamp_to_image();
+                self.split_state.regions.push(clone);
+                self.split_state.selected = Some(self.split_state.regions.len() - 1);
+                self.save_sidecar();
+            }
+
             if let Some(idx) = remove_idx {
                 self.split_state.regions.remove(idx);
                 // Fix selected index
