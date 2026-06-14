@@ -1,5 +1,10 @@
 # Windows 发布执行说明（交接文档）
 
+> **更新 2026-06-14（第 2 轮）**：已修复首轮反馈的两个问题，**请先 `git pull` 再重新构建**：
+> 1. **UI 错位** → 根因是中文字体依赖系统字体且套用了 macOS 标定的偏移。现已**内嵌 Noto Sans SC 字体**（编译进二进制，各平台一致），无需任何系统字体。重建后请重点确认中文按钮/区域行文字**不再错位**，并回传一张界面截图。
+> 2. **Inno 中文语言文件缺失** → 现已随仓库提供 `installer/windows/ChineseSimplified.isl`，`.iss` 引用本地文件，**无需再手动改 .iss、也无需自行安装中文语言包**。
+
+
 > 面向在 **Windows 机器**上执行构建/验收的人或 AI 助手（如 GitHub Copilot）。
 > 目标：用仓库里现成的脚本构建 FFF Viewer 的 Windows 安装包并完成验收。
 > 这是产品化 Sprint 的 **T60 Task 4**。计划全文见 `docs/superpowers/plans/2026-06-13-t60-windows-installer.md`，总路线见 `docs/roadmap-2026-06-productization.md`。
@@ -103,4 +108,5 @@ git push
 - `link.exe not found` / `error: linker ... not found` → 没装 VS Build Tools 的「C++ 桌面开发」。
 - `error: Microsoft Visual C++ ... required` → 同上。
 - `未找到 Inno Setup 6 (ISCC.exe)` → 没装 Inno Setup 6，或装到了非默认路径（默认 `C:\Program Files (x86)\Inno Setup 6\`）。
+- ~~`ChineseSimplified.isl` 缺失导致 ISCC 中断~~ → 已修复：该文件随仓库提供（`installer/windows/ChineseSimplified.isl`），`git pull` 后即可，无需手动处理。
 - `cargo: 无法将"cargo"识别为...` → Rust 未装或未加入 PATH（重开终端 / 重装 rustup）。
