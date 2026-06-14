@@ -141,6 +141,7 @@ impl FffViewerApp {
                         image_rect,
                         &self.split_state.regions,
                         self.split_state.selected,
+                        self.split_state.dragging.map(|(i, _)| i),
                     );
                 }
 

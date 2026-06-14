@@ -320,6 +320,8 @@ pub(super) struct SplitState {
     pub(super) dragging: Option<(usize, DragKind)>,
     /// 当前选中的区域索引
     pub(super) selected: Option<usize>,
+    /// 旋转起手时「指针角度 − 区域角度」的偏移，用于平滑旋转（避免抓住手柄瞬间跳变）
+    pub(super) rotate_offset: f32,
 }
 
 impl Default for SplitState {
@@ -331,6 +333,7 @@ impl Default for SplitState {
             naming_pattern: "{name}_{n}".to_string(),
             dragging: None,
             selected: None,
+            rotate_offset: 0.0,
         }
     }
 }

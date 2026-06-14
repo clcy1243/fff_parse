@@ -425,7 +425,8 @@ impl FffViewerApp {
     /// 处理分割区域的鼠标交互：悬停光标、拖拽开始/进行/结束
     pub(super) fn handle_split_interactions(&mut self, response: &egui::Response, image_rect: egui::Rect, ctx: &egui::Context) {
         let handle_radius = 10.0_f32;
-        let rot_handle_radius = 8.0_f32;
+        // 与绘制时的视觉半径一致（见 draw_split_overlays），命中区域贴合所见
+        let rot_handle_radius = 7.0_f32;
 
         // --- Hover cursor ---
         if response.hovered() && self.split_state.dragging.is_none() {
@@ -436,7 +437,7 @@ impl FffViewerApp {
 
                     // Check rotation handle
                     let rot_pos = region.rotation_handle_screen(image_rect);
-                    if mouse_pos.distance(rot_pos) <= rot_handle_radius + 4.0 {
+                    if mouse_pos.distance(rot_pos) <= rot_handle_radius + 3.0 {
                         cursor = Some(egui::CursorIcon::Alias);
                         break;
                     }
@@ -470,7 +471,7 @@ impl FffViewerApp {
 
                     // Rotation handle
                     let rot_pos = region.rotation_handle_screen(image_rect);
-                    if mouse_pos.distance(rot_pos) <= rot_handle_radius + 4.0 {
+                    if mouse_pos.distance(rot_pos) <= rot_handle_radius + 3.0 {
                         found = Some((i, DragKind::Rotate));
                         break;
                     }
@@ -502,6 +503,14 @@ impl FffViewerApp {
                 }
                 self.split_state.dragging = found;
                 self.split_state.selected = found.map(|(i, _)| i);
+                // 旋转起手：记录「指针角度 − 当前区域角度」，后续按此偏移平滑旋转
+                if let Some((i, DragKind::Rotate)) = found {
+                    let region = &self.split_state.regions[i];
+                    let cx_s = image_rect.min.x + region.cx * image_rect.width();
+                    let cy_s = image_rect.min.y + region.cy * image_rect.height();
+                    let pointer_angle = (mouse_pos.x - cx_s).atan2(-(mouse_pos.y - cy_s));
+                    self.split_state.rotate_offset = pointer_angle - region.angle;
+                }
             }
         }
 
@@ -527,8 +536,9 @@ impl FffViewerApp {
                                 if let Some(mouse_pos) = response.interact_pointer_pos() {
                                     let cx_s = image_rect.min.x + self.split_state.regions[idx].cx * iw;
                                     let cy_s = image_rect.min.y + self.split_state.regions[idx].cy * ih;
-                                    let angle = (mouse_pos.x - cx_s).atan2(-(mouse_pos.y - cy_s));
-                                    self.split_state.regions[idx].angle = angle;
+                                    let pointer_angle = (mouse_pos.x - cx_s).atan2(-(mouse_pos.y - cy_s));
+                                    // 减去起手偏移，使框从当前角度平滑旋转，而非跳到指针绝对角度
+                                    self.split_state.regions[idx].angle = pointer_angle - self.split_state.rotate_offset;
                                     self.split_state.regions[idx].clamp_to_image();
                                     ctx.set_cursor_icon(egui::CursorIcon::Alias);
                                 }
@@ -721,18 +731,27 @@ pub(super) fn draw_split_overlays(
     image_rect: egui::Rect,
     regions: &[SplitRegion],
     selected_idx: Option<usize>,
+    dragging_idx: Option<usize>,
 ) {
-    let handle_size = 8.0_f32;
-    let rot_handle_radius = 6.0_f32;
+    let handle_size = 7.0_f32;
+    let rot_handle_radius = 7.0_f32;
 
     for (i, region) in regions.iter().enumerate() {
         let corners = region.corners_screen(image_rect);
         let color = REGION_COLORS[i % REGION_COLORS.len()];
         let is_selected = selected_idx == Some(i);
-        let stroke_width = if is_selected { 3.0 } else { 2.0 };
+        // 正在拖动（移动/缩放/旋转）的框为实色，其余半透明，降低对画面的干扰
+        let is_active = dragging_idx == Some(i);
+        let line_alpha: u8 = if is_active { 255 } else { 110 };
+        let white_alpha: u8 = if is_active { 255 } else { 120 };
+        let stroke_width = if is_selected { 1.5 } else { 1.0 };
+
+        let edge = egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), line_alpha);
+        let white = egui::Color32::from_rgba_unmultiplied(255, 255, 255, white_alpha);
 
         // Semi-transparent fill (rotated quad)
-        let fill = egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 20);
+        let fill_alpha: u8 = if is_active { 32 } else { 16 };
+        let fill = egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), fill_alpha);
         let mut quad_mesh = egui::Mesh::default();
         for c in &corners {
             quad_mesh.colored_vertex(*c, fill);
@@ -741,21 +760,20 @@ pub(super) fn draw_split_overlays(
         quad_mesh.add_triangle(0, 2, 3);
         painter.add(egui::Shape::mesh(quad_mesh));
 
-        // Border (4 line segments)
-        let stroke = egui::Stroke::new(stroke_width, color);
-        for j in 0..4 {
-            painter.line_segment([corners[j], corners[(j + 1) % 4]], stroke);
-        }
+        // Border：更细的虚线（闭合多段线一次性生成所有边的虚线）
+        let stroke = egui::Stroke::new(stroke_width, edge);
+        let loop_pts = [corners[0], corners[1], corners[2], corners[3], corners[0]];
+        painter.extend(egui::Shape::dashed_line(&loop_pts, stroke, 6.0, 4.0));
 
         // Corner handles
         for corner in &corners {
             let handle_rect =
                 egui::Rect::from_center_size(*corner, egui::vec2(handle_size, handle_size));
-            painter.rect_filled(handle_rect, 2.0, color);
+            painter.rect_filled(handle_rect, 2.0, edge);
             painter.rect_stroke(
                 handle_rect,
                 2.0,
-                egui::Stroke::new(1.0, egui::Color32::WHITE),
+                egui::Stroke::new(1.0, white),
                 egui::StrokeKind::Outside,
             );
         }
@@ -769,13 +787,13 @@ pub(super) fn draw_split_overlays(
         );
         painter.line_segment(
             [top_center, rot_pos],
-            egui::Stroke::new(1.5, color),
+            egui::Stroke::new(1.0, edge),
         );
-        painter.circle_filled(rot_pos, rot_handle_radius, color);
+        painter.circle_filled(rot_pos, rot_handle_radius, edge);
         painter.circle_stroke(
             rot_pos,
             rot_handle_radius,
-            egui::Stroke::new(1.0, egui::Color32::WHITE),
+            egui::Stroke::new(1.0, white),
         );
         // Rotation icon: small arc arrow
         painter.text(
@@ -783,7 +801,7 @@ pub(super) fn draw_split_overlays(
             egui::Align2::CENTER_CENTER,
             "↻",
             egui::FontId::proportional(10.0),
-            egui::Color32::WHITE,
+            white,
         );
 
         // Region number label (at first corner)
