@@ -45,7 +45,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
 Test-Path "$env:ProgramFiles\FFF Viewer\settings"
 ```
 
-4. **功能验收**：从开始菜单启动 FFF Viewer → 拖入一张 `.fff` 扫描文件（仓库**不含**样本，请用你自己的 `.fff`）→ 打开「色彩」面板，确认 ICC 配置下拉**非空** → 试试「放大镜 / 切割」基本功能。
+4. **功能验收**：从开始菜单启动 FFF Viewer → 拖入一张 `.fff` 扫描文件 → 打开「色彩」面板，确认 ICC 配置下拉**非空** → 试试「放大镜 / 切割」基本功能。
+
+   > 样本 `.fff` **不在仓库里**（体积太大，单个 ~97MB–588MB）。请从 **NAS**（或任意自有扫描文件）取一张 `.fff` 用于测试。
 
 ## 验收清单（逐项确认）
 
