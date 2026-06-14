@@ -653,6 +653,18 @@ Copy-Item icons\icon.ico $dist\
 
 > Windows 版为绿色便携式软件，`profiles/` 和 `settings/` 需与 `fff_viewer.exe` 同目录。
 
+#### 正式安装包（Inno Setup）
+
+```powershell
+# 前置: Rust MSVC 工具链 + Visual Studio Build Tools "C++ 桌面开发" + Inno Setup 6
+#   Inno Setup 下载: https://jrsoftware.org/isdl.php
+powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+# 产物: dist\FFF Viewer-<version>-setup.exe
+```
+
+安装包会把 `fff_viewer.exe` 与 `profiles\` / `settings\` 一同装入 `Program Files\FFF Viewer`，
+并创建开始菜单（及可选桌面）快捷方式与卸载器。版本号自 `Cargo.toml` 读取。
+
 ### CLI 解析工具
 
 ```bash
