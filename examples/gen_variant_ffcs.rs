@@ -27,6 +27,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::collections::HashSet;
 
 /// 3 个基础胶片类型模板（带期望输出 Mode）
 ///
@@ -39,13 +40,74 @@ use std::path::PathBuf;
 ///
 /// 统一强制 **16-bit 输出**（Mode=1 RGB16, Mode=5 Gray16）以获得最高拟合精度。
 const TEMPLATES: &[(&str, &str, &str)] = &[
-    ("pos", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard/RGB standard.xml", "1"),
-    ("neg", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/Negative RGB standard.xml", "1"),
-    ("bw",  "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/B&W negative standard.xml", "5"),
+    ("pos", "Standard/RGB standard.xml", "1"),
+    ("neg", "Standard Negative/Negative RGB standard.xml", "1"),
+    ("bw",  "Standard Negative/B&W negative standard.xml", "5"),
 ];
 const BASE_FFF: &str = "/Users/will/vmwareShare/test_image/test1_raw.fff";
 const OUT_DIR: &str = "/Users/will/vmwareShare/test_image/variants";
 const CASES_OUT: &str = "examples/variants_cases.toml";
+
+struct RunConfig {
+    base_fff: PathBuf,
+    out_dir: PathBuf,
+    cases_out: PathBuf,
+    settings_root: PathBuf,
+    manifest_data_dir: String,
+    prefix_filter: Option<HashSet<String>>,
+    max_cases_per_prefix: Option<usize>,
+}
+
+fn env_path(name: &str, default: impl FnOnce() -> PathBuf) -> PathBuf {
+    std::env::var_os(name).map(PathBuf::from).unwrap_or_else(default)
+}
+
+fn env_string(name: &str, default: impl FnOnce() -> String) -> String {
+    std::env::var(name).unwrap_or_else(|_| default())
+}
+
+fn parse_prefix_filter() -> Option<HashSet<String>> {
+    let raw = std::env::var("FFF_PREFIXES").ok()?;
+    let set: HashSet<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if set.is_empty() { None } else { Some(set) }
+}
+
+fn parse_max_cases() -> Option<usize> {
+    std::env::var("FFF_MAX_CASES")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+}
+
+fn toml_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn load_config() -> RunConfig {
+    let base_fff = env_path("FFF_BASE_FFF", || PathBuf::from(BASE_FFF));
+    let out_dir = env_path("FFF_VARIANTS_OUT_DIR", || PathBuf::from(OUT_DIR));
+    let cases_out = env_path("FFF_CASES_OUT", || PathBuf::from(CASES_OUT));
+    let settings_root = env_path("FFF_SETTINGS_ROOT", || {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("settings")
+    });
+    let manifest_data_dir = env_string("FFF_DATA_DIR", || {
+        let parent = out_dir.parent().unwrap_or(out_dir.as_path());
+        toml_path(parent)
+    });
+    RunConfig {
+        base_fff,
+        out_dir,
+        cases_out,
+        settings_root,
+        manifest_data_dir,
+        prefix_filter: parse_prefix_filter(),
+        max_cases_per_prefix: parse_max_cases(),
+    }
+}
 
 /// 在 `<key>anchor</key>...<value>` 之后注入新的 key-value 对
 /// （用于模板里缺失的字段补充）。若 anchor 未找到则原样返回。
@@ -443,10 +505,11 @@ fn locate_xml_region(data: &[u8]) -> (usize, usize, usize) {
 }
 
 fn main() {
-    let base_data = fs::read(BASE_FFF).expect("读取基础 FFF 失败");
+    let cfg = load_config();
+    let base_data = fs::read(&cfg.base_fff)
+        .unwrap_or_else(|e| panic!("读取基础 FFF 失败 ({}): {}", cfg.base_fff.display(), e));
 
-    let out_dir = PathBuf::from(OUT_DIR);
-    fs::create_dir_all(&out_dir).unwrap();
+    fs::create_dir_all(&cfg.out_dir).unwrap();
 
     let (prefix_off, xml_start, allocated_end) = locate_xml_region(&base_data);
     println!("Base FFF: XML at {} (prefix at {}), allocated end {}",
@@ -457,15 +520,23 @@ fn main() {
          # 每个文件：原始扫描像素 = test1_raw.fff，仅嵌入 XML 改为单 Setting\n\
          # 前缀 v_pos/v_neg/v_bw 标识胶片类型\n\
          # 用法：FlexColor 打开 variants/*.fff，直接 Export TIF 到同名 .tif\n\n\
-         data_dir = \"/Users/will/vmwareShare/test_image\"\n\
+         data_dir = \"",
+    );
+    cases_toml.push_str(&cfg.manifest_data_dir);
+    cases_toml.push_str(
+        "\"\n\
          preset_dir = \".\"\n\n",
     );
 
     let mut total = 0usize;
 
-    for (prefix, tmpl_path, mode) in TEMPLATES {
-        let raw_template = fs::read_to_string(tmpl_path)
-            .unwrap_or_else(|e| panic!("读取模板 {} 失败: {}", tmpl_path, e));
+    for (prefix, tmpl_rel, mode) in TEMPLATES {
+        if cfg.prefix_filter.as_ref().is_some_and(|set| !set.contains(*prefix)) {
+            continue;
+        }
+        let tmpl_path = cfg.settings_root.join(tmpl_rel);
+        let raw_template = fs::read_to_string(&tmpl_path)
+            .unwrap_or_else(|e| panic!("读取模板 {} 失败: {}", tmpl_path.display(), e));
         // 强制设置输出 Mode（pos/neg=1=RGB16, bw=5=Gray16）
         let mut template = patch_scalar(&raw_template, "Mode", mode);
         // 清零 Crop（BW 模板带非零裁切导致 FlexColor 导出缩略图尺寸）
@@ -512,10 +583,11 @@ fn main() {
             template = insert_key_after(&template, "ApplyCC",
                 "<key>GradationSliders</key>\n\t\t\t<array>\n\t\t\t\t<integer>0</integer>\n\t\t\t\t<integer>0</integer>\n\t\t\t\t<integer>0</integer>\n\t\t\t</array>");
         }
-        println!("\n== 模板 [{}] Mode={} → {} ==", prefix, mode, tmpl_path);
+        println!("\n== 模板 [{}] Mode={} → {} ==", prefix, mode, tmpl_path.display());
 
         let variants = build_variants_for(prefix);
-        for var in &variants {
+        let max_cases = cfg.max_cases_per_prefix.unwrap_or(usize::MAX);
+        for var in variants.iter().take(max_cases) {
             let mut patched = template.clone();
             for (k, v) in &var.patches {
                 // sentinel 识别数组类 patch
@@ -576,7 +648,7 @@ fn main() {
             // variants/v_{prefix}_adv/:  curve+histo (14)
             let category = classify_variant(&var.name);
             let subdir = format!("v_{}_{}", prefix, category);
-            let sub_path = out_dir.join(&subdir);
+            let sub_path = cfg.out_dir.join(&subdir);
             fs::create_dir_all(&sub_path).unwrap();
             let out_path = sub_path.join(format!("{}.fff", var.name));
             fs::write(&out_path, &new_data).unwrap();
@@ -594,11 +666,11 @@ fn main() {
         }
     }
 
-    fs::write(CASES_OUT, cases_toml).unwrap();
+    fs::write(&cfg.cases_out, cases_toml).unwrap();
     println!(
         "\n共 {} 个变体 FFF → {}（9 子目录 × ~6-23 个，避免 FlexColor 崩溃）\n\
          test_cases: {}\n\n\
          下一步：\n  1. FlexColor 依次打开 v_*/*.fff 目录导出同名 TIF\n  2. cargo run --release --example tif_compare -- --manifest {} --flex-pipeline",
-        total, out_dir.display(), CASES_OUT, CASES_OUT
+        total, cfg.out_dir.display(), cfg.cases_out.display(), cfg.cases_out.display()
     );
 }

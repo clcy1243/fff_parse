@@ -5,6 +5,7 @@ mod transform;
 mod processing;
 mod adjust;
 mod usm;
+mod calibration;
 pub mod flex;
 mod flex_apply;
 
@@ -13,4 +14,5 @@ pub use transform::{TargetColorSpace, IccIntent, IccSettings, apply_icc_transfor
 pub use processing::{apply_film_processing, apply_film_curve_lut, apply_gradation_curves, apply_color_pipeline, apply_color_pipeline_ex, build_curve_lut, desaturate_bw, desaturate_bw_bt601, desaturate_bw_via_hasselblad, desaturate_bw_via_gray_icc, extract_film_curve, extract_film_curve_16, FILM_CURVE_LUT_R, FILM_CURVE_LUT_G, FILM_CURVE_LUT_B, lut_interp_16};
 pub use adjust::{ManualAdjust, apply_manual_adjust, apply_scanner_levels, apply_display_adjust, extract_embedded_icc};
 pub use usm::apply_usm;
+pub use calibration::{AffineCalibration, negative_c41_calibration, apply_affine_calibration};
 pub use flex_apply::{apply_flex_pipeline, apply_flex_pipeline_no_icc};

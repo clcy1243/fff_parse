@@ -16,16 +16,77 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::collections::HashSet;
 
+const TEMPLATES: &[(&str, &str, &str)] = &[
+    ("pos", "Standard/RGB standard.xml", "1"),
+    ("neg", "Standard Negative/Negative RGB standard.xml", "1"),
+    ("bw",  "Standard Negative/B&W negative standard.xml", "5"),
+];
 const BASE_FFF: &str = "/Users/will/vmwareShare/test_image/test1_raw.fff";
 const OUT_DIR: &str = "/Users/will/vmwareShare/test_image/variants";
 const CASES_OUT: &str = "examples/chart_cases.toml";
 
-const TEMPLATES: &[(&str, &str, &str)] = &[
-    ("pos", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard/RGB standard.xml", "1"),
-    ("neg", "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/Negative RGB standard.xml", "1"),
-    ("bw",  "/Users/will/Desktop/FFF Viewer.app/Contents/Resources/settings/Standard Negative/B&W negative standard.xml", "5"),
-];
+struct RunConfig {
+    base_fff: PathBuf,
+    out_dir: PathBuf,
+    cases_out: PathBuf,
+    settings_root: PathBuf,
+    manifest_data_dir: String,
+    prefix_filter: Option<HashSet<String>>,
+    max_cases_per_prefix: Option<usize>,
+}
+
+fn env_path(name: &str, default: impl FnOnce() -> PathBuf) -> PathBuf {
+    std::env::var_os(name).map(PathBuf::from).unwrap_or_else(default)
+}
+
+fn env_string(name: &str, default: impl FnOnce() -> String) -> String {
+    std::env::var(name).unwrap_or_else(|_| default())
+}
+
+fn parse_prefix_filter() -> Option<HashSet<String>> {
+    let raw = std::env::var("FFF_PREFIXES").ok()?;
+    let set: HashSet<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if set.is_empty() { None } else { Some(set) }
+}
+
+fn parse_max_cases() -> Option<usize> {
+    std::env::var("FFF_MAX_CASES")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+}
+
+fn toml_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn load_config() -> RunConfig {
+    let base_fff = env_path("FFF_BASE_FFF", || PathBuf::from(BASE_FFF));
+    let out_dir = env_path("FFF_VARIANTS_OUT_DIR", || PathBuf::from(OUT_DIR));
+    let cases_out = env_path("FFF_CASES_OUT", || PathBuf::from(CASES_OUT));
+    let settings_root = env_path("FFF_SETTINGS_ROOT", || {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("settings")
+    });
+    let manifest_data_dir = env_string("FFF_DATA_DIR", || {
+        let parent = out_dir.parent().unwrap_or(out_dir.as_path());
+        toml_path(parent)
+    });
+    RunConfig {
+        base_fff,
+        out_dir,
+        cases_out,
+        settings_root,
+        manifest_data_dir,
+        prefix_filter: parse_prefix_filter(),
+        max_cases_per_prefix: parse_max_cases(),
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 色卡像素生成
@@ -442,12 +503,13 @@ fn write_chart_all_ifds(data: &mut Vec<u8>) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn main() {
-    let base_data = fs::read(BASE_FFF).unwrap();
-    let out_dir = PathBuf::from(OUT_DIR);
-    fs::create_dir_all(&out_dir).unwrap();
+    let cfg = load_config();
+    let base_data = fs::read(&cfg.base_fff)
+        .unwrap_or_else(|e| panic!("读取基础 FFF 失败 ({}): {}", cfg.base_fff.display(), e));
+    fs::create_dir_all(&cfg.out_dir).unwrap();
     // 按胶片类型分目录，避免单目录文件过多导致 FlexColor 崩溃
     for sub in ["chart_pos", "chart_neg", "chart_bw"] {
-        fs::create_dir_all(out_dir.join(sub)).unwrap();
+        fs::create_dir_all(cfg.out_dir.join(sub)).unwrap();
     }
 
     let (pfx, xs, alloc_end) = locate_xml_region(&base_data);
@@ -461,13 +523,22 @@ fn main() {
     let mut cases_toml = String::from(
         "# gen_chart_ffcs 色卡变体：IFD#0/1/2 像素替换为合成色卡 + 完整 slider/曲线/色阶矩阵\n\
          # 64 色 × 4 镜像位置 = 256 tiles；与 variants_cases.toml 一一对应（前缀 c_ vs v_）\n\n\
-         data_dir = \"/Users/will/vmwareShare/test_image\"\n\
+         data_dir = \"",
+    );
+    cases_toml.push_str(&cfg.manifest_data_dir);
+    cases_toml.push_str(
+        "\"\n\
          preset_dir = \".\"\n\n",
     );
 
     let mut total = 0usize;
-    for (prefix, tmpl_path, mode) in TEMPLATES {
-        let raw_template = fs::read_to_string(tmpl_path).unwrap();
+    for (prefix, tmpl_rel, mode) in TEMPLATES {
+        if cfg.prefix_filter.as_ref().is_some_and(|set| !set.contains(*prefix)) {
+            continue;
+        }
+        let tmpl_path = cfg.settings_root.join(tmpl_rel);
+        let raw_template = fs::read_to_string(&tmpl_path)
+            .unwrap_or_else(|e| panic!("读取模板 {} 失败: {}", tmpl_path.display(), e));
         let mut template = patch_scalar(&raw_template, "Mode", mode);
         for k in ["CropBottom", "CropLeft", "CropRight", "CropTop"] {
             template = patch_scalar(&template, k, "0.0");
@@ -500,7 +571,8 @@ fn main() {
 
         println!("\n== 色卡 [{}] Mode={} ==", prefix, mode);
         let variants = build_variants_for(prefix);
-        for var in &variants {
+        let max_cases = cfg.max_cases_per_prefix.unwrap_or(usize::MAX);
+        for var in variants.iter().take(max_cases) {
             let mut patched = template.clone();
             for (k, val) in &var.patches {
                 if val.starts_with("__ARRAY_") {
@@ -533,7 +605,7 @@ fn main() {
             write_chart_all_ifds(&mut new_data);
 
             let subdir = format!("chart_{}", prefix);
-            let out_path = out_dir.join(&subdir).join(format!("{}.fff", var.name));
+            let out_path = cfg.out_dir.join(&subdir).join(format!("{}.fff", var.name));
             fs::write(&out_path, &new_data).unwrap();
             total += 1;
 
@@ -542,13 +614,13 @@ fn main() {
                 name = var.name, sub = subdir,
             ));
         }
-        println!("  → {} variants for {}", variants.len(), prefix);
+        println!("  → {} variants for {}", variants.iter().take(max_cases).count(), prefix);
     }
 
     let _ = w; let _ = h;
-    fs::write(CASES_OUT, cases_toml).unwrap();
+    fs::write(&cfg.cases_out, cases_toml).unwrap();
     println!(
         "\n共 {} 个色卡变体 → {}\ntest_cases: {}\n\n下一步：\n  1. FlexColor 打开 {}/c_*.fff 并导出同名 TIF\n  2. cargo run --release --example tif_compare -- --manifest {} --flex-pipeline\n  3. 单色分析：cargo run --release --example chart_analyze -- <c_xxx.fff>",
-        total, out_dir.display(), CASES_OUT, OUT_DIR, CASES_OUT
+        total, cfg.out_dir.display(), cfg.cases_out.display(), cfg.out_dir.display(), cfg.cases_out.display()
     );
 }

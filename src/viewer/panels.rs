@@ -65,9 +65,10 @@ impl FffViewerApp {
         }
         // Master gamma 来自 Gamma 字段：FlexColor Gamma 2.0 → 显示 1.0（中性）
         adj.levels_gamma[0] = ((corr.gamma as f32) - 1.0).clamp(0.01, 3.00);
-        // Per-channel gamma 来自 Gray 字段（0-255 位置，128=中性→gamma=1.0）
+        // Gray 字段在 FlexColor DLL 的实际 pipeline 中不参与 LUT/曲线计算，
+        // 仅在 UI/XML 路径出现；R/G/B gamma 手柄保持中性，避免把 Gray 误当成管线参数。
         for i in 1..4 {
-            adj.levels_gamma[i] = (corr.gray[i] as f32 / 128.0).clamp(0.01, 99.0);
+            adj.levels_gamma[i] = 1.0;
         }
         // Master shadow/highlight 从 per-channel 派生（仅用于 UI 显示，不参与图像计算）
         adj.levels_black[0] = adj.levels_black[1].min(adj.levels_black[2]).min(adj.levels_black[3]);
@@ -85,6 +86,126 @@ impl FffViewerApp {
             adj.output_highlight[3] = corr.dot_color[9] as f32;   // B
             adj.output_highlight[0] = adj.output_highlight[1].max(adj.output_highlight[2]).max(adj.output_highlight[3]);
         }
+    }
+
+    fn selected_correction(&self) -> Option<flexcolor::ImageCorrection> {
+        if self.use_embedded_correction {
+            let emb_idx = self.embedded_correction_index;
+            self.detail.as_ref().and_then(|d| {
+                d.edit_history.as_ref().and_then(|h| {
+                    if h.settings.is_empty() {
+                        None
+                    } else {
+                        let idx = emb_idx.unwrap_or(h.current_index.min(h.settings.len() - 1));
+                        h.settings.get(idx).map(|s| s.correction.clone())
+                    }
+                })
+            })
+        } else {
+            self.selected_preset.and_then(|idx| {
+                self.available_presets.get(idx).and_then(|p| {
+                    std::fs::read_to_string(&p.path)
+                        .ok()
+                        .and_then(|xml| flexcolor::parse_settings_xml(&xml))
+                })
+            })
+        }
+    }
+
+    fn histogram_boundary_14bit(v: f32) -> i64 {
+        ((v.clamp(0.0, 255.0) / 255.0) * 16383.0).round() as i64
+    }
+
+    pub(super) fn effective_correction(&self) -> Option<flexcolor::ImageCorrection> {
+        let mut corr = self.selected_correction()?;
+
+        corr.film_type = self.manual_adjust.film_type;
+        corr.film_curve = self.manual_adjust.film_curve;
+        corr.apply_histogram = self.manual_adjust.apply_levels;
+        corr.apply_curves = self.manual_adjust.apply_curves;
+        corr.apply_cc = self.manual_adjust.apply_saturation || self.manual_adjust.apply_color_corr;
+        corr.apply_sliders = self.manual_adjust.apply_levels
+            || self.manual_adjust.apply_contrast
+            || self.manual_adjust.apply_brightness
+            || (self.manual_adjust.apply_shadow_depth && self.manual_adjust.lightness > 0.0);
+
+        corr.gamma = if self.manual_adjust.apply_levels {
+            (self.manual_adjust.levels_gamma[0] + 1.0).clamp(0.01, 10.0) as f64
+        } else {
+            2.0
+        };
+        corr.contrast = if self.manual_adjust.apply_contrast {
+            self.manual_adjust.contrast.round() as i64
+        } else {
+            0
+        };
+        corr.brightness = if self.manual_adjust.apply_brightness {
+            self.manual_adjust.brightness.round() as i64
+        } else {
+            0
+        };
+        corr.lightness = if self.manual_adjust.apply_shadow_depth && self.manual_adjust.lightness > 0.0 {
+            self.manual_adjust.lightness.round() as i64
+        } else {
+            0
+        };
+        corr.saturation = if self.manual_adjust.apply_saturation {
+            self.manual_adjust.saturation.round() as i64
+        } else {
+            0
+        };
+        corr.color_temperature = if self.manual_adjust.apply_color_temp {
+            self.manual_adjust.color_temperature.round() as i64
+        } else {
+            0
+        };
+        corr.tint = if self.manual_adjust.apply_color_temp {
+            self.manual_adjust.tint.round() as i64
+        } else {
+            0
+        };
+        corr.ev = if self.manual_adjust.apply_exposure {
+            2.0_f64.powf(self.manual_adjust.exposure as f64)
+        } else {
+            1.0
+        };
+        corr.color_corr = self.manual_adjust.color_corr.to_vec();
+        corr.gradations = self.curve_points.clone();
+
+        corr.shadow[0] = Self::histogram_boundary_14bit(self.manual_adjust.levels_black[0]);
+        corr.highlight[0] = Self::histogram_boundary_14bit(self.manual_adjust.levels_white[0]);
+        for ch in 1..4 {
+            corr.shadow[ch] = Self::histogram_boundary_14bit(self.manual_adjust.levels_black[ch]);
+            corr.highlight[ch] = Self::histogram_boundary_14bit(self.manual_adjust.levels_white[ch]);
+            corr.gray[ch] = 128;
+        }
+        corr.gray[0] = 128;
+
+        if corr.dot_color.len() < 14 {
+            corr.dot_color = vec![0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255];
+        }
+        corr.dot_color[0] = self.manual_adjust.output_shadow[1].round() as i64;
+        corr.dot_color[1] = self.manual_adjust.output_shadow[2].round() as i64;
+        corr.dot_color[2] = self.manual_adjust.output_shadow[3].round() as i64;
+        corr.dot_color[7] = self.manual_adjust.output_highlight[1].round() as i64;
+        corr.dot_color[8] = self.manual_adjust.output_highlight[2].round() as i64;
+        corr.dot_color[9] = self.manual_adjust.output_highlight[3].round() as i64;
+
+        Some(corr)
+    }
+
+    pub(super) fn residual_display_adjust(&self) -> color::ManualAdjust {
+        let mut adj = self.manual_adjust.clone();
+        adj.apply_levels = false;
+        adj.apply_film_curve = false;
+        adj.apply_curves = false;
+        adj.apply_contrast = false;
+        adj.apply_brightness = false;
+        adj.apply_saturation = false;
+        adj.apply_color_corr = false;
+        adj.apply_shadow_depth = adj.apply_shadow_depth && adj.lightness < 0.0;
+        adj.apply_usm = false;
+        adj
     }
 
     /// 渲染元数据面板：显示选中文件的关键 TIFF/EXIF 元数据
@@ -1287,20 +1408,12 @@ impl FffViewerApp {
         // 在拿 &mut self.detail 之前先 clone 出需要的数据（避免借用冲突）
         // T33: flex pipeline 需要真正 raw scanner 数据（preview_raw），
         // 而 raw_rgb 是 apply_film_processing 输出（已反转），double-invert 会把 G/B 压到 0。
-        let (flex_base, legacy_base, _active_correction) = {
+        let (flex_base, legacy_base) = {
             let Some(detail) = &self.detail else { return };
             let legacy = detail.raw_rgb.as_ref().or(detail.base_rgb.as_ref());
             let Some(legacy) = legacy else { return };
             let flex = detail.preview_raw.as_ref().unwrap_or(legacy);
-            let active_correction = detail.edit_history.as_ref().and_then(|h| {
-                if h.settings.is_empty() {
-                    None
-                } else {
-                    let idx = h.current_index.min(h.settings.len().saturating_sub(1));
-                    h.settings.get(idx).map(|s| s.correction.clone())
-                }
-            });
-            (flex.clone(), legacy.clone(), active_correction)
+            (flex.clone(), legacy.clone())
         };
 
         // T32 diag: dump pipeline stages means
@@ -1320,14 +1433,48 @@ impl FffViewerApp {
         log::debug!("[viewer] flex_base (preview_raw) means: R={:.1} G={:.1} B={:.1}", fr, fg, fb);
         log::debug!("[viewer] legacy_base (raw_rgb)  means: R={:.1} G={:.1} B={:.1}", lr, lg, lb);
 
-        let adjusted = color::apply_color_pipeline(
-            legacy_base_img,
-            &self.manual_adjust,
-            &self.curve_points,
-            self.extracted_film_lut.as_ref(),
-            self.active_icc_data.as_deref(),
-            self.target_color_space,
-        );
+        let adjusted = if let Some(corr) = self.effective_correction() {
+            log::debug!(
+                "[viewer] flex path | film_type={} gamma={} contrast={} brightness={} lightness={} sat={} hist={} curves={} cc={}",
+                corr.film_type,
+                corr.gamma,
+                corr.contrast,
+                corr.brightness,
+                corr.lightness,
+                corr.saturation,
+                corr.apply_histogram,
+                corr.apply_curves,
+                corr.apply_cc
+            );
+            let mut out = color::apply_flex_pipeline(
+                flex_base_img,
+                &corr,
+                self.active_icc_data.as_deref(),
+                self.target_color_space,
+                Default::default(),
+            );
+            if corr.film_type == 2 {
+                out = color::desaturate_bw_bt601(&out);
+            }
+            let residual = self.residual_display_adjust();
+            let out = color::apply_display_adjust(&out, &residual);
+            let out = color::apply_usm(&out, &self.manual_adjust);
+            if let Some(cal) = color::negative_c41_calibration(&corr) {
+                color::apply_affine_calibration(&out, &cal)
+            } else {
+                out
+            }
+        } else {
+            log::debug!("[viewer] legacy path (no correction)");
+            color::apply_color_pipeline(
+                legacy_base_img,
+                &self.manual_adjust,
+                &self.curve_points,
+                self.extracted_film_lut.as_ref(),
+                self.active_icc_data.as_deref(),
+                self.target_color_space,
+            )
+        };
         let rgb16 = to_rgb16(&adjusted);
 
         // 从最终渲染结果计算处理后直方图

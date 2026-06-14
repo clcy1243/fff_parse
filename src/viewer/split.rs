@@ -9,7 +9,6 @@ use eframe::egui;
 use std::path::Path;
 
 use fff_viewer::color;
-use fff_viewer::flexcolor;
 use fff_viewer::tiff::TiffFile;
 
 impl FffViewerApp {
@@ -98,29 +97,6 @@ impl FffViewerApp {
 
     /// 构建当前色彩处理管线参数，供导出使用
     fn build_export_pipeline(&self) -> ExportPipeline {
-        // 胶片处理校正参数
-        let correction = if self.use_embedded_correction {
-            // 使用嵌入的编辑历史校正
-            self.detail.as_ref().and_then(|d| {
-                d.edit_history.as_ref().and_then(|h| {
-                    if h.settings.is_empty() {
-                        None
-                    } else {
-                        let idx = h.current_index.min(h.settings.len() - 1);
-                        Some(h.settings[idx].correction.clone())
-                    }
-                })
-            })
-        } else {
-            self.selected_preset.and_then(|idx| {
-                self.available_presets.get(idx).and_then(|p| {
-                    std::fs::read_to_string(&p.path)
-                        .ok()
-                        .and_then(|xml| flexcolor::parse_settings_xml(&xml))
-                })
-            })
-        };
-
         // ICC 配置文件数据
         let icc_data = if self.use_embedded_icc {
             self.detail
@@ -135,7 +111,7 @@ impl FffViewerApp {
         };
 
         ExportPipeline {
-            correction,
+            correction: self.effective_correction(),
             icc_data,
             target_color_space: self.target_color_space,
             manual_adjust: self.manual_adjust.clone(),
@@ -175,21 +151,44 @@ impl FffViewerApp {
 
         // 应用与预览相同的色彩处理管线（全分辨率）
 
-        // 1. 胶片处理（负片反转）— 使用实际校正参数（与加载渲染一致）
         if let Some(ref correction) = pipeline.correction {
-            log::info!("export: applying film processing (film_type={})", correction.film_type);
-            img = color::apply_film_processing(&img, correction);
+            log::info!("export: applying flex pipeline (film_type={})", correction.film_type);
+            img = color::apply_flex_pipeline(
+                img,
+                correction,
+                pipeline.icc_data.as_deref(),
+                pipeline.target_color_space,
+                Default::default(),
+            );
+            if correction.film_type == 2 {
+                img = color::desaturate_bw_bt601(&img);
+            }
+            let mut residual = pipeline.manual_adjust.clone();
+            residual.apply_levels = false;
+            residual.apply_film_curve = false;
+            residual.apply_curves = false;
+            residual.apply_contrast = false;
+            residual.apply_brightness = false;
+            residual.apply_saturation = false;
+            residual.apply_color_corr = false;
+            residual.apply_shadow_depth = residual.apply_shadow_depth && residual.lightness < 0.0;
+            residual.apply_usm = false;
+            img = color::apply_display_adjust(&img, &residual);
+            img = color::apply_usm(&img, &pipeline.manual_adjust);
+            if let Some(cal) = color::negative_c41_calibration(correction) {
+                img = color::apply_affine_calibration(&img, &cal);
+            }
+        } else {
+            // 无 active correction 时回退到旧路径
+            img = color::apply_color_pipeline(
+                img,
+                &pipeline.manual_adjust,
+                &pipeline.curve_points,
+                pipeline.film_lut.as_ref(),
+                pipeline.icc_data.as_deref(),
+                pipeline.target_color_space,
+            );
         }
-
-        // 2-4. 统一色彩管线（渐变曲线 → 色阶 → ICC → 显示调整）
-        img = color::apply_color_pipeline(
-            img,
-            &pipeline.manual_adjust,
-            &pipeline.curve_points,
-            pipeline.film_lut.as_ref(),
-            pipeline.icc_data.as_deref(),
-            pipeline.target_color_space,
-        );
 
         img.save(dst).map_err(|e| {
             log::error!("export: failed to save {}: {}", dst.display(), e);
@@ -731,20 +730,42 @@ impl FffViewerApp {
         // 应用色彩处理管线（全分辨率）：胶片处理 → 色阶 → ICC → 显示调整
         let pipeline = self.build_export_pipeline();
 
-        // 1. 胶片处理（负片反转）— 使用实际校正参数（与渲染管线一致）
         if let Some(ref correction) = pipeline.correction {
-            img = color::apply_film_processing(&img, correction);
+            img = color::apply_flex_pipeline(
+                img,
+                correction,
+                pipeline.icc_data.as_deref(),
+                pipeline.target_color_space,
+                Default::default(),
+            );
+            if correction.film_type == 2 {
+                img = color::desaturate_bw_bt601(&img);
+            }
+            let mut residual = pipeline.manual_adjust.clone();
+            residual.apply_levels = false;
+            residual.apply_film_curve = false;
+            residual.apply_curves = false;
+            residual.apply_contrast = false;
+            residual.apply_brightness = false;
+            residual.apply_saturation = false;
+            residual.apply_color_corr = false;
+            residual.apply_shadow_depth = residual.apply_shadow_depth && residual.lightness < 0.0;
+            residual.apply_usm = false;
+            img = color::apply_display_adjust(&img, &residual);
+            img = color::apply_usm(&img, &pipeline.manual_adjust);
+            if let Some(cal) = color::negative_c41_calibration(correction) {
+                img = color::apply_affine_calibration(&img, &cal);
+            }
+        } else {
+            img = color::apply_color_pipeline(
+                img,
+                &pipeline.manual_adjust,
+                &pipeline.curve_points,
+                pipeline.film_lut.as_ref(),
+                pipeline.icc_data.as_deref(),
+                pipeline.target_color_space,
+            );
         }
-
-        // 2-4. 统一色彩管线（渐变曲线 → 色阶 → ICC → 显示调整）
-        img = color::apply_color_pipeline(
-            img,
-            &pipeline.manual_adjust,
-            &pipeline.curve_points,
-            pipeline.film_lut.as_ref(),
-            pipeline.icc_data.as_deref(),
-            pipeline.target_color_space,
-        );
 
         let img_w = img.width();
         let img_h = img.height();

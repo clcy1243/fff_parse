@@ -1475,6 +1475,11 @@ fn run_tests(
 
         // USM（外部步骤，flex 暂未吸收）
         let step3 = color::apply_usm(&step2b, &adj);
+        let step3 = if let Some(cal) = color::negative_c41_calibration(corr) {
+            color::apply_affine_calibration(&step3, &cal)
+        } else {
+            step3
+        };
 
         if let Some(res) = compare_images(
             "T6",
