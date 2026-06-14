@@ -1,0 +1,8 @@
+# Windows：静态链接 MSVC C 运行时（VCRUNTIME140.dll 等），使 .exe 自包含，
+# 无需用户机安装 VC++ Redistributable。cc 编译的 lcms2 C 源码会自动随之用 /MT。
+# 仅作用于 windows-msvc 目标，不影响 macOS / Linux 构建。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
