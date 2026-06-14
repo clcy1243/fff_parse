@@ -67,6 +67,22 @@ Test-Path "$env:ProgramFiles\FFF Viewer\settings"
 - **虚拟机**：egui/eframe 走 wgpu，VM 虚拟显卡可能导致启动慢/卡顿，甚至选不到后端而黑屏。VMware 请开「加速 3D 图形」并分配显存；性能以物理机为准。
 - **未签名**：安装包未做代码签名，Windows SmartScreen 首次运行会告警，点「更多信息 → 仍要运行」即可（本期范围是「能装能跑」，签名留待对外分发）。
 
+## 把 Windows 安装包挂到 GitHub Release（v0.9.0）
+
+已在 GitHub 建好预发布 **v0.9.0**（https://github.com/clcy1243/fff_parse/releases/tag/v0.9.0），已附 macOS dmg。
+Windows 安装包构建好后，用一条命令追加上去（本机 `gh` 需已登录同一账号）：
+
+```powershell
+# 先 git pull 确保版本号是 0.9.0，再构建（产物名为 FFF Viewer-0.9.0-setup.exe）
+git pull
+powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+
+# 追加到已存在的 v0.9.0 release
+gh release upload v0.9.0 "dist\FFF Viewer-0.9.0-setup.exe"
+```
+
+> 若 `gh` 未登录：先 `gh auth login`。上传后刷新 release 页面即可看到 Windows 安装包。
+
 ## 出问题怎么报回来
 
 > 这台机器与原开发机（macOS 上的 Claude Code）**无法直接通信**，请用下面任一方式回传，开发侧 `git pull` 后即可看到：
