@@ -1,5 +1,18 @@
 # Windows 发布执行说明（交接文档）
 
+> **更新 2026-06-14（第 3 轮 · 重要）**：修复了「用户机启动崩溃 / 依赖外部库」问题——已让依赖**自包含**（lcms2 静态链接 + Windows `+crt-static` 静态链接 VC++ 运行库）。
+> **当前 release 里的 Windows .exe 是旧版（可能仍依赖 VC++ Redistributable），请务必重建并替换**：
+> ```powershell
+> git pull
+> powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+> # 验证自包含：下面应只列出 Windows 系统 DLL（kernel32/user32/gdi32/opengl32 等），
+> # 不应出现 VCRUNTIME140.dll / api-ms-win-crt-* / lcms2
+> dumpbin /dependents "dist\FFF Viewer-0.9.0-setup.exe"   # 或对解包后的 fff_viewer.exe 检查
+> # 替换 release 资产（gh 已登录则用 --clobber；授权不行就把 exe 重新提交进 git，由开发机替换）
+> gh release upload v0.9.0 "dist\FFF Viewer-0.9.0-setup.exe" --clobber
+> ```
+> 注：`+crt-static` 由仓库 `.cargo/config.toml` 配置，`git pull` 后自动生效，无需手动加参数。
+
 > **更新 2026-06-14（第 2 轮）**：已修复首轮反馈的两个问题，**请先 `git pull` 再重新构建**：
 > 1. **UI 错位** → 根因是中文字体依赖系统字体且套用了 macOS 标定的偏移。现已**内嵌 Noto Sans SC 字体**（编译进二进制，各平台一致），无需任何系统字体。重建后请重点确认中文按钮/区域行文字**不再错位**，并回传一张界面截图。
 > 2. **Inno 中文语言文件缺失** → 现已随仓库提供 `installer/windows/ChineseSimplified.isl`，`.iss` 引用本地文件，**无需再手动改 .iss、也无需自行安装中文语言包**。
