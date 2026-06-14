@@ -15,6 +15,7 @@
 ## 日志与证据
 - 构建日志：`dist\logs\build-windows.log`
 - 运行日志：`C:\Users\clcy1\fff_parse\logs\fff_viewer_20260614_123113.log`
+- 截图：`docs\windows-ui-misalignment.png`
 - 关键日志片段（运行期）：
   - `=== FFF Viewer started ===`
   - `Found 15 ICC profiles, 123 settings presets`
@@ -28,7 +29,7 @@
 
 ## 主观体验（VM 注意标注）
 - 应用可正常启动并完成基础初始化，OpenGL 初始化正常（日志显示 NVIDIA GeForce RTX 3090）。
-- 人工验收确认文件处理正常；当前主要问题为界面元素存在错位，需后续修复 UI 布局。
+- 人工验收确认文件处理正常；当前主要问题为界面元素存在错位，见截图 `docs/windows-ui-misalignment.png`。
 
 ## 额外说明
 - 为保证当前构建机可稳定打包，已将 `installer/windows/fff-viewer.iss` 的安装语言配置改为仅使用 `compiler:Default.isl`（英文）。原因是本机 Inno Setup 6 缺失 `ChineseSimplified.isl`，会导致 ISCC 编译中断。
