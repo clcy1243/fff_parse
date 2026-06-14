@@ -2833,13 +2833,23 @@ impl FffViewerApp {
             }
             #[cfg(target_os = "windows")]
             {
-                let _ = std::process::Command::new("explorer")
-                    .arg(format!("/select,{}", path.to_string_lossy()))
-                    .spawn();
+                let target_dir = if path.is_dir() {
+                    Some(path)
+                } else {
+                    path.parent()
+                };
+                if let Some(dir) = target_dir {
+                    let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                }
             }
             #[cfg(target_os = "linux")]
             {
-                if let Some(dir) = path.parent() {
+                let target_dir = if path.is_dir() {
+                    Some(path)
+                } else {
+                    path.parent()
+                };
+                if let Some(dir) = target_dir {
                     let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
                 }
             }

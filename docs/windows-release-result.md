@@ -33,3 +33,4 @@
 
 ## 额外说明
 - 为保证当前构建机可稳定打包，已将 `installer/windows/fff-viewer.iss` 的安装语言配置改为仅使用 `compiler:Default.isl`（英文）。原因是本机 Inno Setup 6 缺失 `ChineseSimplified.isl`，会导致 ISCC 编译中断。
+- Windows 右键“在资源管理器中显示”已改为打开文件所在父目录，避免 Explorer `/select` 在部分路径下定位失败。
