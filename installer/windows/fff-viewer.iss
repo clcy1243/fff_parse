@@ -27,7 +27,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; ChineseSimplified.isl 随仓库提供（与本 .iss 同目录），不依赖构建机的 Inno
+; 是否自带该语言文件，避免缺失时 ISCC 编译中断。
+Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

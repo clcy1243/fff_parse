@@ -582,70 +582,48 @@ pub struct FffViewerApp {
 // ─── 字体加载 ───────────────────────────────────────────────────────────────
 
 /// 加载 CJK 字体，确保中日韩文字正常显示。
-/// 从系统字体路径查找并加载，作为 egui 的后备字体。
+///
+/// 字体随二进制内嵌发布（Noto Sans SC，OFL 许可，见 assets/fonts/OFL.txt），
+/// **不依赖系统字体**——这样各平台字形与垂直度量完全一致，避免之前在 Windows 上
+/// 因系统字体（msyh/simsun）与 macOS（Hiragino）度量不同、却套用同一 y_offset
+/// 而导致的按钮/文本基线错位。y_offset_factor 针对所选内嵌字体一次调好即全平台生效。
 pub(super) fn setup_cjk_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Try loading CJK font from system — prefer fonts with good Latin + CJK coverage
-    let cjk_font_paths = [
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/Supplemental/Songti.ttc",
-        // Linux
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-        // Windows
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-    ];
+    // 内嵌 CJK 字体（编译期打入二进制，运行期零外部依赖）
+    static CJK_FONT: &[u8] = include_bytes!("../../assets/fonts/NotoSansSC-Regular.otf");
+    let fd = egui::FontData::from_static(CJK_FONT).tweak(egui::FontTweak {
+        scale: 1.0,
+        y_offset_factor: 0.18,
+        y_offset: 0.0,
+        baseline_offset_factor: 0.0,
+    });
+    fonts.font_data.insert("cjk".to_owned(), fd.into());
 
-    for font_path in &cjk_font_paths {
-        if let Ok(font_data) = std::fs::read(font_path) {
-            // CJK fonts (e.g. Hiragino Sans GB) have a higher ascent ratio (~0.88)
-            // than Ubuntu-Light (~0.83), causing CJK glyphs to sit visually higher.
-            // y_offset_factor pushes glyphs down to align with the primary font's
-            // visual center in buttons.
-            let fd = egui::FontData::from_owned(font_data).tweak(egui::FontTweak {
-                scale: 1.0,
-                y_offset_factor: 0.2,
-                y_offset: 0.0,
-                baseline_offset_factor: 0.0,
-            });
-            fonts.font_data.insert("cjk".to_owned(), fd.into());
-
-            // Adjust emoji fonts' y_offset to align with shifted CJK text.
-            if let Some(emoji_data) = fonts.font_data.get_mut("NotoEmoji-Regular") {
-                let fd = std::sync::Arc::make_mut(emoji_data);
-                fd.tweak.y_offset_factor = -0.15;
-            }
-            if let Some(emoji_data) = fonts.font_data.get_mut("emoji-icon-font") {
-                let fd = std::sync::Arc::make_mut(emoji_data);
-                fd.tweak.y_offset_factor = -0.15;
-            }
-
-            // Insert CJK as SECOND font (after Ubuntu-Light, before emoji fonts).
-            // This keeps Ubuntu-Light as primary for proper button/line metrics,
-            // while CJK characters fall back to this font, and emoji still use
-            // the built-in NotoEmoji/emoji-icon-font.
-            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                // Default order: ["Ubuntu-Light", "NotoEmoji-Regular", "emoji-icon-font"]
-                // Insert at position 1 → ["Ubuntu-Light", "cjk", "NotoEmoji-Regular", "emoji-icon-font"]
-                let pos = 1.min(family.len());
-                family.insert(pos, "cjk".to_owned());
-            }
-            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                let pos = 1.min(family.len());
-                family.insert(pos, "cjk".to_owned());
-            }
-
-            ctx.set_fonts(fonts);
-            log::info!("Loaded CJK font from: {}", font_path);
-            return;
-        }
+    // Adjust emoji fonts' y_offset to align with shifted CJK text.
+    if let Some(emoji_data) = fonts.font_data.get_mut("NotoEmoji-Regular") {
+        let fd = std::sync::Arc::make_mut(emoji_data);
+        fd.tweak.y_offset_factor = -0.15;
+    }
+    if let Some(emoji_data) = fonts.font_data.get_mut("emoji-icon-font") {
+        let fd = std::sync::Arc::make_mut(emoji_data);
+        fd.tweak.y_offset_factor = -0.15;
     }
 
-    log::warn!("No CJK font found on system");
+    // Insert CJK as SECOND font (after Ubuntu-Light, before emoji fonts):
+    // 保持 Ubuntu-Light 为主字体以获得正确的按钮/行度量，CJK 字符回退到内嵌字体，
+    // emoji 仍走内置 NotoEmoji/emoji-icon-font。
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        let pos = 1.min(family.len());
+        family.insert(pos, "cjk".to_owned());
+    }
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        let pos = 1.min(family.len());
+        family.insert(pos, "cjk".to_owned());
+    }
+
+    ctx.set_fonts(fonts);
+    log::info!("Loaded embedded CJK font (Noto Sans SC)");
 }
 
 // ─── App impl ───────────────────────────────────────────────────────────────
